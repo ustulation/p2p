@@ -34,7 +34,15 @@ pub type Res<T> = Result<T, NatError>;
 
 pub struct NatTimer {
     pub associated_nat_state: Token,
-    pub timer_state: u8,
+    pub timer_id: u8,
+}
+impl NatTimer {
+    pub fn new(state: Token, timer_id: u8) -> Self {
+        NatTimer {
+            associated_nat_state: state,
+            timer_id: timer_id,
+        }
+    }
 }
 
 pub type NatMsg = Box<FnMut(&mut Interface, &Poll)>;
@@ -61,7 +69,7 @@ pub trait Interface {
                    -> Result<Timeout, TimerError>;
     fn cancel_timeout(&mut self, timeout: &Timeout) -> Option<NatTimer>;
     fn new_token(&mut self) -> Token;
-    fn config(&self) -> Config;
+    fn config(&self) -> &Config;
     fn enc_pk(&self) -> &box_::PublicKey;
     fn enc_sk(&self) -> &box_::SecretKey;
     fn sender(&self) -> &Sender<NatMsg>;

@@ -1,4 +1,5 @@
 use bincode;
+use mio::timer::TimerError;
 use std::io;
 
 quick_error! {
@@ -7,6 +8,13 @@ quick_error! {
     pub enum NatError {
         /// Io Error
         Io(e: io::Error) {
+            description(e.description())
+            display("{}", e)
+            cause(e)
+            from()
+        }
+        /// Timer error
+        Timer(e: TimerError) {
             description(e.description())
             display("{}", e)
             cause(e)
@@ -26,6 +34,14 @@ quick_error! {
         /// Booting up Udp Rendezvous Server failed
         UdpRendezvousServerStartFailed {
             description("Booting Udp Rendezvous Server Failed")
+        }
+        /// Udp Hole punch error
+        UdpHolePunchError {
+            description("Udp Hole punch error")
+        }
+        /// Timer ID is invalid
+        InvalidTimerId {
+            description("Timer ID is invalid")
         }
         /// Unknown error
         Unknown {

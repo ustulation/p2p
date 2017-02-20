@@ -205,7 +205,10 @@ impl NatState for UdpRendezvousClient {
                 Err(e) => From::from(e),
             };
             debug!("Error in UdpRendezvousClient readiness: {:?}", e);
-            self.terminate(ifc, poll)
+            self.terminate(ifc, poll);
+            (*self.f)(ifc, poll, self.token, Err(e));
+
+            Ok(())
         } else if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {

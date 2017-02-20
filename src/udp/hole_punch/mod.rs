@@ -21,8 +21,7 @@ enum State {
         udp_info: (Vec<(UdpSocket, Token)>, Vec<SocketAddr>),
         f: RendezvousFinsih,
     },
-    RendezvousDone(Vec<(UdpSocket, Token)>),
-    HolePunch,
+    HolePunch(Vec<(UdpSocket, Token)>),
 }
 
 pub struct UdpHolePunchMediator {
@@ -106,20 +105,15 @@ impl UdpHolePunchMediator {
                        state: State::Rendezvous ;; Found: State::None");
                 Err(NatError::UdpRendezvousFailed)
             }
-            State::RendezvousDone(_) => {
+            State::HolePunch(_) => {
                 warn!("Logic Error in state book-keeping - Pls report this as a bug. Expected \
-                       state: State::Rendezvous ;; Found: State::RendezvousDone(_)");
-                Err(NatError::UdpRendezvousFailed)
-            }
-            State::HolePunch => {
-                warn!("Logic Error in state book-keeping - Pls report this as a bug. Expected \
-                       state: State::Rendezvous ;; Found: State::HolePunch");
+                       state: State::Rendezvous ;; Found: State::HolePunch(_)");
                 Err(NatError::UdpRendezvousFailed)
             }
         };
 
         match r {
-            Ok(Some(socks)) => self.state = State::RendezvousDone(socks),
+            Ok(Some(socks)) => self.state = State::HolePunch(socks),
             Ok(None) => (),
             Err(e) => {
                 debug!("{:?}", e);
