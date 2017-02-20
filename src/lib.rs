@@ -9,7 +9,6 @@ extern crate serde_derive;
 
 extern crate bincode;
 extern crate mio;
-extern crate rustc_serialize;
 extern crate rust_sodium as sodium;
 extern crate serde;
 
@@ -22,7 +21,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-mod config;
+pub mod config;
+
 mod error;
 mod hole_punch;
 mod tcp;
@@ -30,7 +30,8 @@ mod udp;
 
 pub use config::Config;
 pub use error::NatError;
-pub use hole_punch::HolePunchMediator;
+pub use hole_punch::{GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator,
+                     RendezvousInfo};
 pub use udp::UdpRendezvousServer;
 
 pub type Res<T> = Result<T, NatError>;
@@ -48,7 +49,7 @@ impl NatTimer {
     }
 }
 
-pub type NatMsg = Box<FnMut(&mut Interface, &Poll)>;
+pub type NatMsg = Box<FnMut(&mut Interface, &Poll) + Send + 'static>;
 
 pub trait NatState {
     fn ready(&mut self, &mut Interface, &Poll, Ready) {}
