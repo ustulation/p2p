@@ -1,3 +1,5 @@
+#![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
+
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -15,6 +17,7 @@ use mio::{Poll, Ready, Token};
 use mio::channel::Sender;
 use mio::timer::{Timeout, TimerError};
 use sodium::crypto::box_;
+use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -48,19 +51,17 @@ impl NatTimer {
 pub type NatMsg = Box<FnMut(&mut Interface, &Poll)>;
 
 pub trait NatState {
-    fn ready(&mut self, &mut Interface, &Poll, Ready) -> Res<()> {
-        Ok(())
-    }
-    fn terminate(&mut self, &mut Interface, &Poll) -> Res<()> {
-        Ok(())
-    }
-    fn timeout(&mut self, &mut Interface, &Poll, u8) -> Res<()> {
-        Ok(())
-    }
+    fn ready(&mut self, &mut Interface, &Poll, Ready) {}
+    fn terminate(&mut self, &mut Interface, &Poll) {}
+    fn timeout(&mut self, &mut Interface, &Poll, u8) {}
+    fn as_any(&mut self) -> &mut Any;
 }
 
 pub trait Interface {
-    fn insert_state(&mut self, token: Token, state: Rc<RefCell<NatState>>) -> Result<(), String>;
+    fn insert_state(&mut self,
+                    token: Token,
+                    state: Rc<RefCell<NatState>>)
+                    -> Result<(), (Rc<RefCell<NatState>>, String)>;
     fn remove_state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
     fn state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
     fn set_timeout(&mut self,

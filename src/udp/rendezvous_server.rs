@@ -1,11 +1,12 @@
 use super::{UdpEchoReq, UdpEchoResp};
 use {Interface, NatError, NatState};
 use bincode::{SizeLimit, deserialize, serialize};
-use config::{Config, UDP_RENDEZVOUS_PORT};
+use config::UDP_RENDEZVOUS_PORT;
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::udp::UdpSocket;
 use sodium::crypto::box_::PublicKey;
 use sodium::crypto::sealedbox;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::ErrorKind;
@@ -39,20 +40,20 @@ impl UdpRendezvousServer {
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start UdpRendezvousServer!");
-            server.borrow_mut().terminate(ifc, poll)?;
+            server.borrow_mut().terminate(ifc, poll);
             Err(NatError::UdpRendezvousServerStartFailed)
         } else {
             Ok(())
         }
     }
 
-    fn read(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
+    fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
         let mut buf = [0; 512];
         let (bytes_rxd, peer) = match self.sock.recv_from(&mut buf) {
             Ok(Some((bytes, peer))) => (bytes, peer),
-            Ok(None) => return Ok(()),
+            Ok(None) => return,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
-                          e.kind() == ErrorKind::Interrupted => return Ok(()),
+                          e.kind() == ErrorKind::Interrupted => return,
             Err(e) => {
                 warn!("Udp Rendezvous Server has errored out in read: {:?}", e);
                 return self.terminate(ifc, poll);
@@ -63,29 +64,32 @@ impl UdpRendezvousServer {
             Ok(req) => req,
             Err(e) => {
                 trace!("Unknown msg rxd by Udp Rendezvous Server: {:?}", e);
-                return Ok(());
+                return;
             }
         };
 
         let resp = UdpEchoResp(sealedbox::seal(format!("{}", peer).as_bytes(),
                                                &PublicKey(peer_pk)));
-        let ser_resp = serialize(&resp, SizeLimit::Infinite)?;
+        let ser_resp = match serialize(&resp, SizeLimit::Infinite) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Error in serialization: {:?}", e);
+                return;
+            }
+        };
 
         self.write_queue.push_back((peer, ser_resp));
         self.write(ifc, poll)
     }
 
-    fn write(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
-        match self.write_impl(ifc, poll) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                warn!("Udp Rendezvous Server has errored out in write: {:?}", e);
-                self.terminate(ifc, poll)
-            }
+    fn write(&mut self, ifc: &mut Interface, poll: &Poll) {
+        if let Err(e) = self.write_impl(poll) {
+            warn!("Udp Rendezvous Server has errored out in write: {:?}", e);
+            self.terminate(ifc, poll)
         }
     }
 
-    fn write_impl(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
+    fn write_impl(&mut self, poll: &Poll) -> ::Res<()> {
         let (peer, resp) = match self.write_queue.pop_front() {
             Some((peer, resp)) => (peer, resp),
             None => return Ok(()),
@@ -123,7 +127,7 @@ impl UdpRendezvousServer {
 }
 
 impl NatState for UdpRendezvousServer {
-    fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) -> ::Res<()> {
+    fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
             let e = match self.sock.take_error() {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
@@ -137,12 +141,15 @@ impl NatState for UdpRendezvousServer {
             self.write(ifc, poll)
         } else {
             trace!("Ignoring unknown event kind: {:?}", event);
-            Ok(())
         }
     }
 
-    fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
+    fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
-        Ok(poll.deregister(&self.sock)?)
+        let _ = poll.deregister(&self.sock);
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }

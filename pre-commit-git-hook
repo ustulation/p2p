@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [[ ! "$(rustfmt --version)" =~ "0.7.1" ]]; then
+    echo "Rustfmt version 0.7.1 needed"
+    exit 1
+fi
+
+cargo fmt -- --write-mode=diff
