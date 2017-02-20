@@ -157,6 +157,7 @@ impl Puncher {
 
     fn done(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
+        let _ = ifc.cancel_timeout(&self.timeout);
         let sock = self.sock.take().unwrap();
         (*self.f)(ifc, poll, self.token, Ok(sock));
     }
@@ -207,6 +208,7 @@ impl NatState for Puncher {
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
         let _ = ifc.remove_state(self.token);
+        let _ = ifc.cancel_timeout(&self.timeout);
         Ok(poll.deregister(self.sock.as_ref().unwrap())?)
     }
 }
