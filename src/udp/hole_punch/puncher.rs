@@ -16,6 +16,7 @@ pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<UdpSocket>)>;
 const TIMER_ID: u8 = 0;
 const SYN: &'static [u8] = b"SYN";
 const SYN_ACK: &'static [u8] = b"SYN-ACK";
+const ACK: &'static [u8] = b"ACK";
 
 #[derive(Serialize, Deserialize)]
 pub struct CryptoHandshake {
@@ -26,6 +27,8 @@ pub struct CryptoHandshake {
 enum Sending {
     Syn,
     SynAck,
+    Ack,
+    None,
 }
 
 pub struct Puncher {
@@ -33,6 +36,7 @@ pub struct Puncher {
     sock: Option<UdpSocket>,
     peer: SocketAddr,
     key: box_::PrecomputedKey,
+    connection_chooser: bool,
     os_ttl: u32,
     current_ttl: u32,
     ttl_inc_interval_ms: u64,
@@ -80,6 +84,7 @@ impl Puncher {
             sock: Some(sock),
             peer: peer,
             key: box_::precompute(peer_enc_pk, ifc.enc_sk()),
+            connection_chooser: ifc.enc_pk() > peer_enc_pk,
             os_ttl: os_ttl,
             current_ttl: ttl as u32,
             ttl_inc_interval_ms: ttl_inc_interval_ms,
@@ -130,10 +135,23 @@ impl Puncher {
             self.sending = Sending::SynAck;
         } else if msg == SYN_ACK {
             if self.syn_ack_txd {
+                self.sending = if self.connection_chooser {
+                    Sending::Ack
+                } else {
+                    let _ = ifc.cancel_timeout(&self.timeout);
+                    Sending::None
+                };
+            } else {
+                self.sending = Sending::SynAck;
+                self.syn_ack_rxd = true;
+            }
+        } else if msg == ACK {
+            if self.connection_chooser {
+                debug!("No tolerance for a non chooser giving us an ACK - terminating");
+                return self.handle_err(ifc, poll);
+            } else {
                 return self.done(ifc, poll);
             }
-            self.sending = Sending::SynAck;
-            self.syn_ack_rxd = true;
         }
     }
 
@@ -148,6 +166,11 @@ impl Puncher {
         let m = match self.sending {
             Sending::Syn => SYN,
             Sending::SynAck => SYN_ACK,
+            Sending::Ack => ACK,
+            Sending::None => {
+                let _ = ifc.cancel_timeout(&self.timeout);
+                return Ok(());
+            }
         };
 
         let msg = msg_to_send(m, &self.key)?;
@@ -175,12 +198,18 @@ impl Puncher {
         };
 
         if sent {
-            if let Sending::SynAck = self.sending {
-                self.syn_ack_txd = true;
+            match self.sending {
+                Sending::SynAck => self.syn_ack_txd = true,
+                Sending::Ack => return Ok(self.done(ifc, poll)),
+                _ => (),
             }
             if self.syn_ack_txd && self.syn_ack_rxd {
-                self.done(ifc, poll);
-                return Ok(());
+                self.sending = if self.connection_chooser {
+                    Sending::Ack
+                } else {
+                    let _ = ifc.cancel_timeout(&self.timeout);
+                    Sending::None
+                };
             }
             Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                             self.token,
