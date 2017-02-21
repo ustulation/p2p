@@ -13,8 +13,8 @@ use std::str::FromStr;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-const UDP_RENDEZVOUS_SERVER_0: &'static str = "174.138.72.120:5484";
-const UDP_RENDEZVOUS_SERVER_1: &'static str = "104.131.23.124:5484";
+const UDP_RENDEZVOUS_SERVER_0: &'static str = "174.138.70.126:5484";
+const UDP_RENDEZVOUS_SERVER_1: &'static str = "104.236.84.160:5484";
 
 struct Core {
     nat_states: HashMap<Token, Rc<RefCell<NatState>>>,
@@ -187,8 +187,8 @@ pub fn spawn_event_loop() -> El {
                     }
                     Token(t) if t == NAT_RX_TOKEN => {
                         assert!(event.kind().is_readable());
-                        while let Ok(mut f) = nat_rx.try_recv() {
-                            f(&mut core, &poll);
+                        while let Ok(f) = nat_rx.try_recv() {
+                            f.invoke(&mut core, &poll);
                         }
                     }
                     t => core.handle_readiness(&poll, t, event.kind()),

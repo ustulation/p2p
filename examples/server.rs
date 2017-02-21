@@ -5,14 +5,14 @@ extern crate rust_sodium as sodium;
 extern crate unwrap;
 
 use self::event_loop::spawn_event_loop;
-use p2p::UdpRendezvousServer;
+use p2p::{NatMsg, UdpRendezvousServer};
 use std::sync::mpsc;
 
 mod event_loop;
 
 fn main() {
     let el = spawn_event_loop();
-    unwrap!(el.nat_tx.send(Box::new(move |ifc, poll| {
+    unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
         unwrap!(UdpRendezvousServer::start(ifc, poll));
     })));
 

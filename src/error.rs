@@ -27,6 +27,9 @@ quick_error! {
             cause(e)
             from()
         }
+
+        // =======================================
+
         /// Rendezvous with server failed for both Tcp and Udp - could not obtain our external
         /// address
         RendezvousFailed {
@@ -75,6 +78,10 @@ quick_error! {
         InvalidState {
             description("Invalid state - the state may already be active or is an operation is not \
                         supposed to be permitted for this state")
+        }
+        /// Socket is not available
+        UnregisteredSocket {
+            description("Socket is not available")
         }
         /// Unknown error
         Unknown {

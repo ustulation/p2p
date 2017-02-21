@@ -17,4 +17,5 @@ serde = "~0.9.7"
 serde_derive = "~0.9.7"
 
 [dev-dependencies]
+serde_json = "~0.9.7"
 unwrap = "~1.1.0"

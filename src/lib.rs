@@ -1,4 +1,14 @@
 #![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
+#![recursion_limit="100"]
+
+// Coding guidelines:
+// 1. If called by someone don't reply to caller via stored callback, reply directly, else caller
+//    is already borrowed and it will be borrowed again inside the callback (via weak-ptr upgrade)
+//    leading to panic.
+// 2. In invoked via callback, don't call the caller (child) again as borrow of the child is
+//    active when it's calling you (i.e. don't call terminate which will borrow the child again to
+//    call its terminate etc. Instead remove the child immediately from list of children if it
+//    makes sense, because the child's job is over etc., and then call terminate on self etc.).
 
 #[macro_use]
 extern crate log;
@@ -49,7 +59,21 @@ impl NatTimer {
     }
 }
 
-pub type NatMsg = Box<FnMut(&mut Interface, &Poll) + Send + 'static>;
+pub struct NatMsg(Box<FnMut(&mut Interface, &Poll) + Send + 'static>);
+impl NatMsg {
+    pub fn new<F>(f: F) -> Self
+        where F: FnOnce(&mut Interface, &Poll) + Send + 'static
+    {
+        let mut f = Some(f);
+        NatMsg(Box::new(move |ifc: &mut Interface, poll: &Poll| if let Some(f) = f.take() {
+            f(ifc, poll)
+        }))
+    }
+
+    pub fn invoke(mut self, ifc: &mut Interface, poll: &Poll) {
+        (self.0)(ifc, poll)
+    }
+}
 
 pub trait NatState {
     fn ready(&mut self, &mut Interface, &Poll, Ready) {}

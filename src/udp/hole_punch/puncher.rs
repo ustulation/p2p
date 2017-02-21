@@ -56,16 +56,13 @@ impl Puncher {
             }
         };
 
-        match poll.reregister(&sock,
-                              token,
-                              Ready::writable() | Ready::readable() | Ready::error() |
-                              Ready::hup(),
-                              PollOpt::edge()) {
-            Ok(()) => (),
-            Err(e) => {
-                let _ = poll.deregister(&sock);
-                return Err(From::from(e));
-            }
+        if let Err(e) = poll.reregister(&sock,
+                                        token,
+                                        Ready::writable() | Ready::readable() | Ready::error() |
+                                        Ready::hup(),
+                                        PollOpt::edge()) {
+            let _ = poll.deregister(&sock);
+            return Err(From::from(e));
         }
 
         let puncher = Rc::new(RefCell::new(Puncher {
@@ -95,7 +92,11 @@ impl Puncher {
         let mut buf = [0; 512];
         // FIXME will need to be done in a loop until wouldblock or Ok(None) - Same for rendezvous
         // server
-        let bytes_rxd = match self.sock.as_ref().unwrap().recv_from(&mut buf) {
+        let r = match self.sock.as_ref() {
+            Some(s) => s.recv_from(&mut buf),
+            None => return,
+        };
+        let bytes_rxd = match r {
             Ok(Some((bytes, _))) => bytes,
             Ok(None) => return,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
@@ -130,7 +131,11 @@ impl Puncher {
             Sending::SynAck => SYN_ACK,
         };
 
-        let sent = match self.sock.as_ref().unwrap().send_to(m, &self.peer) {
+        let r = match self.sock.as_ref() {
+            Some(s) => s.send_to(m, &self.peer),
+            None => return Err(NatError::UnregisteredSocket),
+        };
+        let sent = match r {
             Ok(Some(bytes_txd)) => {
                 if bytes_txd != m.len() {
                     debug!("Partial datagram sent - datagram will be treated as corrupted. \
@@ -156,12 +161,12 @@ impl Puncher {
                 self.done(ifc, poll);
                 return Ok(());
             }
-            Ok(poll.reregister(self.sock.as_ref().unwrap(),
+            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                             self.token,
                             Ready::readable() | Ready::error() | Ready::hup(),
                             PollOpt::edge())?)
         } else {
-            Ok(poll.reregister(self.sock.as_ref().unwrap(),
+            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                             self.token,
                             Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
                             PollOpt::edge())?)
@@ -171,8 +176,10 @@ impl Puncher {
     fn done(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
-        let sock = self.sock.take().unwrap();
-        (*self.f)(ifc, poll, self.token, Ok(sock));
+        match self.sock.take() {
+            Some(s) => (*self.f)(ifc, poll, self.token, Ok(s)),
+            None => (*self.f)(ifc, poll, self.token, Err(NatError::UdpHolePunchFailed)),
+        }
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -184,12 +191,15 @@ impl Puncher {
 impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
-            let e = match self.sock.as_ref().unwrap().take_error() {
+            let e = match self.sock
+                .as_ref()
+                .ok_or(NatError::UnregisteredSocket)
+                .and_then(|s| s.take_error().map_err(From::from)) {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
             debug!("Error in Udp Puncher readiness: {:?}", e);
-            self.terminate(ifc, poll)
+            self.handle_err(ifc, poll)
         } else if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
@@ -207,26 +217,32 @@ impl NatState for Puncher {
                                              NatTimer::new(self.token, TIMER_ID)) {
             Ok(t) => t,
             Err(e) => {
-                info!("Error in setting timeout: {:?}", e);
-                return;
+                debug!("Error in setting timeout: {:?}", e);
+                return self.handle_err(ifc, poll);
             }
 
         };
         self.current_ttl += 1;
         if self.current_ttl >= self.os_ttl {
             debug!("OS TTL reached and still could not hole punch - giving up");
-            self.handle_err(ifc, poll);
+            return self.handle_err(ifc, poll);
         }
-        if let Err(e) = self.sock.as_ref().unwrap().set_ttl(self.current_ttl) {
+        let r = match self.sock.as_ref() {
+            Some(sock) => sock.set_ttl(self.current_ttl),
+            None => return,
+        };
+        if let Err(e) = r {
             debug!("Error setting ttl: {:?}", e);
-            self.handle_err(ifc, poll);
+            return self.handle_err(ifc, poll);
         }
     }
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
-        let _ = poll.deregister(self.sock.as_ref().unwrap());
+        if let Some(sock) = self.sock.take() {
+            let _ = poll.deregister(&sock);
+        }
     }
 
     fn as_any(&mut self) -> &mut Any {

@@ -16,7 +16,7 @@ mod puncher;
 mod rendezvous_client;
 
 pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<Vec<SocketAddr>>)>;
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<Vec<(UdpSocket, Token)>>)>;
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSocket, Token)>)>;
 
 enum State {
     None,
@@ -28,7 +28,6 @@ enum State {
     ReadyToHolePunch(Vec<(UdpSocket, Token)>),
     HolePunching {
         children: HashSet<Token>,
-        info: Vec<(UdpSocket, Token)>,
         f: HolePunchFinsih,
     },
 }
@@ -44,7 +43,6 @@ impl Debug for State {
 }
 
 pub struct UdpHolePunchMediator {
-    token: Token,
     state: State,
     self_weak: Weak<RefCell<UdpHolePunchMediator>>,
 }
@@ -53,16 +51,14 @@ impl UdpHolePunchMediator {
     pub fn start(ifc: &mut Interface,
                  poll: &Poll,
                  f: RendezvousFinsih)
-                 -> ::Res<Weak<RefCell<Self>>> {
+                 -> ::Res<Rc<RefCell<Self>>> {
         let mut socks = Vec::with_capacity(ifc.config().udp_hole_punchers.len());
         let addr_any = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
         for _ in 0..ifc.config().udp_hole_punchers.len() {
             socks.push(UdpSocket::bind(&addr_any)?);
         }
 
-        let token = ifc.new_token();
         let mediator = Rc::new(RefCell::new(UdpHolePunchMediator {
-            token: token,
             state: State::None,
             self_weak: Weak::new(),
         }));
@@ -85,7 +81,7 @@ impl UdpHolePunchMediator {
         }
 
         if rendezvous_children.is_empty() {
-            Err(NatError::UdpRendezvousFailed)
+            Err(NatError::UdpHolePunchMediatorFailedToStart)
         } else {
             let n = rendezvous_children.len();
             mediator.borrow_mut().state = State::Rendezvous {
@@ -94,14 +90,7 @@ impl UdpHolePunchMediator {
                 f: f,
             };
 
-            if let Err((nat_state, e)) = ifc.insert_state(token, mediator) {
-                // TODO Handle properly
-                error!("To be handled properly: {}", e);
-                nat_state.borrow_mut().terminate(ifc, poll);
-                return Err(NatError::UdpHolePunchMediatorFailedToStart);
-            }
-
-            Ok(weak)
+            Ok(mediator)
         }
     }
 
@@ -118,10 +107,16 @@ impl UdpHolePunchMediator {
                     info.1.push(ext_addr);
                 }
                 if children.is_empty() {
-                    let socks = mem::replace(&mut info.0, vec![]);
+                    let mut socks = mem::replace(&mut info.0, vec![]);
                     let ext_addrs = mem::replace(&mut info.1, vec![]);
-                    f(ifc, poll, Ok(ext_addrs));
-                    Ok(Some(socks))
+                    if socks.is_empty() || ext_addrs.is_empty() {
+                        UdpHolePunchMediator::dereg_socks(poll, &mut socks);
+                        f(ifc, poll, Err(NatError::UdpRendezvousFailed));
+                        Err(NatError::UdpRendezvousFailed)
+                    } else {
+                        f(ifc, poll, Ok(ext_addrs));
+                        Ok(Some(socks))
+                    }
                 } else {
                     Ok(None)
                 }
@@ -137,8 +132,53 @@ impl UdpHolePunchMediator {
         match r {
             Ok(Some(socks)) => self.state = State::ReadyToHolePunch(socks),
             Ok(None) => (),
-            Err(e) => debug!("{:?}", e),
+            Err(e @ NatError::UdpRendezvousFailed) => {
+                // This is reached only if children is empty. So no chance of borrow violation for
+                // children in terminate()
+                debug!("Terminating due to: {:?}", e);
+                self.terminate(ifc, poll);
+            }
+            // Don't call terminate as that can lead to child being borrowed twice
+            Err(e) => debug!("Ignoring error in handle rendezvous: {:?}", e),
         }
+    }
+
+    // Do not use callback to return success/errors in these functions. They are directly called so
+    // give the result back asap, else there will be multiple borrows of the caller
+    pub fn rendezvous_timeout(&mut self,
+                              ifc: &mut Interface,
+                              poll: &Poll)
+                              -> ::Res<Vec<SocketAddr>> {
+        let r = match self.state {
+            State::Rendezvous { ref mut children, ref mut info, .. } => {
+                UdpHolePunchMediator::terminate_children(ifc, poll, children);
+                let mut socks = mem::replace(&mut info.0, vec![]);
+                let ext_addrs = mem::replace(&mut info.1, vec![]);
+                if socks.is_empty() || ext_addrs.is_empty() {
+                    UdpHolePunchMediator::dereg_socks(poll, &mut socks);
+                    Err(NatError::UdpRendezvousFailed)
+                } else {
+                    Ok((socks, ext_addrs))
+                }
+            }
+            ref x => {
+                trace!("Already proceeded to the next state. Invalid state for executing a \
+                        rendezvous timeout: {:?}",
+                       x);
+                Err(NatError::InvalidState)
+            }
+        };
+
+        let r = r.map(|(socks, ext_addrs)| {
+            self.state = State::ReadyToHolePunch(socks);
+            ext_addrs
+        });
+
+        if r.is_err() {
+            self.terminate(ifc, poll);
+        }
+
+        r
     }
 
     pub fn punch_hole(&mut self,
@@ -190,7 +230,6 @@ impl UdpHolePunchMediator {
 
         self.state = State::HolePunching {
             children: children,
-            info: Vec::with_capacity(cap),
             f: f,
         };
 
@@ -203,15 +242,14 @@ impl UdpHolePunchMediator {
                          child: Token,
                          res: ::Res<UdpSocket>) {
         let r = match self.state {
-            State::HolePunching { ref mut children, ref mut info, ref mut f } => {
+            State::HolePunching { ref mut children, ref mut f } => {
                 let _ = children.remove(&child);
                 if let Ok(sock) = res {
-                    info.push((sock, child));
-                }
-                if children.is_empty() {
-                    let socks = mem::replace(info, vec![]);
-                    f(ifc, poll, Ok(socks));
+                    f(ifc, poll, Ok((sock, child)));
                     Ok(true)
+                } else if children.is_empty() {
+                    f(ifc, poll, Err(NatError::UdpHolePunchFailed));
+                    Err(NatError::UdpHolePunchFailed)
                 } else {
                     Ok(false)
                 }
@@ -227,10 +265,14 @@ impl UdpHolePunchMediator {
         match r {
             Ok(true) => self.terminate(ifc, poll),
             Ok(false) => (),
-            Err(e) => {
+            Err(e @ NatError::UdpHolePunchFailed) => {
+                // This is reached only if children is empty, or we have removed the child that
+                // called us. So no chance of borrow violation for children in terminate()
                 debug!("Terminating due to: {:?}", e);
                 self.terminate(ifc, poll);
             }
+            // Don't call terminate as that can lead to child being borrowed twice
+            Err(e) => debug!("Ignoring error in handle hole-punch: {:?}", e),
         }
     }
 
@@ -254,17 +296,18 @@ impl UdpHolePunchMediator {
 
 impl NatState for UdpHolePunchMediator {
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let _ = ifc.remove_state(self.token);
         match self.state {
             State::Rendezvous { ref mut children, ref mut info, .. } => {
                 UdpHolePunchMediator::terminate_children(ifc, poll, children);
                 UdpHolePunchMediator::dereg_socks(poll, &mut info.0);
             }
-            State::HolePunching { ref mut children, ref mut info, .. } => {
-                UdpHolePunchMediator::terminate_children(ifc, poll, children);
-                UdpHolePunchMediator::dereg_socks(poll, info);
+            State::ReadyToHolePunch(ref mut socks) => {
+                UdpHolePunchMediator::dereg_socks(poll, socks)
             }
-            _ => (),
+            State::HolePunching { ref mut children, .. } => {
+                UdpHolePunchMediator::terminate_children(ifc, poll, children);
+            }
+            State::None => (),
         }
     }
 
