@@ -2,6 +2,7 @@ use {Interface, NatError, NatState};
 use bincode::{SizeLimit, deserialize, serialize};
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::udp::UdpSocket;
+use rand::{self, Rng};
 use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
@@ -33,6 +34,10 @@ impl UdpRendezvousClient {
         if num_servers < 2 {
             info!("Udp: Symmetric NAT detection and port prediction will not be possible using \
                    less than 2 Rendezvous Servers. Use at-least 2. Recommended is 3.");
+        } else if num_servers > 3 {
+            let mut rng = rand::thread_rng();
+            rng.shuffle(&mut servers);
+            servers = servers[..3].to_owned();
         }
 
         let server = match servers.pop() {

@@ -19,6 +19,7 @@ extern crate serde_derive;
 
 extern crate bincode;
 extern crate mio;
+extern crate rand;
 extern crate rust_sodium as sodium;
 extern crate serde;
 

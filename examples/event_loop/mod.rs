@@ -144,7 +144,7 @@ pub fn spawn_event_loop() -> El {
             udp_hole_punchers: vec![puncher_0, puncher_1, puncher_2],
         };
 
-        let (pk, sk) = box_::gen_keypair();
+        let (enc_pk, enc_sk) = box_::gen_keypair();
         let timer = Timer::default();
 
         unwrap!(poll.register(&timer,
@@ -165,8 +165,8 @@ pub fn spawn_event_loop() -> El {
             timer: timer,
             token: NAT_RX_TOKEN + 1,
             config: config,
-            enc_pk: pk,
-            enc_sk: sk,
+            enc_pk: enc_pk,
+            enc_sk: enc_sk,
             tx: nat_tx,
         };
 

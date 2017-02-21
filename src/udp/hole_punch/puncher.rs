@@ -1,7 +1,9 @@
 use {Interface, NatError, NatState, NatTimer};
+use bincode::{SizeLimit, deserialize, serialize};
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::timer::Timeout;
 use mio::udp::UdpSocket;
+use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::io::ErrorKind;
@@ -15,6 +17,12 @@ const TIMER_ID: u8 = 0;
 const SYN: &'static [u8] = b"SYN";
 const SYN_ACK: &'static [u8] = b"SYN-ACK";
 
+#[derive(Serialize, Deserialize)]
+pub struct CryptoHandshake {
+    pub nonce: [u8; box_::NONCEBYTES],
+    pub cipher_text: Vec<u8>,
+}
+
 enum Sending {
     Syn,
     SynAck,
@@ -24,6 +32,7 @@ pub struct Puncher {
     token: Token,
     sock: Option<UdpSocket>,
     peer: SocketAddr,
+    key: box_::PrecomputedKey,
     os_ttl: u32,
     current_ttl: u32,
     ttl_inc_interval_ms: u64,
@@ -42,6 +51,7 @@ impl Puncher {
                  ttl: u8,
                  ttl_inc_interval_ms: u64,
                  peer: SocketAddr,
+                 peer_enc_pk: &box_::PublicKey,
                  f: Finish)
                  -> ::Res<()> {
         let os_ttl = sock.ttl()?;
@@ -69,6 +79,7 @@ impl Puncher {
             token: token,
             sock: Some(sock),
             peer: peer,
+            key: box_::precompute(peer_enc_pk, ifc.enc_sk()),
             os_ttl: os_ttl,
             current_ttl: ttl as u32,
             ttl_inc_interval_ms: ttl_inc_interval_ms,
@@ -107,9 +118,17 @@ impl Puncher {
             }
         };
 
-        if &buf[..bytes_rxd] == SYN {
+        let msg = match msg_to_read(&buf[..bytes_rxd], &self.key) {
+            Ok(m) => m,
+            Err(e) => {
+                debug!("Udp Hole Puncher has errored out in read: {:?}", e);
+                return self.handle_err(ifc, poll);
+            }
+        };
+
+        if msg == SYN {
             self.sending = Sending::SynAck;
-        } else if &buf[..bytes_rxd] == SYN_ACK {
+        } else if msg == SYN_ACK {
             if self.syn_ack_txd {
                 return self.done(ifc, poll);
             }
@@ -131,8 +150,10 @@ impl Puncher {
             Sending::SynAck => SYN_ACK,
         };
 
+        let msg = msg_to_send(m, &self.key)?;
+
         let r = match self.sock.as_ref() {
-            Some(s) => s.send_to(m, &self.peer),
+            Some(s) => s.send_to(&msg, &self.peer),
             None => return Err(NatError::UnregisteredSocket),
         };
         let sent = match r {
@@ -248,4 +269,20 @@ impl NatState for Puncher {
     fn as_any(&mut self) -> &mut Any {
         self
     }
+}
+
+fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
+    let nonce = box_::gen_nonce();
+    let handshake = CryptoHandshake {
+        nonce: nonce.0,
+        cipher_text: box_::seal_precomputed(plain_text, &nonce, key),
+    };
+
+    Ok(serialize(&handshake, SizeLimit::Infinite)?)
+}
+
+fn msg_to_read(raw: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
+    let CryptoHandshake { nonce, cipher_text } = deserialize(raw)?;
+    box_::open_precomputed(&cipher_text, &box_::Nonce(nonce), key).
+        map_err(|()| NatError::AsymmetricDecipherFailed)
 }

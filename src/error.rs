@@ -27,6 +27,10 @@ quick_error! {
             cause(e)
             from()
         }
+        /// Failed to decrypt the cipher text
+        AsymmetricDecipherFailed {
+            description("Failed to decrypt the cipher-text")
+        }
 
         // =======================================
 

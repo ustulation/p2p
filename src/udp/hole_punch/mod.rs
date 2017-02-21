@@ -4,6 +4,7 @@ use {Interface, NatError, NatState};
 use mio::Poll;
 use mio::Token;
 use mio::udp::UdpSocket;
+use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -185,6 +186,7 @@ impl UdpHolePunchMediator {
                       ifc: &mut Interface,
                       poll: &Poll,
                       peers: Vec<SocketAddr>,
+                      peer_enc_pk: &box_::PublicKey,
                       f: HolePunchFinsih)
                       -> ::Res<()> {
         let info = match self.state {
@@ -216,6 +218,7 @@ impl UdpHolePunchMediator {
                               puncher_config.starting_ttl,
                               puncher_config.ttl_increment_delay_ms,
                               peer,
+                              peer_enc_pk,
                               Box::new(handler))
                 .is_ok() {
                 let _ = children.insert(token);

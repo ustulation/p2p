@@ -5,6 +5,7 @@ use mio::channel::Sender;
 use mio::tcp::TcpStream;
 use mio::timer::Timeout;
 use mio::udp::UdpSocket;
+use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::{self, Debug, Formatter};
@@ -22,12 +23,25 @@ pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>
 pub struct RendezvousInfo {
     pub udp: Vec<SocketAddr>,
     pub tcp: Vec<SocketAddr>,
+    pub enc_pk: [u8; box_::PUBLICKEYBYTES],
 }
+
+impl RendezvousInfo {
+    fn with_keys(enc_pk: &box_::PublicKey) -> Self {
+        RendezvousInfo {
+            udp: vec![],
+            tcp: vec![],
+            enc_pk: enc_pk.0,
+        }
+    }
+}
+
 impl Default for RendezvousInfo {
     fn default() -> Self {
         RendezvousInfo {
             udp: vec![],
             tcp: vec![],
+            enc_pk: [0; box_::PUBLICKEYBYTES],
         }
     }
 }
@@ -36,12 +50,25 @@ impl Default for RendezvousInfo {
 pub struct HolePunchInfo {
     pub tcp: Option<(TcpStream, Token)>,
     pub udp: Option<(UdpSocket, Token)>,
+    pub enc_pk: box_::PublicKey,
 }
+
+impl HolePunchInfo {
+    fn with_key(enc_pk: box_::PublicKey) -> Self {
+        HolePunchInfo {
+            tcp: None,
+            udp: None,
+            enc_pk: enc_pk,
+        }
+    }
+}
+
 impl Default for HolePunchInfo {
     fn default() -> Self {
         HolePunchInfo {
             tcp: None,
             udp: None,
+            enc_pk: box_::PublicKey([0; box_::PUBLICKEYBYTES]),
         }
     }
 }
@@ -62,6 +89,7 @@ enum State {
         f: HolePunchFinsih,
     },
 }
+
 impl Debug for State {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
@@ -119,7 +147,7 @@ impl HolePunchMediator {
             {
                 let mut m = mediator.borrow_mut();
                 m.state = State::Rendezvous {
-                    info: Default::default(),
+                    info: RendezvousInfo::with_keys(ifc.enc_pk()),
                     timeout: timeout,
                     f: f,
                 };
@@ -194,7 +222,7 @@ impl HolePunchMediator {
     fn punch_hole(&mut self,
                   ifc: &mut Interface,
                   poll: &Poll,
-                  peers: RendezvousInfo,
+                  peer: RendezvousInfo,
                   mut f: HolePunchFinsih) {
         match self.state {
             State::ReadyToHolePunch => (),
@@ -214,6 +242,8 @@ impl HolePunchMediator {
             }
         };
 
+        let peer_enc_pk = box_::PublicKey(peer.enc_pk);
+
         if let Some(udp_child) = self.udp_child.as_ref().cloned() {
             let weak = self.self_weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, res| if let Some(mediator) =
@@ -221,7 +251,7 @@ impl HolePunchMediator {
                 mediator.borrow_mut().handle_udp_hole_punch(ifc, poll, res);
             };
             if let Err(e) = udp_child.borrow_mut()
-                .punch_hole(ifc, poll, peers.udp, Box::new(handler)) {
+                .punch_hole(ifc, poll, peer.udp, &peer_enc_pk, Box::new(handler)) {
                 debug!("Udp punch hole failed to start: {:?}", e);
                 self.udp_child = None;
             }
@@ -234,7 +264,7 @@ impl HolePunchMediator {
         }
 
         self.state = State::HolePunching {
-            info: Default::default(),
+            info: HolePunchInfo::with_key(peer_enc_pk),
             timeout: timeout,
             f: f,
         };
@@ -298,6 +328,8 @@ impl NatState for HolePunchMediator {
                     let r = udp_child.borrow_mut().rendezvous_timeout(ifc, poll);
                     self.handle_udp_rendezvous(ifc, poll, r);
                 }
+                // TODO the above can terminate, so we should not bu calling the next one then
+                // check once tcp is coded
                 if let Some(_tcp_child) = self.tcp_child.as_ref().cloned() {
                     // let r = tcp_child.borrow_mut().rendezvous_timeout(ifc, poll);
                     // self.handle_tcp_rendezvous(ifc, poll, r);
@@ -356,10 +388,10 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub fn fire_hole_punch(self, peers: RendezvousInfo, f: HolePunchFinsih) {
+    pub fn fire_hole_punch(self, peer: RendezvousInfo, f: HolePunchFinsih) {
         let token = self.token;
         if let Err(e) = self.tx.send(NatMsg::new(move |ifc, poll| {
-            Handle::start_hole_punch(ifc, poll, token, peers, f)
+            Handle::start_hole_punch(ifc, poll, token, peer, f)
         })) {
             debug!("Could not fire hole punch request: {:?}", e);
         } else {
@@ -370,7 +402,7 @@ impl Handle {
     pub fn start_hole_punch(ifc: &mut Interface,
                             poll: &Poll,
                             hole_punch_mediator: Token,
-                            peers: RendezvousInfo,
+                            peer: RendezvousInfo,
                             mut f: HolePunchFinsih) {
         if let Some(nat_state) = ifc.state(hole_punch_mediator) {
             let mut state = nat_state.borrow_mut();
@@ -381,7 +413,7 @@ impl Handle {
                     return f(ifc, poll, Err(NatError::InvalidState));
                 }
             };
-            mediator.punch_hole(ifc, poll, peers, f);
+            mediator.punch_hole(ifc, poll, peer, f);
 
         }
     }
