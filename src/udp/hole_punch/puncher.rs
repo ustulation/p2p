@@ -1,5 +1,4 @@
 use {Interface, NatError, NatState, NatTimer};
-use bincode::{SizeLimit, deserialize, serialize};
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::timer::Timeout;
 use mio::udp::UdpSocket;
@@ -11,18 +10,12 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<UdpSocket>)>;
+pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSocket, SocketAddr)>)>;
 
 const TIMER_ID: u8 = 0;
 const SYN: &'static [u8] = b"SYN";
 const SYN_ACK: &'static [u8] = b"SYN-ACK";
 const ACK: &'static [u8] = b"ACK";
-
-#[derive(Serialize, Deserialize)]
-pub struct CryptoHandshake {
-    pub nonce: [u8; box_::NONCEBYTES],
-    pub cipher_text: Vec<u8>,
-}
 
 enum Sending {
     Syn,
@@ -123,7 +116,7 @@ impl Puncher {
             }
         };
 
-        let msg = match msg_to_read(&buf[..bytes_rxd], &self.key) {
+        let msg = match ::msg_to_read(&buf[..bytes_rxd], &self.key) {
             Ok(m) => m,
             Err(e) => {
                 debug!("Udp Hole Puncher has errored out in read: {:?}", e);
@@ -173,7 +166,7 @@ impl Puncher {
             }
         };
 
-        let msg = msg_to_send(m, &self.key)?;
+        let msg = ::msg_to_send(m, &self.key)?;
 
         let r = match self.sock.as_ref() {
             Some(s) => s.send_to(&msg, &self.peer),
@@ -227,7 +220,7 @@ impl Puncher {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
         match self.sock.take() {
-            Some(s) => (*self.f)(ifc, poll, self.token, Ok(s)),
+            Some(s) => (*self.f)(ifc, poll, self.token, Ok((s, self.peer))),
             None => (*self.f)(ifc, poll, self.token, Err(NatError::UdpHolePunchFailed)),
         }
     }
@@ -298,20 +291,4 @@ impl NatState for Puncher {
     fn as_any(&mut self) -> &mut Any {
         self
     }
-}
-
-fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
-    let nonce = box_::gen_nonce();
-    let handshake = CryptoHandshake {
-        nonce: nonce.0,
-        cipher_text: box_::seal_precomputed(plain_text, &nonce, key),
-    };
-
-    Ok(serialize(&handshake, SizeLimit::Infinite)?)
-}
-
-fn msg_to_read(raw: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
-    let CryptoHandshake { nonce, cipher_text } = deserialize(raw)?;
-    box_::open_precomputed(&cipher_text, &box_::Nonce(nonce), key).
-        map_err(|()| NatError::AsymmetricDecipherFailed)
 }

@@ -13,6 +13,14 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 
+/// UDP Rendezvous server.
+///
+/// This is intended to be kept running on some publicly reachable endpoint so that peers can
+/// obtain their rendezvous information. The information provided back to the peer is encrypted
+/// with peer-supplied asymmetric key. Certain router and firewalls scan the packet and if they
+/// find an IP address belonging to their pool that they use to do the NAT mapping/translation,
+/// they take it as a STUN attempt or similar and mangle the information or even discard it.
+/// Encrypting makes sure no such thing happens.
 pub struct UdpRendezvousServer {
     sock: UdpSocket,
     token: Token,
@@ -20,7 +28,8 @@ pub struct UdpRendezvousServer {
 }
 
 impl UdpRendezvousServer {
-    pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
+    /// Boot the UDP Rendezvous server. This should normally be called only once.
+    pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
         let port = ifc.config().udp_rendezvous_port.unwrap_or(UDP_RENDEZVOUS_PORT);
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
         let sock = UdpSocket::bind(&addr)?;
@@ -43,7 +52,7 @@ impl UdpRendezvousServer {
             server.borrow_mut().terminate(ifc, poll);
             Err(NatError::UdpRendezvousServerStartFailed)
         } else {
-            Ok(())
+            Ok(token)
         }
     }
 

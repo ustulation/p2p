@@ -16,13 +16,24 @@ use std::time::Duration;
 use tcp::TcpHolePunchMediator;
 use udp::UdpHolePunchMediator;
 
+/// Callback to receive the result of rendezvous
 pub type GetInfo = Box<FnMut(&mut Interface, &Poll, ::Res<(Handle, RendezvousInfo)>)>;
+/// Callback to receive the result of hole punching
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
 
+/// A rendezvous packet.
+///
+/// This is supposed to be exchanged out of band betwen the peers to allow them to hole-punch to
+/// each other.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RendezvousInfo {
+    /// UDP addresses in order
     pub udp: Vec<SocketAddr>,
+    /// TCP addresses in order
     pub tcp: Vec<SocketAddr>,
+    /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
+    /// key to authenticate the message. We will use our secret key to decrypt and peer public key
+    /// to validate authenticity of the message.
     pub enc_pk: [u8; box_::PUBLICKEYBYTES],
 }
 
@@ -46,10 +57,16 @@ impl Default for RendezvousInfo {
     }
 }
 
+/// A successful result of hole punch will be bundled in this structure
 #[derive(Debug)]
 pub struct HolePunchInfo {
+    /// TCP socket that successfully managed to hole punch
     pub tcp: Option<(TcpStream, Token)>,
-    pub udp: Option<(UdpSocket, Token)>,
+    /// UDP socket that successfully managed to hole punch
+    pub udp: Option<(UdpSocket, SocketAddr, Token)>,
+    /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
+    /// key to authenticate the message. We will use our secret key to decrypt and peer public key
+    /// to validate authenticity of the message.
     pub enc_pk: box_::PublicKey,
 }
 
@@ -101,7 +118,11 @@ impl Debug for State {
     }
 }
 
-
+/// The main hole punch mediator engine.
+///
+/// This is responsible for managing all the hole punching details. It has child states to mediate
+/// UDP and TCP rendezvous as well as UDP and TCP hole punching. The result will be published to
+/// the user via accepted callbacks.
 pub struct HolePunchMediator {
     token: Token,
     state: State,
@@ -111,6 +132,9 @@ pub struct HolePunchMediator {
 }
 
 impl HolePunchMediator {
+    /// Start the mediator engine. This will prepare it for the rendezvous. Once rendezvous
+    /// information is obtained via the given callback, the user is expected to exchange it out of
+    /// band with the peer and begin hole punching by giving the peer's rendezvous information.
     pub fn start(ifc: &mut Interface, poll: &Poll, f: GetInfo) -> ::Res<()> {
         let token = ifc.new_token();
         let dur = ifc.config().rendezvous_timeout_sec.unwrap_or(RENDEZVOUS_TIMEOUT_SEC);
@@ -273,7 +297,7 @@ impl HolePunchMediator {
     fn handle_udp_hole_punch(&mut self,
                              ifc: &mut Interface,
                              poll: &Poll,
-                             res: ::Res<(UdpSocket, Token)>) {
+                             res: ::Res<(UdpSocket, SocketAddr, Token)>) {
         let r = match self.state {
             State::HolePunching { ref mut info, ref mut f, .. } => {
                 self.udp_child = None;
@@ -382,12 +406,21 @@ impl NatState for HolePunchMediator {
     }
 }
 
+/// Handle to the HolePunchMediator.
+///
+/// Using this handle, the user can provide peer rendezvous information to begin hole punching. The
+/// handle is flexible enough to invoke hole punching either from another thread or from the event
+/// loop thread. The choice is upto the user.
+///
+/// Dropping this handle will clean up all the internal states associated with this handle and the
+/// entire HolePunchMediator for this handle will terminate gracefully.
 pub struct Handle {
     token: Token,
     tx: Sender<NatMsg>,
 }
 
 impl Handle {
+    /// Fire hole punch request from a non-event loop thread.
     pub fn fire_hole_punch(self, peer: RendezvousInfo, f: HolePunchFinsih) {
         let token = self.token;
         if let Err(e) = self.tx.send(NatMsg::new(move |ifc, poll| {
@@ -399,6 +432,7 @@ impl Handle {
         }
     }
 
+    /// Request hole punch from within the event loop thread.
     pub fn start_hole_punch(ifc: &mut Interface,
                             poll: &Poll,
                             hole_punch_mediator: Token,
@@ -418,6 +452,7 @@ impl Handle {
         }
     }
 
+    /// Obtain the token associated with the HolePunchMediator to which this is a handle.
     pub fn mediator_token(self) -> Token {
         let token = self.token;
         mem::forget(self);

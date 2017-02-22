@@ -17,7 +17,7 @@ mod puncher;
 mod rendezvous_client;
 
 pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<Vec<SocketAddr>>)>;
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSocket, Token)>)>;
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSocket, SocketAddr, Token)>)>;
 
 enum State {
     None,
@@ -243,12 +243,12 @@ impl UdpHolePunchMediator {
                          ifc: &mut Interface,
                          poll: &Poll,
                          child: Token,
-                         res: ::Res<UdpSocket>) {
+                         res: ::Res<(UdpSocket, SocketAddr)>) {
         let r = match self.state {
             State::HolePunching { ref mut children, ref mut f } => {
                 let _ = children.remove(&child);
-                if let Ok(sock) = res {
-                    f(ifc, poll, Ok((sock, child)));
+                if let Ok((sock, addr)) = res {
+                    f(ifc, poll, Ok((sock, addr, child)));
                     Ok(true)
                 } else if children.is_empty() {
                     f(ifc, poll, Err(NatError::UdpHolePunchFailed));

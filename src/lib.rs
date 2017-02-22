@@ -205,6 +205,7 @@ extern crate rand;
 extern crate rust_sodium as sodium;
 extern crate serde;
 
+use bincode::{SizeLimit, deserialize, serialize};
 use mio::{Poll, Ready, Token};
 use mio::channel::Sender;
 use mio::timer::{Timeout, TimerError};
@@ -334,4 +335,30 @@ pub trait Interface {
     fn enc_sk(&self) -> &box_::SecretKey;
     /// Obtain a sender for use to send messages into event loop.
     fn sender(&self) -> &Sender<NatMsg>;
+}
+
+/// General wire format for encrypted communication
+#[derive(Serialize, Deserialize)]
+pub struct CryptMsg {
+    pub nonce: [u8; box_::NONCEBYTES],
+    pub cipher_text: Vec<u8>,
+}
+
+
+/// Utility function to encrypt messages to peer
+pub fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
+    let nonce = box_::gen_nonce();
+    let handshake = CryptMsg {
+        nonce: nonce.0,
+        cipher_text: box_::seal_precomputed(plain_text, &nonce, key),
+    };
+
+    Ok(serialize(&handshake, SizeLimit::Infinite)?)
+}
+
+/// Utility function to decrypt messages from peer
+pub fn msg_to_read(raw: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
+    let CryptMsg { nonce, cipher_text } = deserialize(raw)?;
+    box_::open_precomputed(&cipher_text, &box_::Nonce(nonce), key).
+        map_err(|()| NatError::AsymmetricDecipherFailed)
 }

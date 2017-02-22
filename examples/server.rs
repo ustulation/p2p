@@ -13,7 +13,7 @@ mod event_loop;
 fn main() {
     let el = spawn_event_loop();
     unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        unwrap!(UdpRendezvousServer::start(ifc, poll));
+        let _token = unwrap!(UdpRendezvousServer::start(ifc, poll));
     })));
 
     let (_tx, rx) = mpsc::channel();
