@@ -16,8 +16,8 @@
 //!
 //! This is the least restrictive NAT. All we need to do is make sure the mapping exists. This can
 //! be done by simply going through the rendezvous handshake coded in this crate. It should have
-//! the same effect as if the port had been forwarded manually or via [`Internet Gateway Device
-//! Protocol`][0] through code. If both sides are full cone then we can easily establis p2p
+//! the same effect as if the port had been forwarded manually or via [Internet Gateway Device
+//! Protocol][0] through code. If both sides are full cone then we can easily establis p2p
 //! communication.
 //!
 //! ### Endpoint Address & Port Dependent Filtering (Port Restricted Cone)
@@ -175,22 +175,23 @@
 //! (like in a State Pattern) before reaching the final stage where we indicate via the callbacks
 //! we take, whether the operation succeeded or failed. These intermediate states must be preserved
 //! and notified to appropriately function. So we ask the user to provide us a way to preserve our
-//! state (via [`insert_state()`]), retrieve state ([`state()`]), remove it ([`remove_state()`])
+//! state (via [`insert_state`]), retrieve state ([`state`]), remove it ([`remove_state`])
 //! and so on. The crate completely managers its own states including resouce cleanups etc. and not
 //! burden the user with it. This is what we ask via [`Interface`] trait.
 //!
 //! Just like we expect user to give us an expected [`Interface`] we ourselves implement
 //! [`NatState`] trait. This trait allows the user to call our various states on appropriate events
 //! during [Poll]. Any registered state can be actively terminated by user by invoking
-//! [`NatState::terminate()`].
+//! [`terminate`].
 //!
 //! [0]: https://en.wikipedia.org/wiki/Internet_Gateway_Device_Protocol
 //! [mio]: https://github.com/carllerche/mio
-//! [`Interface`]:
+//! [`Interface`]: ./p2p/trait.Interface.html
 //! [`NatState`]: ./p2p/trait.NatState.html
-//! [`insert_state()`]: ./p2p/trait.NatState.html#method.insert_state
-//! [`state()`]: ./p2p/trait.NatState.html#method.state
-//! [`remove_state()`]: ./p2p/trait.NatState.html#method.remove_state
+//! [`insert_state`]: ./p2p/trait.Interface.html#method.insert_state
+//! [`state`]: ./p2p/trait.Interface.html#method.state
+//! [`remove_state`]: ./p2p/trait.Interface.html#method.remove_state
+//! [`terminate`]: ./p2p/trait.NatState.html#method.terminate
 //! [Poll]: http://rust-doc.s3-website-us-east-1.amazonaws.com/mio/master/mio/struct.Poll.html
 
 #![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
@@ -275,10 +276,9 @@ impl NatTimer {
 /// A message that can be sent to the event loop to perform an action.
 ///
 /// This can be used to send actions from a thread outside the event loop too if sent via
-/// [mio::channel::Sender][0].
+/// [`mio::channel::Sender`][0].
 ///
-/// [0]: http://rust-doc.s3-website-us-east-1.amazonaws.com/mio/master/mio/channel\
-/// /struct.Sender.html
+/// [0]: http://rust-doc.s3-website-us-east-1.amazonaws.com/mio/master/mio/channel
 pub struct NatMsg(Box<FnMut(&mut Interface, &Poll) + Send + 'static>);
 impl NatMsg {
     /// Construct a new message indicating the action via a function/functor.
