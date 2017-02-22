@@ -414,6 +414,8 @@ impl NatState for HolePunchMediator {
 ///
 /// Dropping this handle will clean up all the internal states associated with this handle and the
 /// entire `HolePunchMediator` for this handle will terminate gracefully.
+///
+/// [`HolePunchMediator`]: ../p2p/hole_punch/struct.HolePunchMediator.html
 pub struct Handle {
     token: Token,
     tx: Sender<NatMsg>,
