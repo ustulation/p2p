@@ -156,17 +156,19 @@ impl Puncher {
     }
 
     fn write_impl(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
-        let m = match self.sending {
-            Sending::Syn => SYN,
-            Sending::SynAck => SYN_ACK,
-            Sending::Ack => ACK,
-            Sending::None => {
-                let _ = ifc.cancel_timeout(&self.timeout);
-                return Ok(());
-            }
-        };
+        let msg = {
+            let m = match self.sending {
+                Sending::Syn => SYN,
+                Sending::SynAck => SYN_ACK,
+                Sending::Ack => ACK,
+                Sending::None => {
+                    let _ = ifc.cancel_timeout(&self.timeout);
+                    return Ok(());
+                }
+            };
 
-        let msg = ::msg_to_send(m, &self.key)?;
+            ::msg_to_send(m, &self.key)?
+        };
 
         let r = match self.sock.as_ref() {
             Some(s) => s.send_to(&msg, &self.peer),
@@ -174,10 +176,10 @@ impl Puncher {
         };
         let sent = match r {
             Ok(Some(bytes_txd)) => {
-                if bytes_txd != m.len() {
+                if bytes_txd != msg.len() {
                     debug!("Partial datagram sent - datagram will be treated as corrupted. \
                             Actual size: {} B, sent size: {} B.",
-                           m.len(),
+                           msg.len(),
                            bytes_txd);
                     false
                 } else {

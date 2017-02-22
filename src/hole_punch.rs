@@ -406,14 +406,14 @@ impl NatState for HolePunchMediator {
     }
 }
 
-/// Handle to the HolePunchMediator.
+/// Handle to the `HolePunchMediator`.
 ///
 /// Using this handle, the user can provide peer rendezvous information to begin hole punching. The
 /// handle is flexible enough to invoke hole punching either from another thread or from the event
 /// loop thread. The choice is upto the user.
 ///
 /// Dropping this handle will clean up all the internal states associated with this handle and the
-/// entire HolePunchMediator for this handle will terminate gracefully.
+/// entire `HolePunchMediator` for this handle will terminate gracefully.
 pub struct Handle {
     token: Token,
     tx: Sender<NatMsg>,
