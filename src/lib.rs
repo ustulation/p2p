@@ -186,12 +186,12 @@
 //!
 //! [0]: https://en.wikipedia.org/wiki/Internet_Gateway_Device_Protocol
 //! [mio]: https://github.com/carllerche/mio
-//! [`Interface`]: ./p2p/trait.Interface.html
-//! [`NatState`]: ./p2p/trait.NatState.html
-//! [`insert_state`]: ./p2p/trait.Interface.html#method.insert_state
-//! [`state`]: ./p2p/trait.Interface.html#method.state
-//! [`remove_state`]: ./p2p/trait.Interface.html#method.remove_state
-//! [`terminate`]: ./p2p/trait.NatState.html#method.terminate
+//! [`Interface`]: ./trait.Interface.html
+//! [`NatState`]: ./trait.NatState.html
+//! [`insert_state`]: ./trait.Interface.html#method.insert_state
+//! [`state`]: ./trait.Interface.html#method.state
+//! [`remove_state`]: ./trait.Interface.html#method.remove_state
+//! [`terminate`]: ./trait.NatState.html#method.terminate
 //! [Poll]: http://rust-doc.s3-website-us-east-1.amazonaws.com/mio/master/mio/struct.Poll.html
 
 #![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
@@ -253,8 +253,8 @@ pub type Res<T> = Result<T, NatError>;
 /// timer and also pinpoint which timer within it (using timer id) if it had started several
 /// timers.
 ///
-/// [`NatState`]: ./p2p/trait.NatState.html
-/// [`NatState::timeout`]: ./p2p/trait.NatState.html#method.timeout
+/// [`NatState`]: ./trait.NatState.html
+/// [`NatState::timeout`]: ./trait.NatState.html#method.timeout
 pub struct NatTimer {
     /// Associated `NatState::timeout` to be called
     pub associated_nat_state: Token,
