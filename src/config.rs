@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 /// Default for udp rendezvous port
 pub const UDP_RENDEZVOUS_PORT: u16 = 5484;
 /// Default for rendezvous timeout in seconds
-pub const RENDEZVOUS_TIMEOUT_SEC: u64 = 5;
+pub const RENDEZVOUS_TIMEOUT_SEC: u64 = 8;
 /// Default for hole-punch timeout in seconds
-pub const HOLE_PUNCH_TIMEOUT_SEC: u64 = 10;
+pub const HOLE_PUNCH_TIMEOUT_SEC: u64 = 15;
 
 /// Various configurations with which to proceed with NAT traversal.
 ///

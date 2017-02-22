@@ -17,6 +17,7 @@ const SYN: &'static [u8] = b"SYN";
 const SYN_ACK: &'static [u8] = b"SYN-ACK";
 const ACK: &'static [u8] = b"ACK";
 
+#[derive(Debug)]
 enum Sending {
     Syn,
     SynAck,
@@ -273,13 +274,15 @@ impl NatState for Puncher {
             return self.handle_err(ifc, poll);
         }
         let r = match self.sock.as_ref() {
-            Some(sock) => sock.set_ttl(self.current_ttl),
-            None => return,
+            Some(sock) => sock.set_ttl(self.current_ttl).map_err(From::from),
+            None => Err(NatError::UnregisteredSocket),
         };
         if let Err(e) = r {
             debug!("Error setting ttl: {:?}", e);
             return self.handle_err(ifc, poll);
         }
+
+        self.write(ifc, poll)
     }
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
