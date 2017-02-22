@@ -70,8 +70,8 @@
 //! and getting blacklisted. By the time we hit TTL of around 12, we would like reach the other
 //! end.
 //!
-//! This crate is highly configurable while providing reasonable defaults. So if the user wants he
-//! can choose the starting TTL and the delay between bumping it up and re-transmitting. The
+//! This crate is highly configurable while providing reasonable defaults. So if the user wants
+//! they can choose the starting TTL and the delay between bumping it up and re-transmitting. The
 //! resonable default would be to choose 3 sockets per peer, one with TTL starting 2, one with 6
 //! and one with 64 (or OS default), so that if the fastest one was going to succeed it would do so
 //! immediately (for friendlier routers) otherwise the slower ones would eventually reach there.
@@ -123,6 +123,62 @@
 //! routers/firewalls seem to scan for socket addresses and if it matches the ones in the router's
 //! pool they try to figure out it's a rendezvous/STUN attempt. With encrypted contents there is no
 //! chance of such detection, so we are safe there.
+//!
+//! ## TCP
+//!
+//! With TCP some the challanges are greater. The usual process is going through the same
+//! rendezvous as with UDP above. While one UDP socket did fine for communicating with all the
+//! servers and then hole punching to peer, TCP is connection oriented and thus we need multiple
+//! sockets. We will bind a connector per server and then a connector to the peer. While beginning
+//! to hole punch to the peer we will also additionally bind a listener to the same exact local
+//! endpoint.
+//!
+//! TCP connection can be established either via normal connector-listener pair, in which one side
+//! is active (sends `SYNs`) while the other is passive (reacts to `SYNs` by sending `SYN-ACKs`),
+//! or via lesser know `TCP Simulataneous Connect` in which both sides actively send `SYNs` and
+//! both establish the connection because when they see a `SYN` in response to a `SYN` they know
+//! the other side also wants to establish the connection and then it materialises. If there is an
+//! active connector and a listener bound to the same local endpoint on either side (like stated
+//! above), there is a better chance of establishing a connection. If `SYN` is sent by peer 1 to 2
+//! punching a hole (updating the filter) in 1's router for 2 and similarly sent by 2 for 1 then
+//! when they reach each other's routers they are let through and `TCP Simulataneous Connect` kicks
+//! in. If one of the `SYNs` reached the other end before the other's `SYN` could leave its router,
+//! it will be dropped as an unsolicited communication by the router. If the connect times out and
+//! then the other sends the connect `SYN`, the first peer's listener will accept it, thus
+//! increasing the connection chances.
+//!
+//! One of the challange here is that the peer router not on drops the `SYN` silently (which is
+//! good for us) but additionally sends an `RST`. This could have bad effects. One is our router
+//! might close the hole (update the filter to not allow remote traffic from peer any more) because
+//! it realises that the connection has been closed.  This mean we will have to continually send
+//! `SYNs` to re-enliven the hole even though we get `RSTs` and our connector exits. So the connect
+//! logic sort of happens in a busy loop consuming resources.
+//!
+//! The other challenge is worse - some routers simply discard the incoming `SYNs` thus making it
+//! impossible to do a TCP hole punch (or at-least until someone can show a cleverer way to
+//! outsmart the router).
+//!
+//! Combined with non-hairpinning and blacklisting (aggressive flood attack prevention), we can
+//! quickly see why TCP NAT traversal is more difficult than UDP.
+//!
+//! # Crate Design
+//!
+//! This crate is async and currently written using pure `mio`. The user is free to choose their
+//! own event loop scheme. To work with user's async code, this crate has certain _expectations_.
+//! It is expected that the user code implements our `Interface` trait which is passed ubiquitously
+//! throughout the code here. Through this trait we are able to specify our requirement from the
+//! user code. For e.g. most code in this crate go through several states (like in a State Pattern)
+//! before reaching the final stage where we indicate via the callbacks we take, whether the
+//! operation succeeded or failed. These intermediate states must be preserved and notified to
+//! appropriately function. So we ask the user to provide us a way to preserve our state (via
+//! `insert_state()`), retrieve (`state()`), remove it (`remove_state()`) because we completely
+//! manage our states and not burden the user code with it, and so on. This is what we ask via
+//! `Interface` trait.
+//!
+//! Just like we expect user to give us an expected `Interface` we ourselves implement `NatState`
+//! trait. This trait allows the user to call our various states on appropriate events from the
+//! `Poll`. Any registered state can be actively terminated by user by invoking
+//! `NatState::terminate()`. Similarly other functions in that trait.
 
 #![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
 #![recursion_limit="100"]
@@ -171,13 +227,25 @@ pub use hole_punch::{GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchM
                      RendezvousInfo};
 pub use udp::UdpRendezvousServer;
 
+/// Result type used by this crate.
 pub type Res<T> = Result<T, NatError>;
 
+/// The timer state used by this crate.
+///
+/// When the timer fires in the user's event loop poll, it is expected that they retrieve the
+/// `NatState` using the associated token held in the timer and call its `NatState::timeout` using
+/// the timer id. This allows the ivocation of the correct `NatState` that started this timer and
+/// also pinpoint which timer within it (using timer id) if it had started several timers.
 pub struct NatTimer {
+    /// Associated `NatState::timeout` to be called
     pub associated_nat_state: Token,
+    /// Indicates which timer fired out of potentially many that a state could have started. Also
+    /// given to the parameter of `NatState::timeout`.
     pub timer_id: u8,
 }
+
 impl NatTimer {
+    /// Create a new `NatTimer`
     pub fn new(state: Token, timer_id: u8) -> Self {
         NatTimer {
             associated_nat_state: state,
@@ -186,8 +254,13 @@ impl NatTimer {
     }
 }
 
+/// A message that can be sent to the event loop to perform an action.
+///
+/// This can be used to send actions from a thread outside the event loop too if sent via
+/// `mio::channel::Sender`.
 pub struct NatMsg(Box<FnMut(&mut Interface, &Poll) + Send + 'static>);
 impl NatMsg {
+    /// Construct a new message indicating the action via a function/functor.
     pub fn new<F>(f: F) -> Self
         where F: FnOnce(&mut Interface, &Poll) + Send + 'static
     {
@@ -197,33 +270,68 @@ impl NatMsg {
         }))
     }
 
+    /// Execute the message (and thus the action).
     pub fn invoke(mut self, ifc: &mut Interface, poll: &Poll) {
         (self.0)(ifc, poll)
     }
 }
 
+/// The main trait that we implement.
+///
+/// All our registered states essentially implement this trait so that the user code can call us
+/// and indicate what event was fired for us in poll.
 pub trait NatState {
+    /// To be called when readiness event has fired
     fn ready(&mut self, &mut Interface, &Poll, Ready) {}
+    /// To be called when user wants to actively terminate this state. It will do all the necessary
+    /// clean ups and resource (file/socket descriptors) cleaning freeing so merely calling this is
+    /// sufficient.
     fn terminate(&mut self, &mut Interface, &Poll) {}
+    /// To be called when timeout has been fired and the user has retrieved the state using the
+    /// token stored inside the `NatTimer::associated_nat_state`.
     fn timeout(&mut self, &mut Interface, &Poll, u8) {}
+    /// This is for internal use for the crate and is rarely needed.
     fn as_any(&mut self) -> &mut Any;
 }
 
+/// The main trait that our users should implement.
+///
+/// We enlist our _expectations_ from the user code using this trait. This trait object is passed
+/// ubiquitously in this crate and also passed back to the user via various callbacks we take to
+/// communicate results back to them.
 pub trait Interface {
+    /// We call this when we want our state to be held before we go back to the event loop. The
+    /// callee is expected to store this some place (e.g. `HashMap<Token, Rc<RefCell<NatState>>>`)
+    /// to be retrieved when `mio` poll indicates some event associated with the `token` has
+    /// occurred. In that case call `NatState::ready`.
     fn insert_state(&mut self,
                     token: Token,
                     state: Rc<RefCell<NatState>>)
                     -> Result<(), (Rc<RefCell<NatState>>, String)>;
+    /// Remove the state that was previously stored against the `token` and return it if
+    /// successfully retrieved.
     fn remove_state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
+    /// Return the state (without removing - just a query) associated with the `token`
     fn state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
+    /// Set timeout. User code is expected to have a `mio::timer::Timer<NatTimer>` on which the
+    /// timeout can be set.
     fn set_timeout(&mut self,
                    duration: Duration,
                    timer_detail: NatTimer)
                    -> Result<Timeout, TimerError>;
+    /// Cancel the timout
     fn cancel_timeout(&mut self, timeout: &Timeout) -> Option<NatTimer>;
+    /// Give us a new unique token
     fn new_token(&mut self) -> Token;
+    /// Give us the `Config` the crate uses to figure out various values and behaviors
     fn config(&self) -> &Config;
+    /// Hand over a public encryption key. This must be ideally initialised once and must not
+    /// change in subsequent calls as this is what will be shared with remote contacts for secure
+    /// communication.
     fn enc_pk(&self) -> &box_::PublicKey;
+    /// Hand over a reference to secret encryption key. This must be ideally initialised once and
+    /// must not change in subsequent calls as this is what will be used for secure communication.
     fn enc_sk(&self) -> &box_::SecretKey;
+    /// Obtain a sender for use to send messages into event loop.
     fn sender(&self) -> &Sender<NatMsg>;
 }
