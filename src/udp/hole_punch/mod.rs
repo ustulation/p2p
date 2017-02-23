@@ -175,8 +175,13 @@ impl UdpHolePunchMediator {
             ext_addrs
         });
 
-        if r.is_err() {
-            self.terminate(ifc, poll);
+        match r {
+            Ok(_) |
+            Err(NatError::InvalidState) => (),
+            Err(ref e) => {
+                debug!("Terminating due to: {:?}", e);
+                self.terminate(ifc, poll);
+            }
         }
 
         r

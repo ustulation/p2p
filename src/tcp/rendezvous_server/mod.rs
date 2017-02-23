@@ -34,7 +34,7 @@ impl TcpRendezvousServer {
             let port = ifc.config().tcp_rendezvous_port.unwrap_or(TCP_RENDEZVOUS_PORT);
             let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
             let builder = TcpBuilder::new_v4()?;
-            builder.bind(addr)?;
+            let _ = builder.bind(addr)?;
             let l = builder.listen(LISTENER_BACKLOG)?;
             TcpListener::from_listener(l, &addr)?
         };

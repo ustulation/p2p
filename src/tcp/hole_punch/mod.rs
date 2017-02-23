@@ -220,6 +220,23 @@ impl TcpHolePunchMediator {
         Ok(ext_addr)
     }
 
+    pub fn rendezvous_timeout(&mut self, ifc: &mut Interface, poll: &Poll) -> NatError {
+        let e = match self.state {
+            State::Rendezvous { .. } => NatError::TcpRendezvousFailed,
+            _ => NatError::InvalidState,
+        };
+
+        match e {
+            NatError::InvalidState => (),
+            ref x => {
+                debug!("Terminating due to: {:?}", x);
+                self.terminate(ifc, poll);
+            }
+        }
+
+        e
+    }
+
     pub fn punch_hole(&mut self,
                       ifc: &mut Interface,
                       poll: &Poll,

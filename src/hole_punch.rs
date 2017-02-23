@@ -206,66 +206,36 @@ impl HolePunchMediator {
                              ifc: &mut Interface,
                              poll: &Poll,
                              res: ::Res<Vec<SocketAddr>>) {
-        let r = match self.state {
-            State::Rendezvous { ref mut info, ref mut f, ref timeout } => {
-                if let Ok(ext_addrs) = res {
-                    // We assume that udp_child does not return an empty list here - rather it
-                    // should error out on such case (i.e. call us with an error)
-                    info.udp = ext_addrs;
-                } else {
-                    self.udp_child = None;
-                }
-                if self.tcp_child.is_none() || !info.tcp.is_none() {
-                    if self.udp_child.is_none() && self.tcp_child.is_none() {
-                        f(ifc, poll, Err(NatError::RendezvousFailed));
-                        Err(NatError::RendezvousFailed)
-                    } else {
-                        let _ = ifc.cancel_timeout(timeout);
-                        let info = mem::replace(info, Default::default());
-                        let handle = Handle {
-                            token: self.token,
-                            tx: ifc.sender().clone(),
-                        };
-                        f(ifc, poll, Ok((handle, info)));
-                        Ok(true)
-                    }
-                } else {
-                    Ok(false)
-                }
+        if let State::Rendezvous { ref mut info, .. } = self.state {
+            if let Ok(ext_addrs) = res {
+                // We assume that udp_child does not return an empty list here - rather it
+                // should error out on such case (i.e. call us with an error)
+                info.udp = ext_addrs;
+            } else {
+                self.udp_child = None;
             }
-            ref x => {
-                warn!("Logic Error in state book-keeping - Pls report this as a bug. Expected \
-                       state: State::Rendezvous ;; Found: {:?}",
-                      x);
-                Err(NatError::InvalidState)
-            }
-        };
-
-        match r {
-            Ok(true) => self.state = State::ReadyToHolePunch,
-            Ok(false) => (),
-            Err(e @ NatError::RendezvousFailed) => {
-                // This is reached only if children is empty. So no chance of borrow violation for
-                // children in terminate()
-                debug!("Terminating due to: {:?}", e);
-                self.terminate(ifc, poll);
-            }
-            // Don't call terminate as that can lead to child being borrowed twice
-            Err(e) => debug!("Ignoring error in handle hole-punch: {:?}", e),
         }
+
+        self.handle_rendezvous_impl(ifc, poll);
     }
 
     fn handle_tcp_rendezvous(&mut self, ifc: &mut Interface, poll: &Poll, res: ::Res<SocketAddr>) {
+        if let State::Rendezvous { ref mut info, .. } = self.state {
+            if let Ok(ext_addr) = res {
+                info.tcp = Some(ext_addr);
+            } else {
+                self.tcp_child = None;
+            }
+        }
+
+        self.handle_rendezvous_impl(ifc, poll);
+    }
+
+    fn handle_rendezvous_impl(&mut self, ifc: &mut Interface, poll: &Poll) {
         let r = match self.state {
             State::Rendezvous { ref mut info, ref mut f, ref timeout } => {
-                if let Ok(ext_addr) = res {
-                    // We assume that tcp_child does not return an empty option here - rather it
-                    // should error out on such case (i.e. call us with an error)
-                    info.tcp = Some(ext_addr);
-                } else {
-                    self.tcp_child = None;
-                }
-                if self.udp_child.is_none() || !info.udp.is_empty() {
+                if (self.udp_child.is_none() || !info.udp.is_empty()) &&
+                   (self.tcp_child.is_none() || info.tcp.is_some()) {
                     if self.udp_child.is_none() && self.tcp_child.is_none() {
                         f(ifc, poll, Err(NatError::RendezvousFailed));
                         Err(NatError::RendezvousFailed)
@@ -352,7 +322,7 @@ impl HolePunchMediator {
             if let Some(tcp_peer) = peer.tcp {
                 if let Err(e) = tcp_child.borrow_mut()
                     .punch_hole(ifc, poll, tcp_peer, &peer_enc_pk, Box::new(handler)) {
-                    debug!("Udp punch hole failed to start: {:?}", e);
+                    debug!("Tcp punch hole failed to start: {:?}", e);
                     self.tcp_child = None;
                 }
             } else {
@@ -378,57 +348,33 @@ impl HolePunchMediator {
                              ifc: &mut Interface,
                              poll: &Poll,
                              res: ::Res<(UdpSocket, SocketAddr, Token)>) {
-        let r = match self.state {
-            State::HolePunching { ref mut info, ref mut f, .. } => {
-                self.udp_child = None;
-                if let Ok(sock) = res {
-                    info.udp = Some(sock);
-                }
-                if self.tcp_child.is_none() && self.udp_child.is_none() {
-                    if info.tcp.is_none() && info.udp.is_none() {
-                        f(ifc, poll, Err(NatError::HolePunchFailed));
-                        Err(NatError::HolePunchFailed)
-                    } else {
-                        let info = mem::replace(info, Default::default());
-                        f(ifc, poll, Ok(info));
-                        Ok(true)
-                    }
-                } else {
-                    Ok(false)
-                }
+        if let State::HolePunching { ref mut info, .. } = self.state {
+            self.udp_child = None;
+            if let Ok(sock) = res {
+                info.udp = Some(sock);
             }
-            ref x => {
-                warn!("Logic Error in state book-keeping - Pls report this as a bug. Expected \
-                       state: State::HolePunching ;; Found: {:?}",
-                      x);
-                Err(NatError::InvalidState)
-            }
-        };
-
-        match r {
-            Ok(true) => self.terminate(ifc, poll),
-            Ok(false) => (),
-            Err(e @ NatError::HolePunchFailed) => {
-                // This is reached only if children is empty. So no chance of borrow violation for
-                // children in terminate()
-                debug!("Terminating due to: {:?}", e);
-                self.terminate(ifc, poll);
-            }
-            // Don't call terminate as that can lead to child being borrowed twice
-            Err(e) => debug!("Ignoring error in handle udp-hole-punch: {:?}", e),
         }
+
+        self.handle_hole_punch_impl(ifc, poll);
     }
 
     fn handle_tcp_hole_punch(&mut self,
                              ifc: &mut Interface,
                              poll: &Poll,
                              res: ::Res<(TcpStream, Token)>) {
+        if let State::HolePunching { ref mut info, .. } = self.state {
+            self.tcp_child = None;
+            if let Ok(sock) = res {
+                info.tcp = Some(sock);
+            }
+        }
+
+        self.handle_hole_punch_impl(ifc, poll);
+    }
+
+    fn handle_hole_punch_impl(&mut self, ifc: &mut Interface, poll: &Poll) {
         let r = match self.state {
             State::HolePunching { ref mut info, ref mut f, .. } => {
-                self.tcp_child = None;
-                if let Ok(sock) = res {
-                    info.tcp = Some(sock);
-                }
                 if self.tcp_child.is_none() && self.udp_child.is_none() {
                     if info.tcp.is_none() && info.udp.is_none() {
                         f(ifc, poll, Err(NatError::HolePunchFailed));
@@ -460,7 +406,7 @@ impl HolePunchMediator {
                 self.terminate(ifc, poll);
             }
             // Don't call terminate as that can lead to child being borrowed twice
-            Err(e) => debug!("Ignoring error in handle udp-hole-punch: {:?}", e),
+            Err(e) => debug!("Ignoring error in handle hole-punch: {:?}", e),
         }
     }
 }
@@ -474,11 +420,18 @@ impl NatState for HolePunchMediator {
         let terminate = match self.state {
             State::Rendezvous { .. } => {
                 if let Some(udp_child) = self.udp_child.as_ref().cloned() {
-                    let r = udp_child.borrow_mut().rendezvous_timeout(ifc, poll);
-                    self.handle_udp_rendezvous(ifc, poll, r);
+                    match udp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
+                        // It has already gone to the next state, ignore it
+                        Err(NatError::InvalidState) => (),
+                        r @ Ok(_) | r @ Err(_) => self.handle_udp_rendezvous(ifc, poll, r),
+                    }
                 }
-                if let Some(tcp_child) = self.tcp_child.take() {
-                    tcp_child.borrow_mut().terminate(ifc, poll);
+                if let Some(tcp_child) = self.tcp_child.as_ref().cloned() {
+                    match tcp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
+                        // It has already gone to the next state, ignore it
+                        NatError::InvalidState => (),
+                        e => self.handle_tcp_rendezvous(ifc, poll, Err(e)),
+                    }
                 }
 
                 false

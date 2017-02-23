@@ -1,3 +1,5 @@
+//! Various defaults for behaviour configuration
+
 use std::net::SocketAddr;
 
 /// Default for udp rendezvous port
