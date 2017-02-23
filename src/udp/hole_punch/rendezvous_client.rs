@@ -109,7 +109,7 @@ impl UdpRendezvousClient {
                     }
                 }
                 Err(e) => {
-                    debug!("Ignoring UdpEchoResp which contained non-utf9 address: {:?}",
+                    debug!("Ignoring UdpEchoResp which contained non-utf8 address: {:?}",
                            e)
                 }
             }

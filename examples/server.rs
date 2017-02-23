@@ -5,7 +5,7 @@ extern crate rust_sodium as sodium;
 extern crate unwrap;
 
 use self::event_loop::spawn_event_loop;
-use p2p::{NatMsg, UdpRendezvousServer};
+use p2p::{NatMsg, TcpRendezvousServer, UdpRendezvousServer};
 use std::sync::mpsc;
 
 mod event_loop;
@@ -13,7 +13,8 @@ mod event_loop;
 fn main() {
     let el = spawn_event_loop();
     unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        let _token = unwrap!(UdpRendezvousServer::start(ifc, poll));
+        let _token_udp = unwrap!(UdpRendezvousServer::start(ifc, poll));
+        let _token_tcp = unwrap!(TcpRendezvousServer::start(ifc, poll));
     })));
 
     let (_tx, rx) = mpsc::channel();

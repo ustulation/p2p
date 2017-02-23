@@ -214,7 +214,9 @@ extern crate quick_error;
 extern crate serde_derive;
 
 extern crate bincode;
+extern crate byteorder;
 extern crate mio;
+extern crate net2;
 extern crate rand;
 extern crate rust_sodium as sodium;
 extern crate serde;
@@ -240,6 +242,7 @@ pub use config::Config;
 pub use error::NatError;
 pub use hole_punch::{GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator,
                      RendezvousInfo};
+pub use tcp::TcpRendezvousServer;
 pub use udp::UdpRendezvousServer;
 
 /// Result type used by this crate.

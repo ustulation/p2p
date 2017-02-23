@@ -13,8 +13,10 @@ use std::str::FromStr;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-const UDP_RENDEZVOUS_SERVER_0: &'static str = "174.138.70.126:5484";
-const UDP_RENDEZVOUS_SERVER_1: &'static str = "104.236.84.160:5484";
+const UDP_RENDEZVOUS_SERVER_0: &'static str = "174.138.70.126:5483";
+const UDP_RENDEZVOUS_SERVER_1: &'static str = "104.236.84.160:5483";
+const TCP_RENDEZVOUS_SERVER_0: &'static str = "174.138.70.126:5484";
+const TCP_RENDEZVOUS_SERVER_1: &'static str = "104.236.84.160:5484";
 
 pub struct Core {
     nat_states: HashMap<Token, Rc<RefCell<NatState>>>,
@@ -176,10 +178,14 @@ pub fn spawn_event_loop() -> El {
         let config = Config {
             rendezvous_timeout_sec: None,
             hole_punch_timeout_sec: None,
+            tcp_rendezvous_port: None,
             udp_rendezvous_port: None,
             remote_udp_rendezvous_servers:
                 vec![unwrap!(SocketAddr::from_str(UDP_RENDEZVOUS_SERVER_0)),
                      unwrap!(SocketAddr::from_str(UDP_RENDEZVOUS_SERVER_1))],
+            remote_tcp_rendezvous_servers:
+                vec![unwrap!(SocketAddr::from_str(TCP_RENDEZVOUS_SERVER_0)),
+                     unwrap!(SocketAddr::from_str(TCP_RENDEZVOUS_SERVER_1))],
             udp_hole_punchers: vec![puncher_0, puncher_1, puncher_2],
         };
 

@@ -31,6 +31,14 @@ quick_error! {
         AsymmetricDecipherFailed {
             description("Failed to decrypt the cipher-text")
         }
+        /// Payload size is too large
+        PayloadSizeProhibitive {
+            description("Payload size is too large")
+        }
+        /// Zero bytes were read - usually indicates EOF (graceful shutdown)
+        ZeroByteRead {
+            description("Zero bytes were read - usually indicates EOF (graceful shutdown")
+        }
 
         // =======================================
 
@@ -44,6 +52,10 @@ quick_error! {
         UdpRendezvousFailed {
             description("Udp Rendezvous with server failed - could not obtain our external address")
         }
+        /// Tcp Rendezvous with server failed - could not obtain our external address
+        TcpRendezvousFailed {
+            description("Tcp Rendezvous with server failed - could not obtain our external address")
+        }
 
         // =======================================
 
@@ -55,9 +67,21 @@ quick_error! {
         UdpHolePunchMediatorFailedToStart {
             description("Booting Udp Hole Punch Mediator Failed")
         }
+        /// Booting up Tdp Hole Punch Mediator failed
+        TcpHolePunchMediatorFailedToStart {
+            description("Booting Tdp Hole Punch Mediator Failed")
+        }
         /// Booting up Udp Rendezvous Server failed
         UdpRendezvousServerStartFailed {
             description("Booting Udp Rendezvous Server Failed")
+        }
+        /// Booting up Tcp Rendezvous Server failed
+        TcpRendezvousServerStartFailed {
+            description("Booting Tcp Rendezvous Server Failed")
+        }
+        /// Booting up Tcp Rendezvous Server failed
+        TcpRendezvousExchangerStartFailed {
+            description("Booting Tcp Rendezvous Exchanger Failed")
         }
 
         // =======================================
@@ -69,6 +93,10 @@ quick_error! {
         /// Udp Hole punch failed
         UdpHolePunchFailed {
             description("Udp Hole punch failed")
+        }
+        /// Tcp Hole punch failed
+        TcpHolePunchFailed {
+            description("Tcp Hole punch failed")
         }
 
         // =======================================
