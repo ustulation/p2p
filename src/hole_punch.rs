@@ -1,5 +1,5 @@
 use {Interface, NatError, NatMsg, NatState, NatTimer};
-use config::{HOLE_PUNCH_TIMEOUT_SEC, RENDEZVOUS_TIMEOUT_SEC};
+use config::{HOLE_PUNCH_TIMEOUT_SEC, HOLE_PUNCH_WAIT_FOR_OTHER, RENDEZVOUS_TIMEOUT_SEC};
 use mio::{Poll, Token};
 use mio::channel::Sender;
 use mio::tcp::TcpStream;
@@ -351,6 +351,7 @@ impl HolePunchMediator {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.udp_child = None;
             if let Ok(sock) = res {
+                trace!("UDP has successfully hole punched");
                 info.udp = Some(sock);
             }
         }
@@ -365,6 +366,7 @@ impl HolePunchMediator {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.tcp_child = None;
             if let Ok(sock) = res {
+                trace!("TCP has successfully hole punched");
                 info.tcp = Some(sock);
             }
         }
@@ -384,8 +386,21 @@ impl HolePunchMediator {
                         f(ifc, poll, Ok(info));
                         Ok(true)
                     }
-                } else {
+                } else if info.tcp.is_none() && info.udp.is_none() {
+                    // None has succeeded yet so continue waiting
                     Ok(false)
+                } else {
+                    // At-least one has succeeded
+                    let wait = ifc.config()
+                        .hole_punch_wait_for_other
+                        .unwrap_or(HOLE_PUNCH_WAIT_FOR_OTHER);
+                    if wait {
+                        Ok(false)
+                    } else {
+                        let info = mem::replace(info, Default::default());
+                        f(ifc, poll, Ok(info));
+                        Ok(true)
+                    }
                 }
             }
             ref x => {
@@ -462,9 +477,18 @@ impl NatState for HolePunchMediator {
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         match self.state {
-            State::Rendezvous { ref timeout, .. } |
-            State::HolePunching { ref timeout, .. } => {
+            State::Rendezvous { ref timeout, .. } => {
                 let _ = ifc.cancel_timeout(timeout);
+            }
+            State::HolePunching { ref mut info, ref timeout, .. } => {
+                let _ = ifc.cancel_timeout(timeout);
+
+                if let Some((ref tcp, _)) = info.tcp {
+                    let _ = poll.deregister(tcp);
+                }
+                if let Some((ref udp, ..)) = info.udp {
+                    let _ = poll.deregister(udp);
+                }
             }
             _ => (),
         }

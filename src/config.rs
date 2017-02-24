@@ -10,6 +10,8 @@ pub const TCP_RENDEZVOUS_PORT: u16 = 5484;
 pub const RENDEZVOUS_TIMEOUT_SEC: u64 = 8;
 /// Default for hole-punch timeout in seconds
 pub const HOLE_PUNCH_TIMEOUT_SEC: u64 = 15;
+/// Default for if we want to wait for the other, given one of TCP or UDP has hole-punched
+pub const HOLE_PUNCH_WAIT_FOR_OTHER: bool = true;
 
 /// Various configurations with which to proceed with NAT traversal.
 ///
@@ -21,6 +23,8 @@ pub struct Config {
     pub rendezvous_timeout_sec: Option<u64>,
     /// Hole punch timeout in seconds
     pub hole_punch_timeout_sec: Option<u64>,
+    /// If we want to wait for the other, given one of TCP or UDP has hole-punched
+    pub hole_punch_wait_for_other: Option<bool>,
     /// UDP Rendezvous port. This is the port our UDP Rendezvous server will bind to and listen on.
     pub udp_rendezvous_port: Option<u16>,
     /// TCP Rendezvous port. This is the port our TCP Rendezvous server will bind to and listen on.

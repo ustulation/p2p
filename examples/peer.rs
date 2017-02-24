@@ -177,6 +177,12 @@ fn main() {
     let our_info = unwrap!(serde_json::to_string(&rendezvous_info));
     println!("Our rendezvous info:\n{}", our_info);
 
+    println!("\n[NOTE: For unfriendlier routers/NATs, timming can play a big role. It's \
+              recommended that once the rendezvous info is exchanged, both parties hit \"Enter\" \
+              as closely in time as possible. Usually with an overlay network to exchange this \
+              info there won't be a problem, but when doing it manually it could be of benefit \
+              to do it as simultaneously as possible.]\n");
+
     println!("Enter peer rendezvous info:");
     let mut peer_info = String::new();
     unwrap!(io::stdin().read_line(&mut peer_info));
