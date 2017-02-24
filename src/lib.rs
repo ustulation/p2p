@@ -102,8 +102,14 @@
 //! There are unfriendly routers in this category too in which the mapping is random and unrelated
 //! to any deltas/offsets. Such cases are currently not supported by this crate (though there is
 //! some work in pipeline to alleviate that too using a whole lot of sockets in a hope of getting
-//! one of them right). However it will be detected and will be logged (if logging is turned on) to
-//! the user and connection attempt to the peer will be discarded.
+//! one of them right). Some might even make slight changes in IP (and not only the ports) though
+//! this has not yet been encountered during testing with various routers. However all these will
+//! be detected and will be logged (if logging is turned on) to the user and connection attempt to
+//! the peer will be discarded.
+//!
+//! Also one more thing to note is, even with the friendlier NATs which apply fixed deltas to port
+//! increment, the resultant port might already be occupied by another socket. In such a case they
+//! would skip that port and yeild some other unused ones and our prediction would fail here too.
 //!
 //! ## Hairpinning
 //!
