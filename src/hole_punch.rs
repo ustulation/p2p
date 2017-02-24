@@ -30,7 +30,7 @@ pub struct RendezvousInfo {
     /// UDP addresses in order
     pub udp: Vec<SocketAddr>,
     /// TCP addresses in order
-    pub tcp: Vec<SocketAddr>,
+    pub tcp: Option<SocketAddr>,
     /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
@@ -38,10 +38,10 @@ pub struct RendezvousInfo {
 }
 
 impl RendezvousInfo {
-    fn with_keys(enc_pk: &box_::PublicKey) -> Self {
+    fn with_key(enc_pk: &box_::PublicKey) -> Self {
         RendezvousInfo {
             udp: vec![],
-            tcp: vec![],
+            tcp: None,
             enc_pk: enc_pk.0,
         }
     }
@@ -51,7 +51,7 @@ impl Default for RendezvousInfo {
     fn default() -> Self {
         RendezvousInfo {
             udp: vec![],
-            tcp: vec![],
+            tcp: None,
             enc_pk: [0; box_::PUBLICKEYBYTES],
         }
     }
@@ -148,6 +148,7 @@ impl HolePunchMediator {
             self_weak: Weak::new(),
         }));
         let weak = Rc::downgrade(&mediator);
+        let weak_cloned = weak.clone();
         mediator.borrow_mut().self_weak = weak.clone();
 
         let handler = move |ifc: &mut Interface, poll: &Poll, res| if let Some(mediator) =
@@ -163,7 +164,18 @@ impl HolePunchMediator {
             }
         };
 
-        let tcp_child = None; // TODO Put TCP logic here
+        let handler = move |ifc: &mut Interface, poll: &Poll, res| if let Some(mediator) =
+            weak_cloned.upgrade() {
+            mediator.borrow_mut().handle_tcp_rendezvous(ifc, poll, res);
+        };
+
+        let tcp_child = match TcpHolePunchMediator::start(ifc, poll, Box::new(handler)) {
+            Ok(child) => Some(child),
+            Err(e) => {
+                debug!("Tcp Hole Punch Mediator failed to initialise: {:?}", e);
+                None
+            }
+        };
 
         if udp_child.is_none() && tcp_child.is_none() {
             Err(NatError::RendezvousFailed)
@@ -171,7 +183,7 @@ impl HolePunchMediator {
             {
                 let mut m = mediator.borrow_mut();
                 m.state = State::Rendezvous {
-                    info: RendezvousInfo::with_keys(ifc.enc_pk()),
+                    info: RendezvousInfo::with_key(ifc.enc_pk()),
                     timeout: timeout,
                     f: f,
                 };
@@ -194,16 +206,36 @@ impl HolePunchMediator {
                              ifc: &mut Interface,
                              poll: &Poll,
                              res: ::Res<Vec<SocketAddr>>) {
+        if let State::Rendezvous { ref mut info, .. } = self.state {
+            if let Ok(ext_addrs) = res {
+                // We assume that udp_child does not return an empty list here - rather it
+                // should error out on such case (i.e. call us with an error)
+                info.udp = ext_addrs;
+            } else {
+                self.udp_child = None;
+            }
+        }
+
+        self.handle_rendezvous_impl(ifc, poll);
+    }
+
+    fn handle_tcp_rendezvous(&mut self, ifc: &mut Interface, poll: &Poll, res: ::Res<SocketAddr>) {
+        if let State::Rendezvous { ref mut info, .. } = self.state {
+            if let Ok(ext_addr) = res {
+                info.tcp = Some(ext_addr);
+            } else {
+                self.tcp_child = None;
+            }
+        }
+
+        self.handle_rendezvous_impl(ifc, poll);
+    }
+
+    fn handle_rendezvous_impl(&mut self, ifc: &mut Interface, poll: &Poll) {
         let r = match self.state {
             State::Rendezvous { ref mut info, ref mut f, ref timeout } => {
-                if let Ok(ext_addrs) = res {
-                    // We assume that udp_child does not return an empty list here - rather it
-                    // should error out on such case (i.e. call us with an error)
-                    info.udp = ext_addrs;
-                } else {
-                    self.udp_child = None;
-                }
-                if self.tcp_child.is_none() || !info.tcp.is_empty() {
+                if (self.udp_child.is_none() || !info.udp.is_empty()) &&
+                   (self.tcp_child.is_none() || info.tcp.is_some()) {
                     if self.udp_child.is_none() && self.tcp_child.is_none() {
                         f(ifc, poll, Err(NatError::RendezvousFailed));
                         Err(NatError::RendezvousFailed)
@@ -281,6 +313,24 @@ impl HolePunchMediator {
             }
         }
 
+        if let Some(tcp_child) = self.tcp_child.as_ref().cloned() {
+            let weak = self.self_weak.clone();
+            let handler = move |ifc: &mut Interface, poll: &Poll, res| if let Some(mediator) =
+                weak.upgrade() {
+                mediator.borrow_mut().handle_tcp_hole_punch(ifc, poll, res);
+            };
+            if let Some(tcp_peer) = peer.tcp {
+                if let Err(e) = tcp_child.borrow_mut()
+                    .punch_hole(ifc, poll, tcp_peer, &peer_enc_pk, Box::new(handler)) {
+                    debug!("Tcp punch hole failed to start: {:?}", e);
+                    self.tcp_child = None;
+                }
+            } else {
+                tcp_child.borrow_mut().terminate(ifc, poll);
+                self.tcp_child = None;
+            }
+        }
+
         if self.udp_child.is_none() && self.tcp_child.is_none() {
             debug!("Failure: Not even one valid child even managed to start hole punching");
             self.terminate(ifc, poll);
@@ -298,12 +348,33 @@ impl HolePunchMediator {
                              ifc: &mut Interface,
                              poll: &Poll,
                              res: ::Res<(UdpSocket, SocketAddr, Token)>) {
+        if let State::HolePunching { ref mut info, .. } = self.state {
+            self.udp_child = None;
+            if let Ok(sock) = res {
+                info.udp = Some(sock);
+            }
+        }
+
+        self.handle_hole_punch_impl(ifc, poll);
+    }
+
+    fn handle_tcp_hole_punch(&mut self,
+                             ifc: &mut Interface,
+                             poll: &Poll,
+                             res: ::Res<(TcpStream, Token)>) {
+        if let State::HolePunching { ref mut info, .. } = self.state {
+            self.tcp_child = None;
+            if let Ok(sock) = res {
+                info.tcp = Some(sock);
+            }
+        }
+
+        self.handle_hole_punch_impl(ifc, poll);
+    }
+
+    fn handle_hole_punch_impl(&mut self, ifc: &mut Interface, poll: &Poll) {
         let r = match self.state {
             State::HolePunching { ref mut info, ref mut f, .. } => {
-                self.udp_child = None;
-                if let Ok(sock) = res {
-                    info.udp = Some(sock);
-                }
                 if self.tcp_child.is_none() && self.udp_child.is_none() {
                     if info.tcp.is_none() && info.udp.is_none() {
                         f(ifc, poll, Err(NatError::HolePunchFailed));
@@ -335,7 +406,7 @@ impl HolePunchMediator {
                 self.terminate(ifc, poll);
             }
             // Don't call terminate as that can lead to child being borrowed twice
-            Err(e) => debug!("Ignoring error in handle udp-hole-punch: {:?}", e),
+            Err(e) => debug!("Ignoring error in handle hole-punch: {:?}", e),
         }
     }
 }
@@ -349,14 +420,18 @@ impl NatState for HolePunchMediator {
         let terminate = match self.state {
             State::Rendezvous { .. } => {
                 if let Some(udp_child) = self.udp_child.as_ref().cloned() {
-                    let r = udp_child.borrow_mut().rendezvous_timeout(ifc, poll);
-                    self.handle_udp_rendezvous(ifc, poll, r);
+                    match udp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
+                        // It has already gone to the next state, ignore it
+                        Err(NatError::InvalidState) => (),
+                        r @ Ok(_) | r @ Err(_) => self.handle_udp_rendezvous(ifc, poll, r),
+                    }
                 }
-                // TODO the above can terminate, so we should not bu calling the next one then
-                // check once tcp is coded
-                if let Some(_tcp_child) = self.tcp_child.as_ref().cloned() {
-                    // let r = tcp_child.borrow_mut().rendezvous_timeout(ifc, poll);
-                    // self.handle_tcp_rendezvous(ifc, poll, r);
+                if let Some(tcp_child) = self.tcp_child.as_ref().cloned() {
+                    match tcp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
+                        // It has already gone to the next state, ignore it
+                        NatError::InvalidState => (),
+                        e => self.handle_tcp_rendezvous(ifc, poll, Err(e)),
+                    }
                 }
 
                 false

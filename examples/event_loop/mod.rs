@@ -2,19 +2,16 @@ use mio::{Events, Poll, PollOpt, Ready, Token};
 use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
-use p2p::config::UdpHolePuncher;
+use serde_json;
 use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::net::SocketAddr;
+use std::fs::File;
+use std::io::Read;
 use std::rc::Rc;
-use std::str::FromStr;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-
-const UDP_RENDEZVOUS_SERVER_0: &'static str = "174.138.70.126:5484";
-const UDP_RENDEZVOUS_SERVER_1: &'static str = "104.236.84.160:5484";
 
 pub struct Core {
     nat_states: HashMap<Token, Rc<RefCell<NatState>>>,
@@ -161,27 +158,10 @@ pub fn spawn_event_loop() -> El {
 
         let poll = unwrap!(Poll::new());
 
-        let puncher_0 = UdpHolePuncher {
-            starting_ttl: 2,
-            ttl_increment_delay_ms: 500,
-        };
-        let puncher_1 = UdpHolePuncher {
-            starting_ttl: 5,
-            ttl_increment_delay_ms: 500,
-        };
-        let puncher_2 = UdpHolePuncher {
-            starting_ttl: 10,
-            ttl_increment_delay_ms: 500,
-        };
-        let config = Config {
-            rendezvous_timeout_sec: None,
-            hole_punch_timeout_sec: None,
-            udp_rendezvous_port: None,
-            remote_udp_rendezvous_servers:
-                vec![unwrap!(SocketAddr::from_str(UDP_RENDEZVOUS_SERVER_0)),
-                     unwrap!(SocketAddr::from_str(UDP_RENDEZVOUS_SERVER_1))],
-            udp_hole_punchers: vec![puncher_0, puncher_1, puncher_2],
-        };
+        let mut file = unwrap!(File::open("./sample-config"));
+        let mut content = String::new();
+        unwrap!(file.read_to_string(&mut content));
+        let config = unwrap!(serde_json::from_str(&content));
 
         let (enc_pk, enc_sk) = box_::gen_keypair();
         let timer = Timer::default();

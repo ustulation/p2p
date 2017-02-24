@@ -9,8 +9,10 @@ version = "0.3.3"
 
 [dependencies]
 bincode = "~1.0.0-alpha2"
+byteorder = "~1.0.0"
 log = "~0.3.6"
 mio = "~0.6.4"
+net2 = "~0.2.26"
 quick-error = "~1.1.0"
 rand = "~0.3.15"
 rust_sodium = "~0.1.2"

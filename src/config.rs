@@ -1,7 +1,11 @@
+//! Various defaults for behaviour configuration
+
 use std::net::SocketAddr;
 
 /// Default for udp rendezvous port
-pub const UDP_RENDEZVOUS_PORT: u16 = 5484;
+pub const UDP_RENDEZVOUS_PORT: u16 = 5483;
+/// Default for tcp rendezvous port
+pub const TCP_RENDEZVOUS_PORT: u16 = 5484;
 /// Default for rendezvous timeout in seconds
 pub const RENDEZVOUS_TIMEOUT_SEC: u64 = 8;
 /// Default for hole-punch timeout in seconds
@@ -19,10 +23,16 @@ pub struct Config {
     pub hole_punch_timeout_sec: Option<u64>,
     /// UDP Rendezvous port. This is the port our UDP Rendezvous server will bind to and listen on.
     pub udp_rendezvous_port: Option<u16>,
-    /// Remote UDP Rendezvous servers. It is recommended to provide at-least 2 and idally 3 or more
-    /// for proper NAT detection or else detection (and consequently prediction) of an `Endpoint
-    /// Dependent Mapping` (`EDM`) NAT will fail.
+    /// TCP Rendezvous port. This is the port our TCP Rendezvous server will bind to and listen on.
+    pub tcp_rendezvous_port: Option<u16>,
+    /// Remote UDP Rendezvous servers. It is recommended to provide at-least 2 and ideally 3 or
+    /// more for proper NAT detection or else detection (and consequently prediction) of an
+    /// `Endpoint Dependent Mapping` (`EDM`) NAT will fail.
     pub remote_udp_rendezvous_servers: Vec<SocketAddr>,
+    /// Remote TCP Rendezvous servers. It is recommended to provide at-least 2 and ideally 3 for
+    /// proper NAT detection or else detection (and consequently prediction) of an `Endpoint
+    /// Dependent Mapping` (`EDM`) NAT will fail.
+    pub remote_tcp_rendezvous_servers: Vec<SocketAddr>,
     /// Details of all our UDP hole punchers
     pub udp_hole_punchers: Vec<UdpHolePuncher>,
 }

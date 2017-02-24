@@ -38,7 +38,7 @@ impl UdpRendezvousServer {
 
         poll.register(&sock,
                       token,
-                      Ready::readable() | Ready::error() | Ready::writable(),
+                      Ready::readable() | Ready::error() | Ready::hup(),
                       PollOpt::edge())?;
 
         let server = Rc::new(RefCell::new(UdpRendezvousServer {
