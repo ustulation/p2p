@@ -145,7 +145,7 @@ impl CoreState for ChatEngine {
 }
 
 fn start_chatting(el: &El, token: Token) {
-    println!("Begin chatting with peer (type \"exit\" to quit)");
+    println!("Begin chatting with peer (type \"quit\" to quit)");
 
     loop {
         let mut input = String::new();
