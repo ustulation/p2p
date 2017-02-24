@@ -3,9 +3,9 @@
 //! The goal of this crate is to provide a robust and crypto-secure NAT traversal for peer to peer
 //! connection. It assumes publicly reachable rendezvous servers are provided. The server code
 //! itself is in the crate too, so the crate can either be used to deploy a server or used for peer
-//! to peer client or both simultaneously - for e.g. if you run the server on a port forwarded
-//! endpoint, it will be publicly available while you could choose normal NAT traversal mechanisms
-//! to communicate with other peers.
+//! to peer client communication or both simultaneously - for e.g. if you run the server on a port
+//! forwarded endpoint, it will be publicly available for others to rendezvous while you could
+//! choose normal NAT traversal mechanisms to communicate with other peers.
 //!
 //! ## Endpoint Independent Mapping (EIM)
 //!
