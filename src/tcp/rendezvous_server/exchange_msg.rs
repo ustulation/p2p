@@ -76,17 +76,20 @@ impl ExchangeMsg {
 
 impl NatState for ExchangeMsg {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
-        if event.is_error() || event.is_hup() {
+        if event.is_error() {
             let e = match self.sock.take_error() {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
-            warn!("Error in UdpRendezvousServer readiness: {:?}", e);
+            debug!("Error in TcpRendezvousServer readiness: {:?}", e);
             self.terminate(ifc, poll)
         } else if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
             self.write(ifc, poll, None)
+        } else if event.is_hup() {
+            debug!("Shutdown in TcpRendezvousServer readiness");
+            self.terminate(ifc, poll)
         } else {
             trace!("Ignoring unknown event kind: {:?}", event);
         }

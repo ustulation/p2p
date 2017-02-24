@@ -144,7 +144,14 @@ impl SockInner {
             match self.stream.read(&mut buffer) {
                 Ok(bytes_read) => {
                     if bytes_read == 0 {
-                        return Err(NatError::ZeroByteRead);
+                        if is_something_read {
+                            match self.read_from_buffer() {
+                                r @ Ok(Some(_)) | r @ Err(_) => return r,
+                                Ok(None) => return Err(NatError::ZeroByteRead),
+                            }
+                        } else {
+                            return Err(NatError::ZeroByteRead);
+                        }
                     }
                     self.read_buffer.extend_from_slice(&buffer[0..bytes_read]);
                     is_something_read = true;

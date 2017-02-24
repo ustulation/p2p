@@ -114,12 +114,12 @@ impl Puncher {
 
 impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
-        if event.is_error() || event.is_hup() {
+        if event.is_error() {
             let e = match self.sock.take_error() {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
-            debug!("Error in TcpRendezvousServer readiness: {:?}", e);
+            debug!("Error in Tcp Puncher readiness: {:?}", e);
             self.handle_err(ifc, poll)
         } else if event.is_readable() {
             self.read(ifc, poll)
@@ -127,9 +127,12 @@ impl NatState for Puncher {
             let m = if let ConnectionChooser::Choose(ref mut m) = self.connection_chooser {
                 m.take()
             } else {
-                return self.handle_err(ifc, poll);
+                return;
             };
             self.write(ifc, poll, m)
+        } else if event.is_hup() {
+            debug!("Shutdown in Tcp Puncher readiness");
+            self.handle_err(ifc, poll)
         } else {
             trace!("Ignoring unknown event kind: {:?}", event);
         }

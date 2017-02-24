@@ -188,7 +188,7 @@ fn main() {
                                unwrap!(tx.send(res));
                            }));
 
-    let HolePunchInfo { udp, enc_pk, .. } = match unwrap!(rx.recv()) {
+    let HolePunchInfo { tcp, udp, enc_pk } = match unwrap!(rx.recv()) {
         Ok(info) => {
             println!("Successfully traversed NAT and established peer to peer communication :)\n");
             info
@@ -200,14 +200,24 @@ fn main() {
         }
     };
 
-    let (sock, peer, token) = match udp {
-        Some(info) => info,
-        None => {
-            println!("This example only supports communicating via udp-socket but it seems it's \
-                      tcp hole punching that has succeeded instead. It is trivial to implement \
-                      tcp communication for the chat engine and is left for future scope. \
-                      Terminating for the moment.");
+    let (sock, peer, token) = match (udp, tcp) {
+        (Some(info), Some(_)) => {
+            println!("Connected via both, TCP and UDP. Choosing UDP...\n");
+            info
+        }
+        (Some(info), None) => {
+            println!("Connected only via UDP\n");
+            info
+        }
+        (None, Some(_)) => {
+            println!("Connected only via TCP. This example only supports communicating via \
+                      udp-socket but it seems it's tcp hole punching that has succeeded instead. \
+                      It is trivial to implement tcp communication for the chat engine and is \
+                      left for future scope. Terminating for the moment.");
             return;
+        }
+        (None, None) => {
+            unreachable!("This condition should not have been passed over to the user code!")
         }
     };
 
