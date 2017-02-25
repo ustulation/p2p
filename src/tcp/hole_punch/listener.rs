@@ -1,4 +1,4 @@
-use super::puncher::{Finish, Puncher};
+use super::puncher::{Finish, Puncher, Via};
 use {Interface, NatError, NatState};
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::tcp::TcpListener;
@@ -47,18 +47,15 @@ impl Listener {
 
     fn accept(&mut self, ifc: &mut Interface, poll: &Poll) {
         match self.listener.accept() {
-            Ok((socket, _)) => {
+            Ok((s, _)) => {
                 self.terminate(ifc, poll);
                 let f = match self.f.take() {
                     Some(f) => f,
                     None => return,
                 };
-                if let Err(e) = Puncher::start(ifc,
-                                               poll,
-                                               Socket::wrap(socket),
-                                               Some(self.token),
-                                               &self.peer_enc_key,
-                                               f) {
+                let sock = Socket::wrap(s);
+                let via = Via::Accept(sock, self.token);
+                if let Err(e) = Puncher::start(ifc, poll, via, &self.peer_enc_key, f) {
                     debug!("Error accepting direct puncher connection: {:?}", e);
                 }
             }

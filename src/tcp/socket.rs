@@ -8,6 +8,7 @@ use serde::ser::Serialize;
 use std::collections::VecDeque;
 use std::io::{self, Cursor, ErrorKind, Read, Write};
 use std::mem;
+use std::net::SocketAddr;
 
 const MAX_PAYLOAD_SIZE: usize = 1024;
 
@@ -31,6 +32,16 @@ impl Socket {
                 current_write: None,
             }),
         }
+    }
+
+    pub fn local_addr(&self) -> ::Res<SocketAddr> {
+        let inner = self.inner.as_ref().ok_or(NatError::UnregisteredSocket)?;
+        Ok(inner.stream.local_addr()?)
+    }
+
+    pub fn peer_addr(&self) -> ::Res<SocketAddr> {
+        let inner = self.inner.as_ref().ok_or(NatError::UnregisteredSocket)?;
+        Ok(inner.stream.peer_addr()?)
     }
 
     pub fn take_error(&self) -> ::Res<Option<io::Error>> {
