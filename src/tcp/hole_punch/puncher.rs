@@ -90,9 +90,13 @@ impl Puncher {
     }
 
     fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<Vec<u8>>) {
-        if let Err(e) = self.sock.write(poll, self.token, m) {
-            debug!("Tcp Puncher errored out in write: {:?}", e);
-            self.handle_err(ifc, poll);
+        match self.sock.write(poll, self.token, m) {
+            Ok(true) => self.done(ifc, poll),
+            Ok(false) => (),
+            Err(e) => {
+                debug!("Tcp Puncher errored out in write: {:?}", e);
+                self.handle_err(ifc, poll);
+            }
         }
     }
 
