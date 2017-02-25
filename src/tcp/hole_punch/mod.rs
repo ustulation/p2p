@@ -1,11 +1,10 @@
 use self::listener::Listener;
-use self::puncher::Puncher;
+use self::puncher::{Puncher, Via};
 use self::rendezvous_client::TcpRendezvousClient;
 use {Interface, NatError, NatState};
 use mio::Poll;
 use mio::Token;
 use mio::tcp::{TcpListener, TcpStream};
-use net2::TcpBuilder;
 use rand::{self, Rng};
 use sodium::crypto::box_;
 use std::any::Any;
@@ -30,10 +29,10 @@ enum State {
     None,
     Rendezvous {
         children: HashSet<Token>,
-        info: (Option<(TcpBuilder, TcpBuilder, SocketAddr)>, Vec<SocketAddr>),
+        info: (SocketAddr, Vec<SocketAddr>),
         f: RendezvousFinsih,
     },
-    ReadyToHolePunch(Option<(TcpBuilder, TcpBuilder, SocketAddr)>),
+    ReadyToHolePunch(SocketAddr),
     HolePunching {
         children: HashSet<Token>,
         f: HolePunchFinsih,
@@ -75,7 +74,7 @@ impl TcpHolePunchMediator {
         }
 
         let addr_any = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
-        let (mut builders, addr) = new_reusably_bound_tcp_sockets(&addr_any, num_servers + 2)?;
+        let (builders, addr) = new_reusably_bound_tcp_sockets(&addr_any, num_servers)?;
 
         let mediator = Rc::new(RefCell::new(TcpHolePunchMediator {
             state: State::None,
@@ -83,16 +82,6 @@ impl TcpHolePunchMediator {
         }));
         mediator.borrow_mut().self_weak = Rc::downgrade(&mediator);
         let weak = mediator.borrow().self_weak.clone();
-
-        let reserved_listener = match builders.pop() {
-            Some(b) => b,
-            None => return Err(NatError::TcpHolePunchMediatorFailedToStart),
-        };
-
-        let reserved_connector = match builders.pop() {
-            Some(b) => b,
-            None => return Err(NatError::TcpHolePunchMediatorFailedToStart),
-        };
 
         let mut rendezvous_children = HashSet::with_capacity(builders.len());
 
@@ -120,7 +109,7 @@ impl TcpHolePunchMediator {
             let n = rendezvous_children.len();
             mediator.borrow_mut().state = State::Rendezvous {
                 children: rendezvous_children,
-                info: (Some((reserved_listener, reserved_connector, addr)), Vec::with_capacity(n)),
+                info: (addr, Vec::with_capacity(n)),
                 f: f,
             };
 
@@ -146,10 +135,10 @@ impl TcpHolePunchMediator {
                         f(ifc, poll, Err(NatError::TcpRendezvousFailed));
                         Err(NatError::TcpRendezvousFailed)
                     } else {
-                        match (info.0.take(), TcpHolePunchMediator::port_prediction(ext_addrs)) {
-                            (Some(b), Ok(ext_addr)) => {
+                        match TcpHolePunchMediator::port_prediction(ext_addrs) {
+                            Ok(ext_addr) => {
                                 f(ifc, poll, Ok(ext_addr));
-                                Ok(Some(b))
+                                Ok(Some(info.0))
                             }
                             _ => {
                                 f(ifc, poll, Err(NatError::TcpRendezvousFailed));
@@ -170,7 +159,7 @@ impl TcpHolePunchMediator {
         };
 
         match r {
-            Ok(b @ Some(_)) => self.state = State::ReadyToHolePunch(b),
+            Ok(Some(our_addr)) => self.state = State::ReadyToHolePunch(our_addr),
             Ok(None) => (),
             Err(e @ NatError::TcpRendezvousFailed) => {
                 // This is reached only if children is empty. So no chance of borrow violation for
@@ -244,18 +233,17 @@ impl TcpHolePunchMediator {
                       peer_enc_pk: &box_::PublicKey,
                       f: HolePunchFinsih)
                       -> ::Res<()> {
-        let (listener, connector, addr) = match self.state {
-            State::ReadyToHolePunch(ref mut info) => {
-                info.take().ok_or(NatError::TcpHolePunchFailed)?
-            }
+        let our_addr = match self.state {
+            State::ReadyToHolePunch(our_addr) => our_addr,
             ref x => {
                 debug!("Improper state for this operation: {:?}", x);
                 return Err(NatError::InvalidState);
             }
         };
 
-        let sock = Socket::wrap(TcpStream::connect_stream(connector.to_tcp_stream()?, &peer)?);
-        let listener = TcpListener::from_listener(listener.listen(LISTENER_BACKLOG)?, &addr)?;
+        let l = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].listen(LISTENER_BACKLOG)?;
+        let listener = TcpListener::from_listener(l, &our_addr)?;
+
         let mut children = HashSet::with_capacity(2);
 
         let weak = self.self_weak.clone();
@@ -263,7 +251,11 @@ impl TcpHolePunchMediator {
             weak.upgrade() {
             mediator.borrow_mut().handle_hole_punch(ifc, poll, token, res);
         };
-        if let Ok(child) = Puncher::start(ifc, poll, sock, None, peer_enc_pk, Box::new(handler)) {
+        let via = Via::Connect {
+            our_addr: our_addr,
+            peer_addr: peer,
+        };
+        if let Ok(child) = Puncher::start(ifc, poll, via, peer_enc_pk, Box::new(handler)) {
             let _ = children.insert(child);
         }
 

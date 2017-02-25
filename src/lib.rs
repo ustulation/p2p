@@ -169,7 +169,16 @@
 //! outsmart the router).
 //!
 //! Combined with non-hairpinning and blacklisting (aggressive flood attack prevention), we can
-//! quickly see why `TCP` NAT traversal is more difficult than `UDP`.
+//! quickly see why `TCP` NAT traversal is more difficult than `UDP`. The same trick as with
+//! incremental `TTLs` was tried with TCP connects too, so that we punch holes but not reach the
+//! other end quickly to get blacklisted or get `RST` which would close the hole. However for TCP
+//! many intermediate routers send ICMP _No route to host_ error when `TTL` reaches 0. This too can
+//! shutdown the hole thus this method is not used in this crate.
+//!
+//! Instead on any error to a send of `SYN` we discard the socket, get a new one on the same local
+//! endpoint and retry sending `SYN` in hope to forge a `Simultaneous Connect`. We could end up
+//! with a lot of reserved descriptors due to this so we explicitly set the TCP linger to 0. We set
+//! it back up to default once we are connected.
 //!
 //! # Crate Design
 //!
