@@ -1,11 +1,12 @@
 [package]
 authors = ["ustulation <ustulation@gmail.com>"]
 description = "NAT Traversal for P2P communication"
+documentation = "https://docs.rs/p2p/"
 license = "GPL-3.0"
 name = "p2p"
 readme = "README.md"
 repository = "https://github.com/ustulation/p2p"
-version = "0.4.1"
+version = "0.4.2"
 
 [dependencies]
 bincode = "~1.0.0-alpha2"
