@@ -60,9 +60,9 @@ impl UdpHolePunchMediator {
         }
 
         let mediator = Rc::new(RefCell::new(UdpHolePunchMediator {
-            state: State::None,
-            self_weak: Weak::new(),
-        }));
+                                                state: State::None,
+                                                self_weak: Weak::new(),
+                                            }));
         mediator.borrow_mut().self_weak = Rc::downgrade(&mediator);
         let weak = mediator.borrow().self_weak.clone();
 
@@ -171,9 +171,9 @@ impl UdpHolePunchMediator {
         };
 
         let r = r.map(|(socks, ext_addrs)| {
-            self.state = State::ReadyToHolePunch(socks);
-            ext_addrs
-        });
+                          self.state = State::ReadyToHolePunch(socks);
+                          ext_addrs
+                      });
 
         match r {
             Ok(_) |
@@ -207,9 +207,7 @@ impl UdpHolePunchMediator {
 
         let mut children = HashSet::with_capacity(cap);
         for (((sock, token), peer), puncher_config) in
-            info.into_iter()
-                .zip(peers.into_iter())
-                .zip(hole_punchers_cfg.into_iter()) {
+            info.into_iter().zip(peers.into_iter()).zip(hole_punchers_cfg.into_iter()) {
             let weak = self.self_weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, token, res| {
                 if let Some(mediator) = weak.upgrade() {
@@ -225,7 +223,7 @@ impl UdpHolePunchMediator {
                               peer,
                               peer_enc_pk,
                               Box::new(handler))
-                .is_ok() {
+                       .is_ok() {
                 let _ = children.insert(token);
             }
         }

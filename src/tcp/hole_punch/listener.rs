@@ -30,11 +30,11 @@ impl Listener {
                       PollOpt::edge())?;
 
         let listener = Rc::new(RefCell::new(Listener {
-            token: token,
-            listener: l,
-            peer_enc_key: *peer_enc_key,
-            f: Some(f),
-        }));
+                                                token: token,
+                                                listener: l,
+                                                peer_enc_key: *peer_enc_key,
+                                                f: Some(f),
+                                            }));
 
         if ifc.insert_state(token, listener.clone()).is_err() {
             warn!("Unable to start Listener!");

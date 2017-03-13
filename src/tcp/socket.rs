@@ -25,27 +25,33 @@ impl Socket {
     pub fn wrap(stream: TcpStream) -> Self {
         Socket {
             inner: Some(SockInner {
-                stream: stream,
-                read_buffer: Vec::new(),
-                read_len: 0,
-                write_queue: VecDeque::with_capacity(5),
-                current_write: None,
-            }),
+                            stream: stream,
+                            read_buffer: Vec::new(),
+                            read_len: 0,
+                            write_queue: VecDeque::with_capacity(5),
+                            current_write: None,
+                        }),
         }
     }
 
     pub fn local_addr(&self) -> ::Res<SocketAddr> {
-        let inner = self.inner.as_ref().ok_or(NatError::UnregisteredSocket)?;
+        let inner = self.inner
+            .as_ref()
+            .ok_or(NatError::UnregisteredSocket)?;
         Ok(inner.stream.local_addr()?)
     }
 
     pub fn peer_addr(&self) -> ::Res<SocketAddr> {
-        let inner = self.inner.as_ref().ok_or(NatError::UnregisteredSocket)?;
+        let inner = self.inner
+            .as_ref()
+            .ok_or(NatError::UnregisteredSocket)?;
         Ok(inner.stream.peer_addr()?)
     }
 
     pub fn take_error(&self) -> ::Res<Option<io::Error>> {
-        let inner = self.inner.as_ref().ok_or(NatError::UnregisteredSocket)?;
+        let inner = self.inner
+            .as_ref()
+            .ok_or(NatError::UnregisteredSocket)?;
         Ok(inner.stream.take_error()?)
     }
 
@@ -57,7 +63,9 @@ impl Socket {
     //                     again in the next invocation of the `ready` handler.
     //   - Err(error):     there was an error reading from the socket.
     pub fn read<T: Deserialize>(&mut self) -> ::Res<Option<T>> {
-        let inner = self.inner.as_mut().ok_or(NatError::UnregisteredSocket)?;
+        let inner = self.inner
+            .as_mut()
+            .ok_or(NatError::UnregisteredSocket)?;
         inner.read()
     }
 
@@ -73,7 +81,9 @@ impl Socket {
                                token: Token,
                                msg: Option<T>)
                                -> ::Res<bool> {
-        let inner = self.inner.as_mut().ok_or(NatError::UnregisteredSocket)?;
+        let inner = self.inner
+            .as_mut()
+            .ok_or(NatError::UnregisteredSocket)?;
         inner.write(poll, token, msg)
     }
 }
@@ -94,9 +104,9 @@ impl Evented for Socket {
         let inner = self.inner
             .as_ref()
             .ok_or_else(|| {
-                io::Error::new(ErrorKind::Other,
-                               format!("{}", NatError::UnregisteredSocket))
-            })?;
+                            io::Error::new(ErrorKind::Other,
+                                           format!("{}", NatError::UnregisteredSocket))
+                        })?;
         inner.register(poll, token, interest, opts)
     }
 
@@ -109,9 +119,9 @@ impl Evented for Socket {
         let inner = self.inner
             .as_ref()
             .ok_or_else(|| {
-                io::Error::new(ErrorKind::Other,
-                               format!("{}", NatError::UnregisteredSocket))
-            })?;
+                            io::Error::new(ErrorKind::Other,
+                                           format!("{}", NatError::UnregisteredSocket))
+                        })?;
         inner.reregister(poll, token, interest, opts)
     }
 
@@ -119,9 +129,9 @@ impl Evented for Socket {
         let inner = self.inner
             .as_ref()
             .ok_or_else(|| {
-                io::Error::new(ErrorKind::Other,
-                               format!("{}", NatError::UnregisteredSocket))
-            })?;
+                            io::Error::new(ErrorKind::Other,
+                                           format!("{}", NatError::UnregisteredSocket))
+                        })?;
         inner.deregister(poll)
     }
 }
@@ -170,14 +180,14 @@ impl SockInner {
                 Err(error) => {
                     return if error.kind() == ErrorKind::WouldBlock ||
                               error.kind() == ErrorKind::Interrupted {
-                        if is_something_read {
-                            self.read_from_buffer()
-                        } else {
-                            Ok(None)
-                        }
-                    } else {
-                        Err(From::from(error))
-                    }
+                               if is_something_read {
+                                   self.read_from_buffer()
+                               } else {
+                                   Ok(None)
+                               }
+                           } else {
+                               Err(From::from(error))
+                           }
                 }
             }
         }

@@ -127,8 +127,8 @@ impl CoreMsg {
     pub fn new<F: FnOnce(&mut Core, &Poll) + Send + 'static>(f: F) -> Self {
         let mut f = Some(f);
         CoreMsg(Some(Box::new(move |core: &mut Core, poll: &Poll| if let Some(f) = f.take() {
-            f(core, poll);
-        })))
+                                  f(core, poll);
+                              })))
     }
 }
 

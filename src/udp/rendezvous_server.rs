@@ -42,10 +42,10 @@ impl UdpRendezvousServer {
                       PollOpt::edge())?;
 
         let server = Rc::new(RefCell::new(UdpRendezvousServer {
-            sock: sock,
-            token: token,
-            write_queue: VecDeque::with_capacity(3),
-        }));
+                                              sock: sock,
+                                              token: token,
+                                              write_queue: VecDeque::with_capacity(3),
+                                          }));
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start UdpRendezvousServer!");
@@ -123,14 +123,15 @@ impl UdpRendezvousServer {
 
         if self.write_queue.is_empty() {
             Ok(poll.reregister(&self.sock,
-                            self.token,
-                            Ready::readable() | Ready::error() | Ready::hup(),
-                            PollOpt::edge())?)
+                               self.token,
+                               Ready::readable() | Ready::error() | Ready::hup(),
+                               PollOpt::edge())?)
         } else {
             Ok(poll.reregister(&self.sock,
-                            self.token,
-                            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                            PollOpt::edge())?)
+                               self.token,
+                               Ready::readable() | Ready::writable() | Ready::error() |
+                               Ready::hup(),
+                               PollOpt::edge())?)
         }
     }
 }

@@ -77,9 +77,9 @@ impl TcpHolePunchMediator {
         let (builders, addr) = new_reusably_bound_tcp_sockets(&addr_any, num_servers)?;
 
         let mediator = Rc::new(RefCell::new(TcpHolePunchMediator {
-            state: State::None,
-            self_weak: Weak::new(),
-        }));
+                                                state: State::None,
+                                                self_weak: Weak::new(),
+                                            }));
         mediator.borrow_mut().self_weak = Rc::downgrade(&mediator);
         let weak = mediator.borrow().self_weak.clone();
 

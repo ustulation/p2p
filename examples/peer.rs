@@ -54,13 +54,13 @@ impl ChatEngine {
                                 Ready::readable() | Ready::error() | Ready::hup(),
                                 PollOpt::edge()));
         let engine = Rc::new(RefCell::new(ChatEngine {
-            token: token,
-            write_queue: VecDeque::with_capacity(5),
-            read_buf: [0; 1024],
-            sock: sock,
-            peer: peer,
-            key: box_::precompute(peer_enc_pk, core.enc_sk()),
-        }));
+                                              token: token,
+                                              write_queue: VecDeque::with_capacity(5),
+                                              read_buf: [0; 1024],
+                                              sock: sock,
+                                              peer: peer,
+                                              key: box_::precompute(peer_enc_pk, core.enc_sk()),
+                                          }));
 
         if let Err(e) = core.insert_peer_state(token, engine) {
             panic!("{}", e.1);
@@ -157,9 +157,9 @@ fn start_chatting(el: &El, token: Token) {
         }
 
         unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
-            let chat_engine = unwrap!(core.peer_state(token));
-            chat_engine.borrow_mut().write(core, poll, input);
-        })));
+                                                 let chat_engine = unwrap!(core.peer_state(token));
+                                                 chat_engine.borrow_mut().write(core, poll, input);
+                                             })));
     }
 }
 
@@ -191,8 +191,8 @@ fn main() {
     let (tx, rx) = mpsc::channel();
     handle.fire_hole_punch(peers,
                            Box::new(move |_, _, res| {
-                               unwrap!(tx.send(res));
-                           }));
+                                        unwrap!(tx.send(res));
+                                    }));
 
     let HolePunchInfo { tcp, udp, enc_pk } = match unwrap!(rx.recv()) {
         Ok(info) => {
@@ -223,7 +223,8 @@ fn main() {
             return;
         }
         (None, None) => {
-            unreachable!("This condition should not have been passed over to the user code!")
+            unreachable!("This condition should not have been passed over to the user \
+                                     code!")
         }
     };
 

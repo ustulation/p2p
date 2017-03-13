@@ -51,14 +51,14 @@ impl UdpRendezvousClient {
                       PollOpt::edge())?;
 
         let client = Rc::new(RefCell::new(UdpRendezvousClient {
-            sock: Some(sock),
-            token: token,
-            servers: servers,
-            our_ext_addrs: Vec::with_capacity(num_servers),
-            write_queue: Some((server, req.clone())),
-            req: req,
-            f: f,
-        }));
+                                              sock: Some(sock),
+                                              token: token,
+                                              servers: servers,
+                                              our_ext_addrs: Vec::with_capacity(num_servers),
+                                              write_queue: Some((server, req.clone())),
+                                              req: req,
+                                              f: f,
+                                          }));
 
         if ifc.insert_state(token, client.clone()).is_err() {
             debug!("Unable to insert UdpRendezvousClient State!");
@@ -160,15 +160,20 @@ impl UdpRendezvousClient {
         }
 
         if self.write_queue.is_none() {
-            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                            self.token,
-                            Ready::readable() | Ready::error() | Ready::hup(),
-                            PollOpt::edge())?)
+            Ok(poll.reregister(self.sock
+                                   .as_ref()
+                                   .ok_or(NatError::UnregisteredSocket)?,
+                               self.token,
+                               Ready::readable() | Ready::error() | Ready::hup(),
+                               PollOpt::edge())?)
         } else {
-            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                            self.token,
-                            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                            PollOpt::edge())?)
+            Ok(poll.reregister(self.sock
+                                   .as_ref()
+                                   .ok_or(NatError::UnregisteredSocket)?,
+                               self.token,
+                               Ready::readable() | Ready::writable() | Ready::error() |
+                               Ready::hup(),
+                               PollOpt::edge())?)
         }
     }
 
@@ -224,9 +229,9 @@ impl NatState for UdpRendezvousClient {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
             let e = match self.sock
-                .as_ref()
-                .ok_or(NatError::UnregisteredSocket)
-                .and_then(|s| s.take_error().map_err(From::from)) {
+                      .as_ref()
+                      .ok_or(NatError::UnregisteredSocket)
+                      .and_then(|s| s.take_error().map_err(From::from)) {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };

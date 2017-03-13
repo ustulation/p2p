@@ -141,12 +141,12 @@ impl HolePunchMediator {
         let timeout = ifc.set_timeout(Duration::from_secs(dur), NatTimer::new(token, TIMER_ID))?;
 
         let mediator = Rc::new(RefCell::new(HolePunchMediator {
-            token: token,
-            state: State::None,
-            udp_child: None,
-            tcp_child: None,
-            self_weak: Weak::new(),
-        }));
+                                                token: token,
+                                                state: State::None,
+                                                udp_child: None,
+                                                tcp_child: None,
+                                                self_weak: Weak::new(),
+                                            }));
         let weak = Rc::downgrade(&mediator);
         let weak_cloned = weak.clone();
         mediator.borrow_mut().self_weak = weak.clone();
@@ -290,7 +290,7 @@ impl HolePunchMediator {
 
         let dur = ifc.config().hole_punch_timeout_sec.unwrap_or(HOLE_PUNCH_TIMEOUT_SEC);
         let timeout = match ifc.set_timeout(Duration::from_secs(dur),
-                                            NatTimer::new(self.token, TIMER_ID)) {
+                              NatTimer::new(self.token, TIMER_ID)) {
             Ok(t) => t,
             Err(e) => {
                 debug!("Terminating punch hole due to error in timer: {:?}", e);
@@ -306,8 +306,11 @@ impl HolePunchMediator {
                 weak.upgrade() {
                 mediator.borrow_mut().handle_udp_hole_punch(ifc, poll, res);
             };
-            if let Err(e) = udp_child.borrow_mut()
-                .punch_hole(ifc, poll, peer.udp, &peer_enc_pk, Box::new(handler)) {
+            if let Err(e) = udp_child.borrow_mut().punch_hole(ifc,
+                                                              poll,
+                                                              peer.udp,
+                                                              &peer_enc_pk,
+                                                              Box::new(handler)) {
                 debug!("Udp punch hole failed to start: {:?}", e);
                 self.udp_child = None;
             }
@@ -320,8 +323,11 @@ impl HolePunchMediator {
                 mediator.borrow_mut().handle_tcp_hole_punch(ifc, poll, res);
             };
             if let Some(tcp_peer) = peer.tcp {
-                if let Err(e) = tcp_child.borrow_mut()
-                    .punch_hole(ifc, poll, tcp_peer, &peer_enc_pk, Box::new(handler)) {
+                if let Err(e) = tcp_child.borrow_mut().punch_hole(ifc,
+                                                                  poll,
+                                                                  tcp_peer,
+                                                                  &peer_enc_pk,
+                                                                  Box::new(handler)) {
                     debug!("Tcp punch hole failed to start: {:?}", e);
                     self.tcp_child = None;
                 }
@@ -391,9 +397,8 @@ impl HolePunchMediator {
                     Ok(false)
                 } else {
                     // At-least one has succeeded
-                    let wait = ifc.config()
-                        .hole_punch_wait_for_other
-                        .unwrap_or(HOLE_PUNCH_WAIT_FOR_OTHER);
+                    let wait =
+                        ifc.config().hole_punch_wait_for_other.unwrap_or(HOLE_PUNCH_WAIT_FOR_OTHER);
                     if wait {
                         Ok(false)
                     } else {
@@ -564,9 +569,9 @@ impl Handle {
 impl Drop for Handle {
     fn drop(&mut self) {
         let token = self.token;
-        let _ = self.tx
-            .send(NatMsg::new(move |ifc, poll| if let Some(nat_state) = ifc.state(token) {
-                nat_state.borrow_mut().terminate(ifc, poll);
-            }));
+        let _ = self.tx.send(NatMsg::new(move |ifc, poll| if let Some(nat_state) =
+            ifc.state(token) {
+                                             nat_state.borrow_mut().terminate(ifc, poll);
+                                         }));
     }
 }

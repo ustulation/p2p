@@ -28,11 +28,11 @@ impl TcpRendezvousClient {
                       PollOpt::edge())?;
 
         let client = Rc::new(RefCell::new(TcpRendezvousClient {
-            token: token,
-            sock: sock,
-            req: Some(TcpEchoReq(ifc.enc_pk().0)),
-            f: f,
-        }));
+                                              token: token,
+                                              sock: sock,
+                                              req: Some(TcpEchoReq(ifc.enc_pk().0)),
+                                              f: f,
+                                          }));
 
         if ifc.insert_state(token, client.clone()).is_err() {
             debug!("Unable to insert TcpRendezvousClient State!");

@@ -77,15 +77,15 @@ impl Puncher {
         };
 
         let puncher = Rc::new(RefCell::new(Puncher {
-            token: token,
-            sock: sock,
-            our_addr: our_addr,
-            peer_addr: peer_addr,
-            via_accept: via_accept,
-            connection_chooser: chooser,
-            timeout: None,
-            f: f,
-        }));
+                                               token: token,
+                                               sock: sock,
+                                               our_addr: our_addr,
+                                               peer_addr: peer_addr,
+                                               via_accept: via_accept,
+                                               connection_chooser: chooser,
+                                               timeout: None,
+                                               f: f,
+                                           }));
 
         if let Err((nat_state, e)) = ifc.insert_state(token, puncher) {
             debug!("Error inserting state: {:?}", e);

@@ -47,9 +47,9 @@ impl TcpRendezvousServer {
                       PollOpt::edge())?;
 
         let server = Rc::new(RefCell::new(TcpRendezvousServer {
-            token: token,
-            listener: listener,
-        }));
+                                              token: token,
+                                              listener: listener,
+                                          }));
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start TcpRendezvousServer!");

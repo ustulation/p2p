@@ -319,8 +319,8 @@ impl NatMsg {
     {
         let mut f = Some(f);
         NatMsg(Box::new(move |ifc: &mut Interface, poll: &Poll| if let Some(f) = f.take() {
-            f(ifc, poll)
-        }))
+                            f(ifc, poll)
+                        }))
     }
 
     /// Execute the message (and thus the action).
