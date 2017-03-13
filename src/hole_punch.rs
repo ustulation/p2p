@@ -23,7 +23,7 @@ pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>
 
 /// A rendezvous packet.
 ///
-/// This is supposed to be exchanged out of band betwen the peers to allow them to hole-punch to
+/// This is supposed to be exchanged out of band between the peers to allow them to hole-punch to
 /// each other.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RendezvousInfo {
@@ -514,7 +514,7 @@ impl NatState for HolePunchMediator {
 ///
 /// Using this handle, the user can provide peer rendezvous information to begin hole punching. The
 /// handle is flexible enough to invoke hole punching either from another thread or from the event
-/// loop thread. The choice is upto the user.
+/// loop thread. The choice is up to the user.
 ///
 /// Dropping this handle will clean up all the internal states associated with this handle and the
 /// entire [`HolePunchMediator`] for this handle will terminate gracefully.

@@ -17,7 +17,7 @@
 //! This is the least restrictive NAT. All we need to do is make sure the mapping exists. This can
 //! be done by simply going through the rendezvous handshake coded in this crate. It should have
 //! the same effect as if the port had been forwarded manually or via [Internet Gateway Device
-//! Protocol][0] through code. If both sides are full cone then we can easily establis p2p
+//! Protocol][0] through code. If both sides are full cone then we can easily establish p2p
 //! communication.
 //!
 //! ### Endpoint Address & Port Dependent Filtering (Port Restricted Cone)
@@ -47,7 +47,7 @@
 //! ones however go a step further and temporarily blacklist the peer endpoint, seeing it as a
 //! flooding attack prevention or something similar.
 //!
-//! This poses a challange to us. If our packet has left our router for the peer but has not
+//! This poses a challenge to us. If our packet has left our router for the peer but has not
 //! reached it yet and peer packet has left its router towards us in the meantime, hole-punching
 //! will succeed. However if either one of our packet reaches the other before the other's had a
 //! chance to get out of its own router, the unfriendlier routers would blacklist the endpoint.
@@ -62,9 +62,9 @@
 //! other end fast (thus getting ourselves blacklisted) while updating the filter at our routers.
 //! `TTL` (time-to-live) to the rescue. While punching hole, we start with the lowest reasonable
 //! `TTL` (of say 2). Note that some routers were found to drop the packet when `TTL` was 1 after
-//! decrementing while some still send it but drop if the the TTL reached the value of 0. With 2 it
+//! decrementing while some still send it but drop if the TTL reached the value of 0. With 2 it
 //! will definitely go past the first router. We put a delay, increase the `TTL` by 1 and send
-//! again.  Both sides (peers) do this. In pracitice it's usually the 1st couple (or 3) routers
+//! again.  Both sides (peers) do this. In practice it's usually the 1st couple (or 3) routers
 //! that do NAT while others are non-NAT. This gives ample amount of time for the NAT-routers to
 //! update their filters to allow the peer's incoming packets in the future while not reaching the
 //! peer quickly themselves and getting blacklisted. By the time we hit `TTL` of around 12, we
@@ -72,7 +72,7 @@
 //!
 //! This crate is highly configurable while providing reasonable defaults. So if the user wants
 //! they can choose the starting `TTL` and the delay between bumping it up and re-transmitting. The
-//! resonable default would be to choose 3 sockets per peer, one with `TTL` starting 2, one with 6
+//! reasonable default would be to choose 3 sockets per peer, one with `TTL` starting 2, one with 6
 //! and one with 64 (or OS default), so that if the fastest one was going to succeed it would do so
 //! immediately (for friendlier routers) otherwise the slower ones would eventually reach there.
 //! The blacklisting happens for the exact (remote) endpoint, so even if the faster ones got
@@ -92,7 +92,7 @@
 //! This is trickier because our external address as seen by the outsiders will change depending on
 //! the remote endpoint we are talking to, irrespective of the fact we are using the same local
 //! endpoint. That is why the recommended number of rendezvous servers is 3. Using them we can
-//! predict how our router maps our address by inspecting the differnt addresses returned by
+//! predict how our router maps our address by inspecting the different addresses returned by
 //! different rendezvous servers. Most of the time a fixed delta can be predicted and that is what
 //! is used by this crate to guess what our address will be when we start hole-punching to the peer
 //! and we exchange that guessed information (out of band as usual), then start sending packets to
@@ -109,12 +109,12 @@
 //!
 //! Also one more thing to note is, even with the friendlier NATs which apply fixed deltas to port
 //! increment, the resultant port might already be occupied by another socket. In such a case they
-//! would skip that port and yeild some other unused ones and our prediction would fail here too.
+//! would skip that port and yield some other unused ones and our prediction would fail here too.
 //!
-//! ## Hairpinning
+//! ## Hair-pinning
 //!
-//! Some routers disallow hairpinning. This means if people in two different LANs are under the
-//! same NAT, both their external addresses would be similar. When non-hairpinning routers see
+//! Some routers disallow hair-pinning. This means if people in two different LANs are under the
+//! same NAT, both their external addresses would be similar. When non-hair-pinning routers see
 //! this, a packet with source and destination containing IP's they know are allocated by them from
 //! the pool (although source and destination endpoints maybe quite different), they will discard
 //! and not route it further. This is really a tough one and currently there is no solution to
@@ -135,7 +135,7 @@
 //!
 //! ## TCP
 //!
-//! With `TCP` some of the challanges are greater. The usual process is going through the same
+//! With `TCP` some of the challenges are greater. The usual process is going through the same
 //! rendezvous as with `UDP` above. While one `UDP` socket did fine for communicating with all the
 //! servers and then hole punching to peer, `TCP` is connection oriented and thus we need multiple
 //! sockets. We will bind a connector per server and then a connector to the peer. While beginning
@@ -144,31 +144,31 @@
 //!
 //! TCP connection can be established either via normal connector-listener pair, in which one side
 //! is active (sends `SYNs`) while the other is passive (reacts to `SYNs` by sending `SYN-ACKs`),
-//! or via lesser know `TCP Simulataneous Connect` in which both sides actively send `SYNs` and
+//! or via lesser know `TCP Simultaneous Connect` in which both sides actively send `SYNs` and
 //! both establish the connection because when they see a `SYN` in response to a `SYN` they assume
 //! the other side also wants to establish the connection and then it materialises. If there is an
 //! active connector and a listener bound to the same local endpoint on either side (like stated
 //! above), there is a better chance of establishing a connection. If `SYN` is sent by peer 1 to 2
 //! punching a hole (updating the filter) in 1's router for 2 and similarly sent by 2 for 1 then
-//! when they reach each other's routers they are let through and `TCP Simulataneous Connect` kicks
+//! when they reach each other's routers they are let through and `TCP Simultaneous Connect` kicks
 //! in. If one of the `SYNs` reached the other end before the other's `SYN` could leave its router,
 //! it will be dropped as an unsolicited communication by the router. If the connect times out for
 //! the first peer and then the other sends the connect `SYN`, the first peer's listener will
 //! accept it, thus increasing the connection chances.
 //!
-//! One of the challange here is that some peer routers don't drop the unsoicited `SYN` silently
+//! One of the challenge here is that some peer routers don't drop the unsolicited `SYN` silently
 //! (which would be good for us) but additionally sends an `RST`. This could have bad effects. One
 //! is our router might close the hole (update the filter to not allow remote traffic from peer any
 //! more) because it realises that the connection has been closed. This means we will have to
 //! continually send `SYNs` to re-enliven the hole even though we get `RSTs` and also to keep our
-//! connector exiting (becuase they would also error out on `RST` reception). So the connect logic
-//! sort of happens in a busy loop consuming resources and becomes very timming dependent.
+//! connector exiting (because they would also error out on `RST` reception). So the connect logic
+//! sort of happens in a busy loop consuming resources and becomes very timing dependent.
 //!
 //! The other challenge is worse - some routers simply discard the incoming `SYNs` thus making it
 //! impossible to do a TCP hole punch (or at-least until someone can show a cleverer way to
 //! outsmart the router).
 //!
-//! Combined with non-hairpinning and blacklisting (aggressive flood attack prevention), we can
+//! Combined with non-hair-pinning and blacklisting (aggressive flood attack prevention), we can
 //! quickly see why `TCP` NAT traversal is more difficult than `UDP`. The same trick as with
 //! incremental `TTLs` was tried with TCP connects too, so that we punch holes but not reach the
 //! other end quickly to get blacklisted or get `RST` which would close the hole. However for TCP
@@ -191,8 +191,8 @@
 //! we take, whether the operation succeeded or failed. These intermediate states must be preserved
 //! and notified to appropriately function. So we ask the user to provide us a way to preserve our
 //! state (via [`insert_state`]), retrieve state ([`state`]), remove it ([`remove_state`])
-//! and so on. The crate completely managers its own states including resouce cleanups etc. and not
-//! burden the user with it. This is what we ask via [`Interface`] trait.
+//! and so on. The crate completely managers its own states including resource cleanups etc. and
+//! not burden the user with it. This is what we ask via [`Interface`] trait.
 //!
 //! Just like we expect user to give us an expected [`Interface`] we ourselves implement
 //! [`NatState`] trait. This trait allows the user to call our various states on appropriate events
@@ -281,7 +281,7 @@ pub type Res<T> = Result<T, NatError>;
 ///
 /// When the timer fires in the user's event loop poll, it is expected that they retrieve the
 /// [`NatState`] using the associated token held in the timer and call its [`NatState::timeout`]
-/// using the timer id. This allows the ivocation of the correct [`NatState`] that started this
+/// using the timer id. This allows the invocation of the correct [`NatState`] that started this
 /// timer and also pinpoint which timer within it (using timer id) if it had started several
 /// timers.
 ///

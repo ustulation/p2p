@@ -16,7 +16,7 @@ pub const HOLE_PUNCH_WAIT_FOR_OTHER: bool = true;
 /// Various configurations with which to proceed with NAT traversal.
 ///
 /// User can opt to provide this in a file, read from it and pass it when required. For optional
-/// fields that are `None`, reasonalble defaults will be used.
+/// fields that are `None`, reasonable defaults will be used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Rendezvous timeout in seconds
