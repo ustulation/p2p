@@ -30,7 +30,9 @@ pub struct UdpRendezvousServer {
 impl UdpRendezvousServer {
     /// Boot the UDP Rendezvous server. This should normally be called only once.
     pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
-        let port = ifc.config().udp_rendezvous_port.unwrap_or(UDP_RENDEZVOUS_PORT);
+        let port = ifc.config()
+            .udp_rendezvous_port
+            .unwrap_or(UDP_RENDEZVOUS_PORT);
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
         let sock = UdpSocket::bind(&addr)?;
 

@@ -72,7 +72,9 @@ impl UdpHolePunchMediator {
             let weak_cloned = weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, child, res| {
                 if let Some(mediator) = weak_cloned.upgrade() {
-                    mediator.borrow_mut().handle_rendezvous(ifc, poll, child, res);
+                    mediator
+                        .borrow_mut()
+                        .handle_rendezvous(ifc, poll, child, res);
                 }
             };
 
@@ -101,7 +103,11 @@ impl UdpHolePunchMediator {
                          child: Token,
                          res: ::Res<(UdpSocket, SocketAddr)>) {
         let r = match self.state {
-            State::Rendezvous { ref mut children, ref mut info, ref mut f } => {
+            State::Rendezvous {
+                ref mut children,
+                ref mut info,
+                ref mut f,
+            } => {
                 let _ = children.remove(&child);
                 if let Ok((sock, ext_addr)) = res {
                     info.0.push((sock, child));
@@ -151,7 +157,11 @@ impl UdpHolePunchMediator {
                               poll: &Poll)
                               -> ::Res<Vec<SocketAddr>> {
         let r = match self.state {
-            State::Rendezvous { ref mut children, ref mut info, .. } => {
+            State::Rendezvous {
+                ref mut children,
+                ref mut info,
+                ..
+            } => {
                 UdpHolePunchMediator::terminate_children(ifc, poll, children);
                 let mut socks = mem::replace(&mut info.0, vec![]);
                 let ext_addrs = mem::replace(&mut info.1, vec![]);
@@ -207,11 +217,15 @@ impl UdpHolePunchMediator {
 
         let mut children = HashSet::with_capacity(cap);
         for (((sock, token), peer), puncher_config) in
-            info.into_iter().zip(peers.into_iter()).zip(hole_punchers_cfg.into_iter()) {
+            info.into_iter()
+                .zip(peers.into_iter())
+                .zip(hole_punchers_cfg.into_iter()) {
             let weak = self.self_weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, token, res| {
                 if let Some(mediator) = weak.upgrade() {
-                    mediator.borrow_mut().handle_hole_punch(ifc, poll, token, res);
+                    mediator
+                        .borrow_mut()
+                        .handle_hole_punch(ifc, poll, token, res);
                 }
             };
             if Puncher::start(ifc,
@@ -248,7 +262,10 @@ impl UdpHolePunchMediator {
                          child: Token,
                          res: ::Res<(UdpSocket, SocketAddr)>) {
         let r = match self.state {
-            State::HolePunching { ref mut children, ref mut f } => {
+            State::HolePunching {
+                ref mut children,
+                ref mut f,
+            } => {
                 let _ = children.remove(&child);
                 if let Ok((sock, addr)) = res {
                     f(ifc, poll, Ok((sock, addr, child)));
@@ -303,7 +320,11 @@ impl UdpHolePunchMediator {
 impl NatState for UdpHolePunchMediator {
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         match self.state {
-            State::Rendezvous { ref mut children, ref mut info, .. } => {
+            State::Rendezvous {
+                ref mut children,
+                ref mut info,
+                ..
+            } => {
                 UdpHolePunchMediator::terminate_children(ifc, poll, children);
                 UdpHolePunchMediator::dereg_socks(poll, &mut info.0);
             }

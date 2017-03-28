@@ -13,10 +13,13 @@ mod event_loop;
 
 fn main() {
     let el = spawn_event_loop();
-    unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        let _token_udp = unwrap!(UdpRendezvousServer::start(ifc, poll));
-        let _token_tcp = unwrap!(TcpRendezvousServer::start(ifc, poll));
-    })));
+    unwrap!(el.nat_tx
+                .send(NatMsg::new(move |ifc, poll| {
+                                      let _token_udp = unwrap!(UdpRendezvousServer::start(ifc,
+                                                                                          poll));
+                                      let _token_tcp = unwrap!(TcpRendezvousServer::start(ifc,
+                                                                                          poll));
+                                  })));
 
     let (_tx, rx) = mpsc::channel();
     println!("Server started. Blocking main thread indefinitely");

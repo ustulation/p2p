@@ -31,7 +31,9 @@ impl TcpRendezvousServer {
     /// Boot the TCP Rendezvous server. This should normally be called only once.
     pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
         let listener = {
-            let port = ifc.config().tcp_rendezvous_port.unwrap_or(TCP_RENDEZVOUS_PORT);
+            let port = ifc.config()
+                .tcp_rendezvous_port
+                .unwrap_or(TCP_RENDEZVOUS_PORT);
             let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
             let builder = TcpBuilder::new_v4()?;
             let _ = builder.bind(addr)?;

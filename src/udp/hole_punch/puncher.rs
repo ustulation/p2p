@@ -56,7 +56,7 @@ impl Puncher {
         sock.set_ttl(ttl as u32)?;
 
         let timeout = match ifc.set_timeout(Duration::from_millis(ttl_inc_interval_ms),
-                              NatTimer::new(token, TIMER_ID)) {
+                                            NatTimer::new(token, TIMER_ID)) {
             Ok(timeout) => timeout,
             Err(e) => {
                 let _ = poll.deregister(&sock);
@@ -207,16 +207,12 @@ impl Puncher {
                     Sending::None
                 };
             }
-            Ok(poll.reregister(self.sock
-                                   .as_ref()
-                                   .ok_or(NatError::UnregisteredSocket)?,
+            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                                self.token,
                                Ready::readable() | Ready::error() | Ready::hup(),
                                PollOpt::edge())?)
         } else {
-            Ok(poll.reregister(self.sock
-                                   .as_ref()
-                                   .ok_or(NatError::UnregisteredSocket)?,
+            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                                self.token,
                                Ready::readable() | Ready::writable() | Ready::error() |
                                Ready::hup(),
@@ -265,7 +261,7 @@ impl NatState for Puncher {
             debug!("Invalid Timer ID: {}", timer_id);
         }
         self.timeout = match ifc.set_timeout(Duration::from_millis(self.ttl_inc_interval_ms),
-                              NatTimer::new(self.token, TIMER_ID)) {
+                                             NatTimer::new(self.token, TIMER_ID)) {
             Ok(t) => t,
             Err(e) => {
                 debug!("Error in setting timeout: {:?}", e);

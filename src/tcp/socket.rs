@@ -174,7 +174,8 @@ impl SockInner {
                             return Err(NatError::ZeroByteRead);
                         }
                     }
-                    self.read_buffer.extend_from_slice(&buffer[0..bytes_read]);
+                    self.read_buffer
+                        .extend_from_slice(&buffer[0..bytes_read]);
                     is_something_read = true;
                 }
                 Err(error) => {

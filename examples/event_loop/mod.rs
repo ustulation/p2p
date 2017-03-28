@@ -46,7 +46,9 @@ impl Core {
     fn handle_nat_timer(&mut self, poll: &Poll) {
         while let Some(nat_timer) = self.timer.poll() {
             if let Some(nat_state) = self.state(nat_timer.associated_nat_state) {
-                nat_state.borrow_mut().timeout(self, poll, nat_timer.timer_id);
+                nat_state
+                    .borrow_mut()
+                    .timeout(self, poll, nat_timer.timer_id);
             }
         }
     }

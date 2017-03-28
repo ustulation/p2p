@@ -22,12 +22,15 @@ mod event_loop;
 
 fn get_rendezvous_info(el: &El) -> Res<(Handle, RendezvousInfo)> {
     let (tx, rx) = mpsc::channel();
-    unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        let get_info = move |_: &mut Interface, _: &Poll, res| {
-            unwrap!(tx.send(res));
-        };
-        unwrap!(HolePunchMediator::start(ifc, poll, Box::new(get_info)));
-    })));
+    unwrap!(el.nat_tx
+                .send(NatMsg::new(move |ifc, poll| {
+                                      let get_info = move |_: &mut Interface, _: &Poll, res| {
+                                          unwrap!(tx.send(res));
+                                      };
+                                      unwrap!(HolePunchMediator::start(ifc,
+                                                                       poll,
+                                                                       Box::new(get_info)));
+                                  })));
 
     unwrap!(rx.recv())
 }
@@ -156,10 +159,11 @@ fn start_chatting(el: &El, token: Token) {
             break;
         }
 
-        unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
-                                                 let chat_engine = unwrap!(core.peer_state(token));
-                                                 chat_engine.borrow_mut().write(core, poll, input);
-                                             })));
+        unwrap!(el.core_tx
+                    .send(CoreMsg::new(move |core, poll| {
+                                           let chat_engine = unwrap!(core.peer_state(token));
+                                           chat_engine.borrow_mut().write(core, poll, input);
+                                       })));
     }
 }
 
@@ -228,9 +232,15 @@ fn main() {
         }
     };
 
-    unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
-        let _token = ChatEngine::start(core, poll, token, sock, peer, &enc_pk);
-    })));
+    unwrap!(el.core_tx
+                .send(CoreMsg::new(move |core, poll| {
+                                       let _token = ChatEngine::start(core,
+                                                                      poll,
+                                                                      token,
+                                                                      sock,
+                                                                      peer,
+                                                                      &enc_pk);
+                                   })));
 
     start_chatting(&el, token);
 }

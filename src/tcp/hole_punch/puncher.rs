@@ -56,7 +56,10 @@ impl Puncher {
                 let peer_addr = sock.peer_addr()?;
                 (sock, t, true, our_addr, peer_addr)
             }
-            Via::Connect { our_addr, peer_addr } => {
+            Via::Connect {
+                our_addr,
+                peer_addr,
+            } => {
                 let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].to_tcp_stream()?;
                 stream.set_linger(Some(Duration::from_secs(0)))?;
                 let sock = Socket::wrap(TcpStream::connect_stream(stream, &peer_addr)?);

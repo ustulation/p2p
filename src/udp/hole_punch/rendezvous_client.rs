@@ -160,16 +160,12 @@ impl UdpRendezvousClient {
         }
 
         if self.write_queue.is_none() {
-            Ok(poll.reregister(self.sock
-                                   .as_ref()
-                                   .ok_or(NatError::UnregisteredSocket)?,
+            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                                self.token,
                                Ready::readable() | Ready::error() | Ready::hup(),
                                PollOpt::edge())?)
         } else {
-            Ok(poll.reregister(self.sock
-                                   .as_ref()
-                                   .ok_or(NatError::UnregisteredSocket)?,
+            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                                self.token,
                                Ready::readable() | Ready::writable() | Ready::error() |
                                Ready::hup(),
