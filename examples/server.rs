@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 extern crate mio;
 extern crate p2p;
 extern crate serde_json;

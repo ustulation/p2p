@@ -1,7 +1,7 @@
 use {Interface, NatError, NatState, NatTimer};
 use mio::{Poll, PollOpt, Ready, Token};
+use mio::net::UdpSocket;
 use mio::timer::Timeout;
-use mio::udp::UdpSocket;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -107,8 +107,7 @@ impl Puncher {
             None => return,
         };
         let bytes_rxd = match r {
-            Ok(Some((bytes, _))) => bytes,
-            Ok(None) => return,
+            Ok((bytes, _)) => bytes,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => return,
             Err(e) => {
@@ -176,7 +175,7 @@ impl Puncher {
             None => return Err(NatError::UnregisteredSocket),
         };
         let sent = match r {
-            Ok(Some(bytes_txd)) => {
+            Ok(bytes_txd) => {
                 if bytes_txd != msg.len() {
                     debug!("Partial datagram sent - datagram will be treated as corrupted. \
                             Actual size: {} B, sent size: {} B.",
@@ -187,7 +186,6 @@ impl Puncher {
                     true
                 }
             }
-            Ok(None) => false,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => false,
             Err(e) => return Err(From::from(e)),

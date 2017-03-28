@@ -1,9 +1,9 @@
 use super::{UdpEchoReq, UdpEchoResp};
 use {Interface, NatError, NatState};
-use bincode::{SizeLimit, deserialize, serialize};
+use bincode::{Infinite, deserialize, serialize};
 use config::UDP_RENDEZVOUS_PORT;
 use mio::{Poll, PollOpt, Ready, Token};
-use mio::udp::UdpSocket;
+use mio::net::UdpSocket;
 use sodium::crypto::box_::PublicKey;
 use sodium::crypto::sealedbox;
 use std::any::Any;
@@ -61,8 +61,7 @@ impl UdpRendezvousServer {
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
         let mut buf = [0; 512];
         let (bytes_rxd, peer) = match self.sock.recv_from(&mut buf) {
-            Ok(Some((bytes, peer))) => (bytes, peer),
-            Ok(None) => return,
+            Ok((bytes, peer)) => (bytes, peer),
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => return,
             Err(e) => {
@@ -81,7 +80,7 @@ impl UdpRendezvousServer {
 
         let resp = UdpEchoResp(sealedbox::seal(format!("{}", peer).as_bytes(),
                                                &PublicKey(peer_pk)));
-        let ser_resp = match serialize(&resp, SizeLimit::Infinite) {
+        let ser_resp = match serialize(&resp, Infinite) {
             Ok(s) => s,
             Err(e) => {
                 warn!("Error in serialization: {:?}", e);
@@ -107,7 +106,7 @@ impl UdpRendezvousServer {
         };
 
         match self.sock.send_to(&resp, &peer) {
-            Ok(Some(bytes_txd)) => {
+            Ok(bytes_txd) => {
                 if bytes_txd != resp.len() {
                     debug!("Partial datagram sent - datagram will be treated as corrupted. \
                             Actual size: {} B, sent size: {} B.",
@@ -115,7 +114,6 @@ impl UdpRendezvousServer {
                            bytes_txd);
                 }
             }
-            Ok(None) => self.write_queue.push_front((peer, resp)),
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => {
                 self.write_queue.push_front((peer, resp))

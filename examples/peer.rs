@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 extern crate mio;
 extern crate p2p;
 extern crate rust_sodium as sodium;
@@ -7,7 +9,7 @@ extern crate unwrap;
 
 use self::event_loop::{Core, CoreMsg, CoreState, El, spawn_event_loop};
 use mio::{Poll, PollOpt, Ready, Token};
-use mio::udp::UdpSocket;
+use mio::net::UdpSocket;
 use p2p::{Handle, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
 use p2p::HolePunchInfo;
 use sodium::crypto::box_;
@@ -73,8 +75,7 @@ impl ChatEngine {
 
     fn read(&mut self, _core: &mut Core, _poll: &Poll) {
         let bytes_rxd = match self.sock.recv_from(&mut self.read_buf) {
-            Ok(Some((bytes_rxd, _))) => bytes_rxd,
-            Ok(None) => return,
+            Ok((bytes_rxd, _)) => bytes_rxd,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => return,
             Err(e) => panic!("Error in chat engine read: {:?}", e),
@@ -108,8 +109,7 @@ impl ChatEngine {
         };
 
         match self.sock.send_to(&m, &self.peer) {
-            Ok(Some(bytes_txd)) => assert!(bytes_txd == m.len()),
-            Ok(None) => self.write_queue.push_front(m),
+            Ok(bytes_txd) => assert_eq!(bytes_txd, m.len()),
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => self.write_queue.push_front(m),
             Err(e) => panic!("Error in chat engine write: {:?}", e),

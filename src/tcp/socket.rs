@@ -1,5 +1,5 @@
 use NatError;
-use bincode::{SizeLimit, deserialize_from, serialize_into};
+use bincode::{Infinite, deserialize_from, serialize_into};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use mio::{Evented, Poll, PollOpt, Ready, Token};
 use mio::tcp::TcpStream;
@@ -215,7 +215,7 @@ impl SockInner {
             return Ok(None);
         }
 
-        let result = deserialize_from(&mut Cursor::new(&self.read_buffer), SizeLimit::Infinite)?;
+        let result = deserialize_from(&mut Cursor::new(&self.read_buffer), Infinite)?;
 
         self.read_buffer = self.read_buffer[self.read_len..].to_owned();
         self.read_len = 0;
@@ -236,7 +236,7 @@ impl SockInner {
 
             let _ = data.write_u32::<LittleEndian>(0);
 
-            serialize_into(&mut data, &msg, SizeLimit::Infinite)?;
+            serialize_into(&mut data, &msg, Infinite)?;
 
             let len = data.position() - mem::size_of::<u32>() as u64;
             data.set_position(0);

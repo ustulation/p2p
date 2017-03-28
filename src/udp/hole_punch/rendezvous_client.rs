@@ -1,7 +1,7 @@
 use {Interface, NatError, NatState};
-use bincode::{SizeLimit, deserialize, serialize};
+use bincode::{Infinite, deserialize, serialize};
 use mio::{Poll, PollOpt, Ready, Token};
-use mio::udp::UdpSocket;
+use mio::net::UdpSocket;
 use rand::{self, Rng};
 use sodium::crypto::sealedbox;
 use std::any::Any;
@@ -28,7 +28,7 @@ pub struct UdpRendezvousClient {
 impl UdpRendezvousClient {
     pub fn start(ifc: &mut Interface, poll: &Poll, sock: UdpSocket, f: Finish) -> ::Res<Token> {
         let token = ifc.new_token();
-        let req = serialize(&UdpEchoReq(ifc.enc_pk().0), SizeLimit::Infinite)?;
+        let req = serialize(&UdpEchoReq(ifc.enc_pk().0), Infinite)?;
         let mut servers = ifc.config().remote_udp_rendezvous_servers.clone();
         let num_servers = servers.len();
         if num_servers < 2 {
@@ -78,8 +78,7 @@ impl UdpRendezvousClient {
             None => return,
         };
         let bytes_rxd = match r {
-            Ok(Some((bytes, _))) => bytes,
-            Ok(None) => return,
+            Ok((bytes, _)) => bytes,
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => return,
             Err(e) => {
@@ -143,7 +142,7 @@ impl UdpRendezvousClient {
             None => return Err(NatError::UnregisteredSocket),
         };
         match r {
-            Ok(Some(bytes_txd)) => {
+            Ok(bytes_txd) => {
                 if bytes_txd != resp.len() {
                     debug!("Partial datagram sent - datagram will be treated as corrupted. \
                             Actual size: {} B, sent size: {} B.",
@@ -151,7 +150,6 @@ impl UdpRendezvousClient {
                            bytes_txd);
                 }
             }
-            Ok(None) => self.write_queue = Some((server, resp)),
             Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
                           e.kind() == ErrorKind::Interrupted => {
                 self.write_queue = Some((server, resp))

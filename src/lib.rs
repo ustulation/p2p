@@ -225,6 +225,7 @@
 
 #![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
 #![recursion_limit="100"]
+#![allow(deprecated)]
 
 // Coding guidelines:
 // 1. If called by someone don't reply to caller via stored callback, reply directly, else caller
@@ -250,7 +251,7 @@ extern crate rand;
 extern crate rust_sodium as sodium;
 extern crate serde;
 
-use bincode::{SizeLimit, deserialize, serialize};
+use bincode::{Infinite, deserialize, serialize};
 use mio::{Poll, Ready, Token};
 use mio::channel::Sender;
 use mio::timer::{Timeout, TimerError};
@@ -407,7 +408,7 @@ pub fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u
         cipher_text: box_::seal_precomputed(plain_text, &nonce, key),
     };
 
-    Ok(serialize(&handshake, SizeLimit::Infinite)?)
+    Ok(serialize(&handshake, Infinite)?)
 }
 
 /// Utility function to decrypt messages from peer

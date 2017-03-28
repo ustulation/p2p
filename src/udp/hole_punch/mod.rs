@@ -3,7 +3,7 @@ use self::rendezvous_client::UdpRendezvousClient;
 use {Interface, NatError, NatState};
 use mio::Poll;
 use mio::Token;
-use mio::udp::UdpSocket;
+use mio::net::UdpSocket;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
