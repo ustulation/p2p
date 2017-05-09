@@ -60,7 +60,8 @@ impl Puncher {
                 our_addr,
                 peer_addr,
             } => {
-                let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].to_tcp_stream()?;
+                let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0]
+                    .to_tcp_stream()?;
                 stream.set_linger(Some(Duration::from_secs(0)))?;
                 let sock = Socket::wrap(TcpStream::connect_stream(stream, &peer_addr)?);
                 (sock, ifc.new_token(), false, our_addr, peer_addr)
@@ -222,7 +223,8 @@ impl NatState for Puncher {
         let _ = mem::replace(&mut self.sock, Default::default());
 
         let r = || -> ::Res<Socket> {
-            let stream = new_reusably_bound_tcp_sockets(&self.our_addr, 1)?.0[0].to_tcp_stream()?;
+            let stream = new_reusably_bound_tcp_sockets(&self.our_addr, 1)?.0[0]
+                .to_tcp_stream()?;
             stream.set_linger(Some(Duration::from_secs(0)))?;
             let sock = Socket::wrap(TcpStream::connect_stream(stream, &self.peer_addr)?);
             poll.register(&sock,

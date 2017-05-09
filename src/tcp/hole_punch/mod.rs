@@ -247,7 +247,8 @@ impl TcpHolePunchMediator {
             }
         };
 
-        let l = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].listen(LISTENER_BACKLOG)?;
+        let l = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0]
+            .listen(LISTENER_BACKLOG)?;
         let listener = TcpListener::from_listener(l, &our_addr)?;
 
         let mut children = HashSet::with_capacity(2);

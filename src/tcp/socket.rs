@@ -202,7 +202,8 @@ impl SockInner {
                 return Ok(None);
             }
 
-            self.read_len = Cursor::new(&self.read_buffer).read_u32::<LittleEndian>()? as usize;
+            self.read_len = Cursor::new(&self.read_buffer)
+                .read_u32::<LittleEndian>()? as usize;
 
             if self.read_len > MAX_PAYLOAD_SIZE {
                 return Err(NatError::PayloadSizeProhibitive);
