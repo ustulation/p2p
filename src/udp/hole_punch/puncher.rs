@@ -42,21 +42,24 @@ pub struct Puncher {
 }
 
 impl Puncher {
-    pub fn start(ifc: &mut Interface,
-                 poll: &Poll,
-                 token: Token,
-                 sock: UdpSocket,
-                 ttl: u8,
-                 ttl_inc_interval_ms: u64,
-                 peer: SocketAddr,
-                 peer_enc_pk: &box_::PublicKey,
-                 f: Finish)
-                 -> ::Res<()> {
+    pub fn start(
+        ifc: &mut Interface,
+        poll: &Poll,
+        token: Token,
+        sock: UdpSocket,
+        ttl: u8,
+        ttl_inc_interval_ms: u64,
+        peer: SocketAddr,
+        peer_enc_pk: &box_::PublicKey,
+        f: Finish,
+    ) -> ::Res<()> {
         let os_ttl = sock.ttl()?;
         sock.set_ttl(ttl as u32)?;
 
-        let timeout = match ifc.set_timeout(Duration::from_millis(ttl_inc_interval_ms),
-                                            NatTimer::new(token, TIMER_ID)) {
+        let timeout = match ifc.set_timeout(
+            Duration::from_millis(ttl_inc_interval_ms),
+            NatTimer::new(token, TIMER_ID),
+        ) {
             Ok(timeout) => timeout,
             Err(e) => {
                 let _ = poll.deregister(&sock);
@@ -64,30 +67,32 @@ impl Puncher {
             }
         };
 
-        if let Err(e) = poll.reregister(&sock,
-                                        token,
-                                        Ready::writable() | Ready::readable() | Ready::error() |
-                                        Ready::hup(),
-                                        PollOpt::edge()) {
+        if let Err(e) = poll.reregister(
+            &sock,
+            token,
+            Ready::writable() | Ready::readable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        )
+        {
             let _ = poll.deregister(&sock);
             return Err(From::from(e));
         }
 
         let puncher = Rc::new(RefCell::new(Puncher {
-                                               token: token,
-                                               sock: Some(sock),
-                                               peer: peer,
-                                               key: box_::precompute(peer_enc_pk, ifc.enc_sk()),
-                                               connection_chooser: ifc.enc_pk() > peer_enc_pk,
-                                               os_ttl: os_ttl,
-                                               current_ttl: ttl as u32,
-                                               ttl_inc_interval_ms: ttl_inc_interval_ms,
-                                               timeout: timeout,
-                                               sending: Sending::Syn,
-                                               syn_ack_rxd: false,
-                                               syn_ack_txd: false,
-                                               f: f,
-                                           }));
+            token: token,
+            sock: Some(sock),
+            peer: peer,
+            key: box_::precompute(peer_enc_pk, ifc.enc_sk()),
+            connection_chooser: ifc.enc_pk() > peer_enc_pk,
+            os_ttl: os_ttl,
+            current_ttl: ttl as u32,
+            ttl_inc_interval_ms: ttl_inc_interval_ms,
+            timeout: timeout,
+            sending: Sending::Syn,
+            syn_ack_rxd: false,
+            syn_ack_txd: false,
+            f: f,
+        }));
 
         if let Err((nat_state, e)) = ifc.insert_state(token, puncher) {
             debug!("Error inserting state: {:?}", e);
@@ -108,8 +113,10 @@ impl Puncher {
         };
         let bytes_rxd = match r {
             Ok((bytes, _)) => bytes,
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
-                          e.kind() == ErrorKind::Interrupted => return,
+            Err(ref e)
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                return
+            }
             Err(e) => {
                 debug!("Udp Hole Puncher has errored out in read: {:?}", e);
                 return self.handle_err(ifc, poll);
@@ -177,17 +184,19 @@ impl Puncher {
         let sent = match r {
             Ok(bytes_txd) => {
                 if bytes_txd != msg.len() {
-                    debug!("Partial datagram sent - datagram will be treated as corrupted. \
+                    debug!(
+                        "Partial datagram sent - datagram will be treated as corrupted. \
                             Actual size: {} B, sent size: {} B.",
-                           msg.len(),
-                           bytes_txd);
+                        msg.len(),
+                        bytes_txd
+                    );
                     false
                 } else {
                     true
                 }
             }
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
-                          e.kind() == ErrorKind::Interrupted => false,
+            Err(ref e)
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => false,
             Err(e) => return Err(From::from(e)),
         };
 
@@ -205,16 +214,20 @@ impl Puncher {
                     Sending::None
                 };
             }
-            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                               self.token,
-                               Ready::readable() | Ready::error() | Ready::hup(),
-                               PollOpt::edge())?)
+            Ok(poll.reregister(
+                self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
+                self.token,
+                Ready::readable() | Ready::error() | Ready::hup(),
+                PollOpt::edge(),
+            )?)
         } else {
-            Ok(poll.reregister(self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                               self.token,
-                               Ready::readable() | Ready::writable() | Ready::error() |
-                               Ready::hup(),
-                               PollOpt::edge())?)
+            Ok(poll.reregister(
+                self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
+                self.token,
+                Ready::readable() | Ready::writable() |
+                    Ready::error() | Ready::hup(),
+                PollOpt::edge(),
+            )?)
         }
     }
 
@@ -237,9 +250,9 @@ impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
             let e = match self.sock
-                      .as_ref()
-                      .ok_or(NatError::UnregisteredSocket)
-                      .and_then(|s| s.take_error().map_err(From::from)) {
+                .as_ref()
+                .ok_or(NatError::UnregisteredSocket)
+                .and_then(|s| s.take_error().map_err(From::from)) {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
@@ -258,8 +271,10 @@ impl NatState for Puncher {
         if timer_id != TIMER_ID {
             debug!("Invalid Timer ID: {}", timer_id);
         }
-        self.timeout = match ifc.set_timeout(Duration::from_millis(self.ttl_inc_interval_ms),
-                                             NatTimer::new(self.token, TIMER_ID)) {
+        self.timeout = match ifc.set_timeout(
+            Duration::from_millis(self.ttl_inc_interval_ms),
+            NatTimer::new(self.token, TIMER_ID),
+        ) {
             Ok(t) => t,
             Err(e) => {
                 debug!("Error in setting timeout: {:?}", e);

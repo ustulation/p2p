@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ ! "$(rustfmt --version)" =~ "0.8.3" ]]; then
-    echo "Rustfmt version 0.8.3 needed"
+if [[ ! "$(rustfmt --version)" =~ "0.9.0" ]]; then
+    echo "Rustfmt version 0.9.0 needed"
     exit 1
 fi
 

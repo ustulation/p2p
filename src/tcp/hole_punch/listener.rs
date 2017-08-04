@@ -16,25 +16,28 @@ pub struct Listener {
 }
 
 impl Listener {
-    pub fn start(ifc: &mut Interface,
-                 poll: &Poll,
-                 l: TcpListener,
-                 peer_enc_key: &box_::PublicKey,
-                 f: Finish)
-                 -> ::Res<Token> {
+    pub fn start(
+        ifc: &mut Interface,
+        poll: &Poll,
+        l: TcpListener,
+        peer_enc_key: &box_::PublicKey,
+        f: Finish,
+    ) -> ::Res<Token> {
         let token = ifc.new_token();
 
-        poll.register(&l,
-                      token,
-                      Ready::readable() | Ready::error() | Ready::hup(),
-                      PollOpt::edge())?;
+        poll.register(
+            &l,
+            token,
+            Ready::readable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        )?;
 
         let listener = Rc::new(RefCell::new(Listener {
-                                                token: token,
-                                                listener: l,
-                                                peer_enc_key: *peer_enc_key,
-                                                f: Some(f),
-                                            }));
+            token: token,
+            listener: l,
+            peer_enc_key: *peer_enc_key,
+            f: Some(f),
+        }));
 
         if ifc.insert_state(token, listener.clone()).is_err() {
             warn!("Unable to start Listener!");

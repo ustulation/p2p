@@ -55,18 +55,21 @@ pub struct TcpHolePunchMediator {
 }
 
 impl TcpHolePunchMediator {
-    pub fn start(ifc: &mut Interface,
-                 poll: &Poll,
-                 f: RendezvousFinsih)
-                 -> ::Res<Rc<RefCell<Self>>> {
+    pub fn start(
+        ifc: &mut Interface,
+        poll: &Poll,
+        f: RendezvousFinsih,
+    ) -> ::Res<Rc<RefCell<Self>>> {
         let mut servers = ifc.config().remote_tcp_rendezvous_servers.clone();
         let num_servers = servers.len();
 
         if num_servers == 0 {
             return Err(NatError::TcpHolePunchMediatorFailedToStart);
         } else if num_servers < 2 {
-            info!("Tcp: Symmetric NAT detection and port prediction will not be possible using \
-                   less than 2 Rendezvous Servers. Use at-least 2. Recommended is 3.");
+            info!(
+                "Tcp: Symmetric NAT detection and port prediction will not be possible using \
+                   less than 2 Rendezvous Servers. Use at-least 2. Recommended is 3."
+            );
         } else if num_servers > 3 {
             let mut rng = rand::thread_rng();
             rng.shuffle(&mut servers);
@@ -77,9 +80,9 @@ impl TcpHolePunchMediator {
         let (builders, addr) = new_reusably_bound_tcp_sockets(&addr_any, num_servers)?;
 
         let mediator = Rc::new(RefCell::new(TcpHolePunchMediator {
-                                                state: State::None,
-                                                self_weak: Weak::new(),
-                                            }));
+            state: State::None,
+            self_weak: Weak::new(),
+        }));
         mediator.borrow_mut().self_weak = Rc::downgrade(&mediator);
         let weak = mediator.borrow().self_weak.clone();
 
@@ -94,9 +97,12 @@ impl TcpHolePunchMediator {
             let weak_cloned = weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, child, res| {
                 if let Some(mediator) = weak_cloned.upgrade() {
-                    mediator
-                        .borrow_mut()
-                        .handle_rendezvous(ifc, poll, child, res);
+                    mediator.borrow_mut().handle_rendezvous(
+                        ifc,
+                        poll,
+                        child,
+                        res,
+                    );
                 }
             };
 
@@ -119,11 +125,13 @@ impl TcpHolePunchMediator {
         }
     }
 
-    fn handle_rendezvous(&mut self,
-                         ifc: &mut Interface,
-                         poll: &Poll,
-                         child: Token,
-                         res: ::Res<SocketAddr>) {
+    fn handle_rendezvous(
+        &mut self,
+        ifc: &mut Interface,
+        poll: &Poll,
+        child: Token,
+        res: ::Res<SocketAddr>,
+    ) {
         let r = match self.state {
             State::Rendezvous {
                 ref mut children,
@@ -157,9 +165,11 @@ impl TcpHolePunchMediator {
                 }
             }
             ref x => {
-                warn!("Logic Error in state book-keeping - Pls report this as a bug. Expected \
+                warn!(
+                    "Logic Error in state book-keeping - Pls report this as a bug. Expected \
                        state: State::Rendezvous ;; Found: {:?}",
-                      x);
+                    x
+                );
                 Err(NatError::InvalidState)
             }
         };
@@ -188,15 +198,19 @@ impl TcpHolePunchMediator {
         let mut is_err = false;
         for addr in ext_addrs {
             if ext_addr.ip() != addr.ip() {
-                info!("Symmetric NAT with variable IP mapping detected. No logic for Tcp \
-                       external address prediction for these circumstances!");
+                info!(
+                    "Symmetric NAT with variable IP mapping detected. No logic for Tcp \
+                       external address prediction for these circumstances!"
+                );
                 is_err = true;
                 break;
             } else if port_prediction_offset == 0 {
                 port_prediction_offset = addr.port() as i32 - ext_addr.port() as i32;
             } else if port_prediction_offset != addr.port() as i32 - ext_addr.port() as i32 {
-                info!("Symmetric NAT with non-uniformly changing port mapping detected. No logic \
-                       for Tcp external address prediction for these circumstances!");
+                info!(
+                    "Symmetric NAT with non-uniformly changing port mapping detected. No logic \
+                       for Tcp external address prediction for these circumstances!"
+                );
                 is_err = true;
                 break;
             }
@@ -232,13 +246,14 @@ impl TcpHolePunchMediator {
         e
     }
 
-    pub fn punch_hole(&mut self,
-                      ifc: &mut Interface,
-                      poll: &Poll,
-                      peer: SocketAddr,
-                      peer_enc_pk: &box_::PublicKey,
-                      f: HolePunchFinsih)
-                      -> ::Res<()> {
+    pub fn punch_hole(
+        &mut self,
+        ifc: &mut Interface,
+        poll: &Poll,
+        peer: SocketAddr,
+        peer_enc_pk: &box_::PublicKey,
+        f: HolePunchFinsih,
+    ) -> ::Res<()> {
         let our_addr = match self.state {
             State::ReadyToHolePunch(our_addr) => our_addr,
             ref x => {
@@ -247,18 +262,23 @@ impl TcpHolePunchMediator {
             }
         };
 
-        let l = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0]
-            .listen(LISTENER_BACKLOG)?;
+        let l = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].listen(
+            LISTENER_BACKLOG,
+        )?;
         let listener = TcpListener::from_listener(l, &our_addr)?;
 
         let mut children = HashSet::with_capacity(2);
 
         let weak = self.self_weak.clone();
         let handler = move |ifc: &mut Interface, poll: &Poll, token, res| if let Some(mediator) =
-            weak.upgrade() {
-            mediator
-                .borrow_mut()
-                .handle_hole_punch(ifc, poll, token, res);
+            weak.upgrade()
+        {
+            mediator.borrow_mut().handle_hole_punch(
+                ifc,
+                poll,
+                token,
+                res,
+            );
         };
         let via = Via::Connect {
             our_addr: our_addr,
@@ -270,10 +290,14 @@ impl TcpHolePunchMediator {
 
         let weak = self.self_weak.clone();
         let handler = move |ifc: &mut Interface, poll: &Poll, token, res| if let Some(mediator) =
-            weak.upgrade() {
-            mediator
-                .borrow_mut()
-                .handle_hole_punch(ifc, poll, token, res);
+            weak.upgrade()
+        {
+            mediator.borrow_mut().handle_hole_punch(
+                ifc,
+                poll,
+                token,
+                res,
+            );
         };
         if let Ok(child) = Listener::start(ifc, poll, listener, peer_enc_pk, Box::new(handler)) {
             let _ = children.insert(child);
@@ -293,11 +317,13 @@ impl TcpHolePunchMediator {
         Ok(())
     }
 
-    fn handle_hole_punch(&mut self,
-                         ifc: &mut Interface,
-                         poll: &Poll,
-                         child: Token,
-                         res: ::Res<TcpStream>) {
+    fn handle_hole_punch(
+        &mut self,
+        ifc: &mut Interface,
+        poll: &Poll,
+        child: Token,
+        res: ::Res<TcpStream>,
+    ) {
         let r = match self.state {
             State::HolePunching {
                 ref mut children,
@@ -315,9 +341,11 @@ impl TcpHolePunchMediator {
                 }
             }
             ref x => {
-                warn!("Logic Error in state book-keeping - Pls report this as a bug. Expected \
+                warn!(
+                    "Logic Error in state book-keeping - Pls report this as a bug. Expected \
                        state: State::HolePunching ;; Found: {:?}",
-                      x);
+                    x
+                );
                 Err(NatError::InvalidState)
             }
         };

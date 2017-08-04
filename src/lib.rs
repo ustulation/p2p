@@ -316,12 +316,17 @@ pub struct NatMsg(Box<FnMut(&mut Interface, &Poll) + Send + 'static>);
 impl NatMsg {
     /// Construct a new message indicating the action via a function/functor.
     pub fn new<F>(f: F) -> Self
-        where F: FnOnce(&mut Interface, &Poll) + Send + 'static
+    where
+        F: FnOnce(&mut Interface, &Poll) + Send + 'static,
     {
         let mut f = Some(f);
-        NatMsg(Box::new(move |ifc: &mut Interface, poll: &Poll| if let Some(f) = f.take() {
-                            f(ifc, poll)
-                        }))
+        NatMsg(Box::new(
+            move |ifc: &mut Interface, poll: &Poll| if let Some(f) =
+                f.take()
+            {
+                f(ifc, poll)
+            },
+        ))
     }
 
     /// Execute the message (and thus the action).
@@ -358,10 +363,11 @@ pub trait Interface {
     /// callee is expected to store this some place (e.g. `HashMap<Token, Rc<RefCell<NatState>>>`)
     /// to be retrieved when `mio` poll indicates some event associated with the `token` has
     /// occurred. In that case call `NatState::ready`.
-    fn insert_state(&mut self,
-                    token: Token,
-                    state: Rc<RefCell<NatState>>)
-                    -> Result<(), (Rc<RefCell<NatState>>, String)>;
+    fn insert_state(
+        &mut self,
+        token: Token,
+        state: Rc<RefCell<NatState>>,
+    ) -> Result<(), (Rc<RefCell<NatState>>, String)>;
     /// Remove the state that was previously stored against the `token` and return it if
     /// successfully retrieved.
     fn remove_state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
@@ -369,10 +375,11 @@ pub trait Interface {
     fn state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
     /// Set timeout. User code is expected to have a `mio::timer::Timer<NatTimer>` on which the
     /// timeout can be set.
-    fn set_timeout(&mut self,
-                   duration: Duration,
-                   timer_detail: NatTimer)
-                   -> Result<Timeout, TimerError>;
+    fn set_timeout(
+        &mut self,
+        duration: Duration,
+        timer_detail: NatTimer,
+    ) -> Result<Timeout, TimerError>;
     /// Cancel the timout
     fn cancel_timeout(&mut self, timeout: &Timeout) -> Option<NatTimer>;
     /// Give us a new unique token

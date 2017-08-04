@@ -31,9 +31,9 @@ impl TcpRendezvousServer {
     /// Boot the TCP Rendezvous server. This should normally be called only once.
     pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
         let listener = {
-            let port = ifc.config()
-                .tcp_rendezvous_port
-                .unwrap_or(TCP_RENDEZVOUS_PORT);
+            let port = ifc.config().tcp_rendezvous_port.unwrap_or(
+                TCP_RENDEZVOUS_PORT,
+            );
             let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
             let builder = TcpBuilder::new_v4()?;
             let _ = builder.bind(addr)?;
@@ -43,15 +43,17 @@ impl TcpRendezvousServer {
 
         let token = ifc.new_token();
 
-        poll.register(&listener,
-                      token,
-                      Ready::readable() | Ready::error() | Ready::hup(),
-                      PollOpt::edge())?;
+        poll.register(
+            &listener,
+            token,
+            Ready::readable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        )?;
 
         let server = Rc::new(RefCell::new(TcpRendezvousServer {
-                                              token: token,
-                                              listener: listener,
-                                          }));
+            token: token,
+            listener: listener,
+        }));
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start TcpRendezvousServer!");
