@@ -7,8 +7,8 @@ os:
   - osx
 language: rust
 rust:
-  - stable
-  - nightly-2017-04-28
+  - 1.19.0
+  - nightly-2017-07-20
 sudo: false
 branches:
   only:
@@ -19,19 +19,19 @@ before_script:
   - if ! cargo prune --version | grep -q "0.1.8"; then
       cargo install cargo-prune --vers="0.1.8" --force;
     fi
-  - if [ "${TRAVIS_RUST_VERSION}" = stable ]; then
-      rustfmt_vers=0.8.3;
+  - if [ "${TRAVIS_RUST_VERSION}" = 1.19.0 ]; then
+      rustfmt_vers=0.9.0;
       if ! rustfmt --version | grep -q $rustfmt_vers; then
         cargo install rustfmt --vers=$rustfmt_vers --force;
       fi
     elif [ "${TRAVIS_OS_NAME}" = linux ]; then
-      clippy_vers=0.0.128;
+      clippy_vers=0.0.144;
       if ! cargo clippy --version | grep -q $clippy_vers; then
         cargo install clippy --vers=$clippy_vers --force;
       fi
     fi
 script:
-  - if [ "${TRAVIS_RUST_VERSION}" = stable ]; then
+  - if [ "${TRAVIS_RUST_VERSION}" = 1.19.0 ]; then
         (
             set -x;
             cargo fmt -- --write-mode=diff &&
