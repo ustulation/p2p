@@ -15,9 +15,10 @@ struct TcpEchoReq(pub [u8; PUBLICKEYBYTES]);
 #[derive(Debug, Serialize, Deserialize)]
 struct TcpEchoResp(pub Vec<u8>);
 
-pub fn new_reusably_bound_tcp_sockets(local_addr: &SocketAddr,
-                                      n: usize)
-                                      -> ::Res<(Vec<TcpBuilder>, SocketAddr)> {
+pub fn new_reusably_bound_tcp_sockets(
+    local_addr: &SocketAddr,
+    n: usize,
+) -> ::Res<(Vec<TcpBuilder>, SocketAddr)> {
     if n < 1 {
         return Ok((vec![], *local_addr));
     }

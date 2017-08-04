@@ -25,20 +25,24 @@ impl ExchangeMsg {
     pub fn start(ifc: &mut Interface, poll: &Poll, peer: SocketAddr, sock: Socket) -> ::Res<()> {
         let token = ifc.new_token();
 
-        let timeout = ifc.set_timeout(Duration::from_secs(RENDEZVOUS_EXCHG_TIMEOUT_SEC),
-                                      NatTimer::new(token, TIMER_ID))?;
+        let timeout = ifc.set_timeout(
+            Duration::from_secs(RENDEZVOUS_EXCHG_TIMEOUT_SEC),
+            NatTimer::new(token, TIMER_ID),
+        )?;
 
-        poll.register(&sock,
-                      token,
-                      Ready::readable() | Ready::error() | Ready::hup(),
-                      PollOpt::edge())?;
+        poll.register(
+            &sock,
+            token,
+            Ready::readable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        )?;
 
         let exchg_msg = Rc::new(RefCell::new(ExchangeMsg {
-                                                 token: token,
-                                                 sock: sock,
-                                                 peer: peer,
-                                                 timeout: timeout,
-                                             }));
+            token: token,
+            sock: sock,
+            peer: peer,
+            timeout: timeout,
+        }));
 
         if ifc.insert_state(token, exchg_msg.clone()).is_err() {
             debug!("Unable to start TCP rendezvous exchanger!");

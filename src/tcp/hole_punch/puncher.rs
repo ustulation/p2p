@@ -44,12 +44,13 @@ pub struct Puncher {
 }
 
 impl Puncher {
-    pub fn start(ifc: &mut Interface,
-                 poll: &Poll,
-                 via: Via,
-                 peer_enc_pk: &box_::PublicKey,
-                 f: Finish)
-                 -> ::Res<Token> {
+    pub fn start(
+        ifc: &mut Interface,
+        poll: &Poll,
+        via: Via,
+        peer_enc_pk: &box_::PublicKey,
+        f: Finish,
+    ) -> ::Res<Token> {
         let (sock, token, via_accept, our_addr, peer_addr) = match via {
             Via::Accept(sock, t) => {
                 let our_addr = sock.local_addr()?;
@@ -68,10 +69,13 @@ impl Puncher {
             }
         };
 
-        poll.register(&sock,
-                      token,
-                      Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                      PollOpt::edge())?;
+        poll.register(
+            &sock,
+            token,
+            Ready::readable() | Ready::writable() |
+                Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        )?;
 
         let key = box_::precompute(peer_enc_pk, ifc.enc_sk());
         let chooser = if ifc.enc_pk() > peer_enc_pk {
@@ -81,15 +85,15 @@ impl Puncher {
         };
 
         let puncher = Rc::new(RefCell::new(Puncher {
-                                               token: token,
-                                               sock: sock,
-                                               our_addr: our_addr,
-                                               peer_addr: peer_addr,
-                                               via_accept: via_accept,
-                                               connection_chooser: chooser,
-                                               timeout: None,
-                                               f: f,
-                                           }));
+            token: token,
+            sock: sock,
+            our_addr: our_addr,
+            peer_addr: peer_addr,
+            via_accept: via_accept,
+            connection_chooser: chooser,
+            timeout: None,
+            f: f,
+        }));
 
         if let Err((nat_state, e)) = ifc.insert_state(token, puncher) {
             debug!("Error inserting state: {:?}", e);
@@ -166,8 +170,10 @@ impl NatState for Puncher {
                 self.handle_err(ifc, poll)
             } else {
                 trace!("Error in Tcp Puncher connector readiness: {:?}", e);
-                match ifc.set_timeout(Duration::from_millis(RE_CONNECT_MS),
-                                      NatTimer::new(self.token, TIMER_ID)) {
+                match ifc.set_timeout(
+                    Duration::from_millis(RE_CONNECT_MS),
+                    NatTimer::new(self.token, TIMER_ID),
+                ) {
                     Ok(t) => self.timeout = Some(t),
                     Err(e) => {
                         debug!("Error setting timeout: {:?}", e);
@@ -227,10 +233,13 @@ impl NatState for Puncher {
                 .to_tcp_stream()?;
             stream.set_linger(Some(Duration::from_secs(0)))?;
             let sock = Socket::wrap(TcpStream::connect_stream(stream, &self.peer_addr)?);
-            poll.register(&sock,
-                          self.token,
-                          Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                          PollOpt::edge())?;
+            poll.register(
+                &sock,
+                self.token,
+                Ready::readable() | Ready::writable() |
+                    Ready::error() | Ready::hup(),
+                PollOpt::edge(),
+            )?;
             Ok(sock)
         }();
 

@@ -22,17 +22,19 @@ impl TcpRendezvousClient {
     pub fn start(ifc: &mut Interface, poll: &Poll, sock: Socket, f: Finish) -> ::Res<Token> {
         let token = ifc.new_token();
 
-        poll.register(&sock,
-                      token,
-                      Ready::writable() | Ready::error() | Ready::hup(),
-                      PollOpt::edge())?;
+        poll.register(
+            &sock,
+            token,
+            Ready::writable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        )?;
 
         let client = Rc::new(RefCell::new(TcpRendezvousClient {
-                                              token: token,
-                                              sock: sock,
-                                              req: Some(TcpEchoReq(ifc.enc_pk().0)),
-                                              f: f,
-                                          }));
+            token: token,
+            sock: sock,
+            req: Some(TcpEchoReq(ifc.enc_pk().0)),
+            f: f,
+        }));
 
         if ifc.insert_state(token, client.clone()).is_err() {
             debug!("Unable to insert TcpRendezvousClient State!");
@@ -63,15 +65,19 @@ impl TcpRendezvousClient {
                 match SocketAddr::from_str(our_ext_addr_str) {
                     Ok(addr) => self.done(ifc, poll, addr),
                     Err(e) => {
-                        debug!("Error: UdpEchoResp which contained non-parsable address: {:?}",
-                               e);
+                        debug!(
+                            "Error: UdpEchoResp which contained non-parsable address: {:?}",
+                            e
+                        );
                         self.handle_err(ifc, poll)
                     }
                 }
             }
             Err(e) => {
-                debug!("Error: UdpEchoResp which contained non-utf8 address: {:?}",
-                       e);
+                debug!(
+                    "Error: UdpEchoResp which contained non-utf8 address: {:?}",
+                    e
+                );
                 self.handle_err(ifc, poll)
             }
         }

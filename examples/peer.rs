@@ -24,15 +24,12 @@ mod event_loop;
 
 fn get_rendezvous_info(el: &El) -> Res<(Handle, RendezvousInfo)> {
     let (tx, rx) = mpsc::channel();
-    unwrap!(el.nat_tx
-                .send(NatMsg::new(move |ifc, poll| {
-                                      let get_info = move |_: &mut Interface, _: &Poll, res| {
-                                          unwrap!(tx.send(res));
-                                      };
-                                      unwrap!(HolePunchMediator::start(ifc,
-                                                                       poll,
-                                                                       Box::new(get_info)));
-                                  })));
+    unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
+        let get_info = move |_: &mut Interface, _: &Poll, res| {
+            unwrap!(tx.send(res));
+        };
+        unwrap!(HolePunchMediator::start(ifc, poll, Box::new(get_info)));
+    })));
 
     unwrap!(rx.recv())
 }
@@ -47,25 +44,28 @@ struct ChatEngine {
 }
 
 impl ChatEngine {
-    fn start(core: &mut Core,
-             poll: &Poll,
-             token: Token,
-             sock: UdpSocket,
-             peer: SocketAddr,
-             peer_enc_pk: &box_::PublicKey)
-             -> Token {
-        unwrap!(poll.reregister(&sock,
-                                token,
-                                Ready::readable() | Ready::error() | Ready::hup(),
-                                PollOpt::edge()));
+    fn start(
+        core: &mut Core,
+        poll: &Poll,
+        token: Token,
+        sock: UdpSocket,
+        peer: SocketAddr,
+        peer_enc_pk: &box_::PublicKey,
+    ) -> Token {
+        unwrap!(poll.reregister(
+            &sock,
+            token,
+            Ready::readable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        ));
         let engine = Rc::new(RefCell::new(ChatEngine {
-                                              token: token,
-                                              write_queue: VecDeque::with_capacity(5),
-                                              read_buf: [0; 1024],
-                                              sock: sock,
-                                              peer: peer,
-                                              key: box_::precompute(peer_enc_pk, core.enc_sk()),
-                                          }));
+            token: token,
+            write_queue: VecDeque::with_capacity(5),
+            read_buf: [0; 1024],
+            sock: sock,
+            peer: peer,
+            key: box_::precompute(peer_enc_pk, core.enc_sk()),
+        }));
 
         if let Err(e) = core.insert_peer_state(token, engine) {
             panic!("{}", e.1);
@@ -76,17 +76,21 @@ impl ChatEngine {
     fn read(&mut self, _core: &mut Core, _poll: &Poll) {
         let bytes_rxd = match self.sock.recv_from(&mut self.read_buf) {
             Ok((bytes_rxd, _)) => bytes_rxd,
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
-                          e.kind() == ErrorKind::Interrupted => return,
+            Err(ref e)
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                return
+            }
             Err(e) => panic!("Error in chat engine read: {:?}", e),
 
         };
 
-        let msg = unwrap!(String::from_utf8(unwrap!(p2p::msg_to_read(&self.read_buf
-                                                                          [..bytes_rxd],
-                                                                     &self.key))));
-        println!("======================\nPEER: {}\n======================",
-                 msg);
+        let msg = unwrap!(String::from_utf8(unwrap!(
+            p2p::msg_to_read(&self.read_buf[..bytes_rxd], &self.key)
+        )));
+        println!(
+            "======================\nPEER: {}\n======================",
+            msg
+        );
     }
 
     fn write(&mut self, _core: &mut Core, poll: &Poll, m: Option<String>) {
@@ -110,8 +114,10 @@ impl ChatEngine {
 
         match self.sock.send_to(&m, &self.peer) {
             Ok(bytes_txd) => assert_eq!(bytes_txd, m.len()),
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock ||
-                          e.kind() == ErrorKind::Interrupted => self.write_queue.push_front(m),
+            Err(ref e)
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                self.write_queue.push_front(m)
+            }
             Err(e) => panic!("Error in chat engine write: {:?}", e),
         }
 
@@ -121,7 +127,12 @@ impl ChatEngine {
             Ready::writable() | Ready::readable() | Ready::error() | Ready::hup()
         };
 
-        unwrap!(poll.reregister(&self.sock, self.token, interest, PollOpt::edge()));
+        unwrap!(poll.reregister(
+            &self.sock,
+            self.token,
+            interest,
+            PollOpt::edge(),
+        ));
     }
 }
 
@@ -159,11 +170,10 @@ fn start_chatting(el: &El, token: Token) {
             break;
         }
 
-        unwrap!(el.core_tx
-                    .send(CoreMsg::new(move |core, poll| {
-                                           let chat_engine = unwrap!(core.peer_state(token));
-                                           chat_engine.borrow_mut().write(core, poll, input);
-                                       })));
+        unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
+            let chat_engine = unwrap!(core.peer_state(token));
+            chat_engine.borrow_mut().write(core, poll, input);
+        })));
     }
 }
 
@@ -173,19 +183,23 @@ fn main() {
         Ok((h, r)) => (h, r),
         Err(e) => {
             println!("Could not obtain rendezvous info: {:?}", e);
-            println!("[Check if the rendezvous server addresses are correct and publicly \
-                      reachable and that they are running].");
+            println!(
+                "[Check if the rendezvous server addresses are correct and publicly \
+                      reachable and that they are running]."
+            );
             return;
         }
     };
     let our_info = unwrap!(serde_json::to_string(&rendezvous_info));
     println!("Our rendezvous info:\n{}", our_info);
 
-    println!("\n[NOTE: For unfriendlier routers/NATs, timming can play a big role. It's \
+    println!(
+        "\n[NOTE: For unfriendlier routers/NATs, timming can play a big role. It's \
               recommended that once the rendezvous info is exchanged, both parties hit \"Enter\" \
               as closely in time as possible. Usually with an overlay network to exchange this \
               info there won't be a problem, but when doing it manually it could be of benefit \
-              to do it as simultaneously as possible.]\n");
+              to do it as simultaneously as possible.]\n"
+    );
 
     println!("Enter peer rendezvous info:");
     let mut peer_info = String::new();
@@ -193,10 +207,12 @@ fn main() {
     let peers = unwrap!(serde_json::from_str(&peer_info));
 
     let (tx, rx) = mpsc::channel();
-    handle.fire_hole_punch(peers,
-                           Box::new(move |_, _, res| {
-                                        unwrap!(tx.send(res));
-                                    }));
+    handle.fire_hole_punch(
+        peers,
+        Box::new(move |_, _, res| {
+            unwrap!(tx.send(res));
+        }),
+    );
 
     let HolePunchInfo { tcp, udp, enc_pk } = match unwrap!(rx.recv()) {
         Ok(info) => {
@@ -204,8 +220,10 @@ fn main() {
             info
         }
         Err(e) => {
-            println!("Could not traverse NAT to establish peer to peer communication: {:?}",
-                     e);
+            println!(
+                "Could not traverse NAT to establish peer to peer communication: {:?}",
+                e
+            );
             return;
         }
     };
@@ -220,27 +238,25 @@ fn main() {
             info
         }
         (None, Some(_)) => {
-            println!("Connected only via TCP. This example only supports communicating via \
+            println!(
+                "Connected only via TCP. This example only supports communicating via \
                       udp-socket but it seems it's tcp hole punching that has succeeded instead. \
                       It is trivial to implement tcp communication for the chat engine and is \
-                      left for future scope. Terminating for the moment.");
+                      left for future scope. Terminating for the moment."
+            );
             return;
         }
         (None, None) => {
-            unreachable!("This condition should not have been passed over to the user \
-                                     code!")
+            unreachable!(
+                "This condition should not have been passed over to the user \
+                                     code!"
+            )
         }
     };
 
-    unwrap!(el.core_tx
-                .send(CoreMsg::new(move |core, poll| {
-                                       let _token = ChatEngine::start(core,
-                                                                      poll,
-                                                                      token,
-                                                                      sock,
-                                                                      peer,
-                                                                      &enc_pk);
-                                   })));
+    unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
+        let _token = ChatEngine::start(core, poll, token, sock, peer, &enc_pk);
+    })));
 
     start_chatting(&el, token);
 }
