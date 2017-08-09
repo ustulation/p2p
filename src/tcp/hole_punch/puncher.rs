@@ -7,8 +7,7 @@ use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::mem;
-use std::net::{self, SocketAddr};
-use std::os::unix::io::{FromRawFd, IntoRawFd};
+use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 use tcp::{Socket, new_reusably_bound_tcp_sockets};
@@ -158,7 +157,6 @@ impl Puncher {
 }
 
 impl NatState for Puncher {
-    #[allow(unsafe_code)]
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() {
             let e = match self.sock.take_error() {
@@ -191,11 +189,7 @@ impl NatState for Puncher {
                 let r = || -> ::Res<Socket> {
                     let sock = mem::replace(&mut self.sock, Default::default());
                     let stream = sock.into_stream()?;
-                    let fd = stream.into_raw_fd();
-                    let stream: net::TcpStream = unsafe { FromRawFd::from_raw_fd(fd) };
                     stream.set_linger(None)?;
-                    mem::forget(stream);
-                    let stream = unsafe { FromRawFd::from_raw_fd(fd) };
                     Ok(Socket::wrap(stream))
                 }();
 
