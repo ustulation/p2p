@@ -164,9 +164,9 @@
 //! connector exiting (because they would also error out on `RST` reception). So the connect logic
 //! sort of happens in a busy loop consuming resources and becomes very timing dependent.
 //!
-//! The other challenge is worse - some routers simply discard the incoming `SYNs` thus making it
-//! impossible to do a TCP hole punch (or at-least until someone can show a cleverer way to
-//! outsmart the router).
+//! The other challenge is worse - some routers simply discard the incoming `SYNs` (even if they
+//! have seen an outgoing SYN to that remote endpoint) thus making it impossible to do a TCP hole
+//! punch (or at-least until someone can show a cleverer way to outsmart the router).
 //!
 //! Combined with non-hair-pinning and blacklisting (aggressive flood attack prevention), we can
 //! quickly see why `TCP` NAT traversal is more difficult than `UDP`. The same trick as with
