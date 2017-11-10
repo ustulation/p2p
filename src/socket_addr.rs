@@ -13,14 +13,14 @@ impl SocketAddrExt for SocketAddr {
                 v4_addr
                     .expand_local_unspecified()?
                     .into_iter()
-                    .map(|v4_addr| SocketAddr::V4(v4_addr))
+                    .map(SocketAddr::V4)
                     .collect()
             }
             SocketAddr::V6(v6_addr) => {
                 v6_addr
                     .expand_local_unspecified()?
                     .into_iter()
-                    .map(|v6_addr| SocketAddr::V6(v6_addr))
+                    .map(SocketAddr::V6)
                     .collect()
             }
         };

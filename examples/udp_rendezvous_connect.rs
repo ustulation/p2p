@@ -3,12 +3,15 @@
 /// rendezvous connect.
 ///
 /// For example, log into a VPS and run:
+/// ```
 /// $ socat TCP-LISTEN:45666 TCP-LISTEN:45667
+/// ```
 ///
 /// The run this example on two machines, on seperate networks, both hidden behind NATs:
-///
+/// ```
 /// $ cargo run --example udp_rendezvous_connect -- <address of your vps>:45666 blah blah blah
 /// $ cargo run --example udp_rendezvous_connect -- <address of your vps>:45667 blah blah blah
+/// ```
 ///
 /// If successful, the peers should be able to communicate directly with each other over UDP.
 #[macro_use]

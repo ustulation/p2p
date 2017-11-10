@@ -58,7 +58,7 @@ pub fn bind_public_with_addr(
     let handle = handle.clone();
     let try = || {
         let listener = {
-            TcpListener::bind_reusable(&addr, &handle).map_err(BindPublicError::Bind)
+            TcpListener::bind_reusable(addr, &handle).map_err(BindPublicError::Bind)
         }?;
         let bind_addr = {
             listener.local_addr().map_err(BindPublicError::Bind)

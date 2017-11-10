@@ -122,10 +122,10 @@ where
         use TcpRendezvousConnectError::*;
         match *self {
             Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | Listen(ref e) => Some(e),
-            ChannelClosed => None,
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
+            ChannelClosed |
             AllAttemptsFailed(..) => None,
         }
     }
@@ -189,13 +189,13 @@ impl TcpStreamExt for TcpStream {
     ) -> BoxFuture<TcpStream, ConnectReusableError> {
         let try = || {
             let builder = {
-                TcpBuilder::bind_reusable(&bind_addr).map_err(
+                TcpBuilder::bind_reusable(bind_addr).map_err(
                     ConnectReusableError::Bind,
                 )?
             };
             let stream = unwrap!(builder.to_tcp_stream());
             Ok({
-                TcpStream::connect_stream(stream, &addr, &handle).map_err(
+                TcpStream::connect_stream(stream, addr, handle).map_err(
                     ConnectReusableError::Connect,
                 )
             })

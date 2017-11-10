@@ -72,7 +72,7 @@ impl Gateway {
         let (tx, rx) = oneshot::channel();
 
         let _ = thread::spawn(move || {
-            let res = add_port_mapping(gateway, protocol, local_addr, lease_duration, description);
+            let res = add_port_mapping(&gateway, protocol, local_addr, lease_duration, &description);
             tx.send(res)
         });
 
@@ -87,23 +87,23 @@ impl Gateway {
 ///
 /// Mapped external address on success.
 fn add_port_mapping(
-    gateway: igd::Gateway,
+    gateway: &igd::Gateway,
     protocol: PortMappingProtocol,
     local_addr: SocketAddrV4,
     lease_duration: u32,
-    description: String,
+    description: &str,
 ) -> Result<SocketAddrV4, AddAnyPortError> {
     if local_addr.ip().is_unspecified() {
         match discover_local_addr_to_gateway(*gateway.addr.ip()) {
             Ok(ipv4) => {
                 let local_addr = SocketAddrV4::new(ipv4, local_addr.port());
-                gateway.get_any_address(protocol, local_addr, lease_duration, &description)
+                gateway.get_any_address(protocol, local_addr, lease_duration, description)
             }
             // TODO(povilas): test upper layers, seems like this error is not handled.
             Err(e) => Err(AddAnyPortError::RequestError(RequestError::IoError(e))),
         }
     } else {
-        gateway.get_any_address(protocol, local_addr, lease_duration, &description)
+        gateway.get_any_address(protocol, local_addr, lease_duration, description)
     }
 }
 
@@ -170,13 +170,10 @@ pub fn get_any_address(
 /// IPv4 because gateway always has IPv4 address as well.
 fn discover_local_addr_to_gateway(gateway_addr: Ipv4Addr) -> io::Result<Ipv4Addr> {
     let ifs = get_if_addrs::get_if_addrs()?;
-    local_addr_to_gateway(ifs, gateway_addr).map_or(
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "No local addresses to gateway",
-        )),
-        |addr| Ok(addr),
-    )
+    let addr = local_addr_to_gateway(ifs, gateway_addr).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "No local addresses to gateway")
+    })?;
+    Ok(addr)
 }
 
 fn local_addr_to_gateway(interfaces: Vec<Interface>, gateway_addr: Ipv4Addr) -> Option<Ipv4Addr> {

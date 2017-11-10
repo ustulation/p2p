@@ -187,7 +187,7 @@ impl Future for OpenAddr {
                 }
                 Async::Ready(None) => {
                     trace!("out of servers");
-                    if self.active_queries.len() == 0 {
+                    if self.active_queries.is_empty() {
                         if let Some(known_addr) = self.known_addr_opt {
                             trace!("returning unverified (!) address: {}", known_addr);
                             return Ok(Async::Ready(known_addr));
@@ -204,7 +204,7 @@ impl Future for OpenAddr {
                     );
                 }
                 Async::NotReady => {
-                    if self.active_queries.len() == 0 {
+                    if self.active_queries.is_empty() {
                         trace!("waiting for more servers...");
                         loop {
                             if let Some(ref mut timeout) = self.more_servers_timeout {
