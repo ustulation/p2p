@@ -1,3 +1,5 @@
+//! Demonstrates how bind to public address (using UPnP) and receive some data
+
 #[macro_use]
 extern crate unwrap;
 #[macro_use]
