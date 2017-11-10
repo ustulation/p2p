@@ -1,3 +1,5 @@
+//! Port mapping context utilities.
+
 use ECHO_REQ;
 use bincode;
 
@@ -11,6 +13,7 @@ lazy_static! {
     static ref MC: Mutex<Mc> = Mutex::new(Mc::default());
 }
 
+/// `Mc` stands for `MappingContext` and is related to port mapping.
 #[derive(Default)]
 struct Mc {
     tcp_server_set: ServerSet,
@@ -209,16 +212,22 @@ pub fn udp_query_public_addr(
     future::result(try()).flatten().into_boxed()
 }
 
+/// Tests if IGD use is enabled or not.
+/// It's enabled by default.
 pub fn is_igd_enabled() -> bool {
     let mc = unwrap!(MC.lock());
     !mc.igd_disabled
 }
 
+/// By default `p2p` attempts to use IGD to open external ports for it's own use.
+/// Use this function to disable such behaviour. It set's a singleton flag value hence
+/// disables IGD for a whole `p2p` crate.
 pub fn disable_igd() {
     let mut mc = unwrap!(MC.lock());
     mc.igd_disabled = true;
 }
 
+/// Re-enables IGD use in `p2p` crate.
 pub fn enable_igd() {
     let mut mc = unwrap!(MC.lock());
     mc.igd_disabled = false;
