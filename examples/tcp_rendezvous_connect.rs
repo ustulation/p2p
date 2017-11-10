@@ -9,7 +9,7 @@
 ///
 /// $ cargo run --example tcp_rendezvous_connect -- <address of your vps>:45666 blah blah blah
 /// $ cargo run --example tcp_rendezvous_connect -- <address of your vps>:45667 blah blah blah
-/// 
+///
 /// If successful, the peers should be able to form a TCP connection directly to each other.
 #[macro_use]
 extern crate unwrap;
@@ -26,14 +26,14 @@ extern crate serde;
 extern crate docopt;
 extern crate env_logger;
 
+use docopt::Docopt;
+use futures::{Async, AsyncSink, Future, Sink, Stream};
+use p2p::TcpStreamExt;
 use std::{env, fmt};
-use std::net::{SocketAddr, Shutdown};
+use std::net::{Shutdown, SocketAddr};
 use std::str::FromStr;
 use tokio_core::net::TcpStream;
-use futures::{Future, Stream, Sink, Async, AsyncSink};
 use tokio_io::codec::length_delimited::Framed;
-use p2p::TcpStreamExt;
-use docopt::Docopt;
 use void::ResultVoidExt;
 
 // TODO: figure out how to not need this.
@@ -58,7 +58,10 @@ impl<S: Sink> Sink for DummyDebug<S> {
     type SinkItem = S::SinkItem;
     type SinkError = S::SinkError;
 
-    fn start_send(&mut self, item: Self::SinkItem) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
+    fn start_send(
+        &mut self,
+        item: Self::SinkItem,
+    ) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
         self.0.start_send(item)
     }
 
@@ -71,7 +74,10 @@ const USAGE: &str = "
 tcp_rendezvous_connect
 
 Usage:
-    tcp_rendezvous_connect --relay=<address> [--disable-igd] [--traversal-server=<address>] <message>
+    tcp_rendezvous_connect --relay=<address> \
+                           [--disable-igd] \
+                           [--traversal-server=<address>] \
+                           <message>
     tcp_rendezvous_connect (-h | --help)
 ";
 
@@ -91,8 +97,8 @@ fn main() {
 
     let args: Args = {
         Docopt::new(USAGE)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit())
+            .and_then(|d| d.deserialize())
+            .unwrap_or_else(|e| e.exit())
     };
 
     if args.flag_disable_igd {
@@ -110,27 +116,27 @@ fn main() {
     let handle = core.handle();
     let res = core.run({
         TcpStream::connect(&relay_addr, &handle)
-        .map_err(|e| panic!("error connecting to relay server: {}", e))
-        .and_then(move |relay_stream| {
-            let relay_channel = DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
-            TcpStream::rendezvous_connect(relay_channel, &handle)
-            .map_err(|e| panic!("rendezvous connect failed: {}", e))
-            .and_then(|stream| {
-                println!("connected!");
-                tokio_io::io::write_all(stream, message)
-                .map_err(|e| panic!("error writing to tcp stream: {}", e))
-                .and_then(|(stream, _)| {
-                    unwrap!(stream.shutdown(Shutdown::Write));
-                    tokio_io::io::read_to_end(stream, Vec::new())
-                    .map_err(|e| panic!("error reading from tcp stream: {}", e))
-                    .map(|(_, data)| {
-                        let recv_message = String::from_utf8_lossy(&data);
-                        println!("got message: {}", recv_message);
+            .map_err(|e| panic!("error connecting to relay server: {}", e))
+            .and_then(move |relay_stream| {
+                let relay_channel =
+                    DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
+                TcpStream::rendezvous_connect(relay_channel, &handle)
+                    .map_err(|e| panic!("rendezvous connect failed: {}", e))
+                    .and_then(|stream| {
+                        println!("connected!");
+                        tokio_io::io::write_all(stream, message)
+                            .map_err(|e| panic!("error writing to tcp stream: {}", e))
+                            .and_then(|(stream, _)| {
+                                unwrap!(stream.shutdown(Shutdown::Write));
+                                tokio_io::io::read_to_end(stream, Vec::new())
+                                    .map_err(|e| panic!("error reading from tcp stream: {}", e))
+                                    .map(|(_, data)| {
+                                        let recv_message = String::from_utf8_lossy(&data);
+                                        println!("got message: {}", recv_message);
+                                    })
+                            })
                     })
-                })
             })
-        })
     });
     res.void_unwrap()
 }
-

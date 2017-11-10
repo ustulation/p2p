@@ -49,4 +49,3 @@ mod filter_addrs;
 pub use prelude::*;
 
 const ECHO_REQ: [u8; 8] = [b'E', b'C', b'H', b'O', b'A', b'D', b'D', b'R'];
-

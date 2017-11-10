@@ -1,11 +1,11 @@
-use priv_prelude::*;
-use bincode;
-use tokio_io;
 use ECHO_REQ;
+use bincode;
 
 use futures::future::Loop;
-use server_set::{ServerSet, Servers};
+use priv_prelude::*;
 use protocol::Protocol;
+use server_set::{ServerSet, Servers};
+use tokio_io;
 
 lazy_static! {
     static ref MC: Mutex<Mc> = Mutex::new(Mc::default());
@@ -144,28 +144,27 @@ pub fn tcp_query_public_addr(
     let server_addr = *server_addr;
     let handle = handle.clone();
     TcpStream::connect_reusable(&bind_addr, &server_addr, &handle)
-    .map_err(|err| match err {
-        ConnectReusableError::Connect(e) => QueryPublicAddrError::Connect(e),
-        ConnectReusableError::Bind(e) => QueryPublicAddrError::Bind(e),
-    })
-    .with_timeout(Duration::from_secs(3), &handle)
-    .and_then(|opt| opt.ok_or(QueryPublicAddrError::ConnectTimeout))
-    .and_then(|stream| {
-        tokio_io::io::write_all(stream, ECHO_REQ)
-        .map(|(stream, _buf)| stream)
-        .map_err(QueryPublicAddrError::SendRequest)
-    })
-    .and_then(move |stream| {
-        tokio_io::io::read_to_end(stream, Vec::new())
-        .map_err(QueryPublicAddrError::ReadResponse)
-        .and_then(|(_stream, data)| {
-            bincode::deserialize(&data)
-            .map_err(QueryPublicAddrError::Deserialize)
+        .map_err(|err| match err {
+            ConnectReusableError::Connect(e) => QueryPublicAddrError::Connect(e),
+            ConnectReusableError::Bind(e) => QueryPublicAddrError::Bind(e),
         })
-        .with_timeout(Duration::from_secs(2), &handle)
-        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
-    })
-    .into_boxed()
+        .with_timeout(Duration::from_secs(3), &handle)
+        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ConnectTimeout))
+        .and_then(|stream| {
+            tokio_io::io::write_all(stream, ECHO_REQ)
+                .map(|(stream, _buf)| stream)
+                .map_err(QueryPublicAddrError::SendRequest)
+        })
+        .and_then(move |stream| {
+            tokio_io::io::read_to_end(stream, Vec::new())
+                .map_err(QueryPublicAddrError::ReadResponse)
+                .and_then(|(_stream, data)| {
+                    bincode::deserialize(&data).map_err(QueryPublicAddrError::Deserialize)
+                })
+                .with_timeout(Duration::from_secs(2), &handle)
+                .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
+        })
+        .into_boxed()
 }
 
 pub fn udp_query_public_addr(
@@ -178,35 +177,33 @@ pub fn udp_query_public_addr(
         let server_addr = *server_addr;
         let handle = handle.clone();
         let socket = {
-            UdpSocket::bind_reusable(&bind_addr, &handle)
-            .map_err(QueryPublicAddrError::Bind)
+            UdpSocket::bind_reusable(&bind_addr, &handle).map_err(QueryPublicAddrError::Bind)
         }?;
 
         Ok({
-            socket.send_dgram(ECHO_REQ, server_addr)
-            .map(|(socket, _buf)| socket)
-            .map_err(QueryPublicAddrError::SendRequest)
-            .and_then(move |socket| {
-                future::loop_fn(socket, move |socket| {
-                    socket
-                    .recv_dgram(vec![0u8; 256])
-                    .map_err(QueryPublicAddrError::ReadResponse)
-                    .and_then(move |(socket, data, len, addr)| {
-                        if addr == server_addr {
-                            let data = {
-                                trace!("server responded with: {:?}", &data[..len]);
-                                bincode::deserialize(&data[..len])
-                                .map_err(QueryPublicAddrError::Deserialize)
-                            }?;
-                            Ok(Loop::Break(data))
-                        } else {
-                            Ok(Loop::Continue(socket))
-                        }
-                    })
+            socket
+                .send_dgram(ECHO_REQ, server_addr)
+                .map(|(socket, _buf)| socket)
+                .map_err(QueryPublicAddrError::SendRequest)
+                .and_then(move |socket| {
+                    future::loop_fn(socket, move |socket| {
+                        socket
+                            .recv_dgram(vec![0u8; 256])
+                            .map_err(QueryPublicAddrError::ReadResponse)
+                            .and_then(move |(socket, data, len, addr)| if addr == server_addr {
+                                let data = {
+                                    trace!("server responded with: {:?}", &data[..len]);
+                                    bincode::deserialize(&data[..len]).map_err(
+                                        QueryPublicAddrError::Deserialize,
+                                    )
+                                }?;
+                                Ok(Loop::Break(data))
+                            } else {
+                                Ok(Loop::Continue(socket))
+                            })
+                    }).with_timeout(Duration::from_secs(2), &handle)
+                        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
                 })
-                .with_timeout(Duration::from_secs(2), &handle)
-                .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
-            })
         })
     };
     future::result(try()).flatten().into_boxed()
@@ -226,4 +223,3 @@ pub fn enable_igd() {
     let mut mc = unwrap!(MC.lock());
     mc.igd_disabled = false;
 }
-

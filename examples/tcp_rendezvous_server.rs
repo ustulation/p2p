@@ -6,7 +6,7 @@ extern crate tokio_core;
 extern crate p2p;
 extern crate futures;
 
-use futures::{future, Future};
+use futures::{Future, future};
 use p2p::TcpRendezvousServer;
 
 fn main() {
@@ -14,15 +14,13 @@ fn main() {
     let handle = core.handle();
     let res = core.run({
         TcpRendezvousServer::bind_public(&addr!("0.0.0.0:0"), &handle)
-        .map_err(|e| panic!("Error binding server publicly: {}", e))
-        .and_then(|(server, public_addr)| {
-            println!("listening on public socket address {}", public_addr);
+            .map_err(|e| panic!("Error binding server publicly: {}", e))
+            .and_then(|(server, public_addr)| {
+                println!("listening on public socket address {}", public_addr);
 
-            future::empty()
+                future::empty()
             .map(|()| drop(server))
-        })
+            })
     });
     unwrap!(res);
 }
-
-

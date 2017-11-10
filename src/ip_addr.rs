@@ -1,5 +1,5 @@
-use priv_prelude::*;
 use get_if_addrs::{self, IfAddr};
+use priv_prelude::*;
 
 pub trait IpAddrExt {
     /// Check whether an IP address is global.
@@ -30,17 +30,19 @@ impl IpAddrExt for IpAddr {
     fn expand_local_unspecified(&self) -> io::Result<Vec<IpAddr>> {
         let ret = match *self {
             IpAddr::V4(v4_addr) => {
-                v4_addr.expand_local_unspecified()?
-                .into_iter()
-                .map(|v4_addr| IpAddr::V4(v4_addr))
-                .collect()
-            },
+                v4_addr
+                    .expand_local_unspecified()?
+                    .into_iter()
+                    .map(|v4_addr| IpAddr::V4(v4_addr))
+                    .collect()
+            }
             IpAddr::V6(v6_addr) => {
-                v6_addr.expand_local_unspecified()?
-                .into_iter()
-                .map(|v6_addr| IpAddr::V6(v6_addr))
-                .collect()
-            },
+                v6_addr
+                    .expand_local_unspecified()?
+                    .into_iter()
+                    .map(|v6_addr| IpAddr::V6(v6_addr))
+                    .collect()
+            }
         };
         Ok(ret)
     }
@@ -63,12 +65,8 @@ pub trait Ipv6AddrExt {
 
 impl Ipv4AddrExt for Ipv4Addr {
     fn is_global(&self) -> bool {
-        !self.is_private() &&
-        !self.is_loopback() &&
-        !self.is_link_local() &&
-        !self.is_broadcast() &&
-        !self.is_documentation() &&
-        !self.is_unspecified()
+        !self.is_private() && !self.is_loopback() && !self.is_link_local() &&
+            !self.is_broadcast() && !self.is_documentation() && !self.is_unspecified()
     }
 
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv4Addr>> {
@@ -90,8 +88,7 @@ impl Ipv4AddrExt for Ipv4Addr {
 impl Ipv6AddrExt for Ipv6Addr {
     fn is_global(&self) -> bool {
         // TODO: this is very incomplete
-        !self.is_loopback() &&
-        !self.is_unspecified()
+        !self.is_loopback() && !self.is_unspecified()
     }
 
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv6Addr>> {
@@ -109,4 +106,3 @@ impl Ipv6AddrExt for Ipv6Addr {
         Ok(ret)
     }
 }
-

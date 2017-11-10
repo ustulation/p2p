@@ -1,11 +1,12 @@
-pub use priv_prelude::*;
-use bincode::{self, Infinite};
-use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
-use bytes::Bytes;
+
 
 use ECHO_REQ;
-use udp::socket;
+use bincode::{self, Infinite};
+use bytes::Bytes;
 use open_addr::BindPublicError;
+pub use priv_prelude::*;
+use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
+use udp::socket;
 
 pub struct UdpRendezvousServer {
     local_addr: SocketAddr,
@@ -36,10 +37,10 @@ impl UdpRendezvousServer {
     ) -> BoxFuture<(UdpRendezvousServer, SocketAddr), BindPublicError> {
         let handle = handle.clone();
         socket::bind_public_with_addr(addr, &handle)
-        .map(move |(socket, bind_addr, public_addr)| {
-            (from_socket_inner(socket, &bind_addr, &handle), public_addr)
-        })
-        .into_boxed()
+            .map(move |(socket, bind_addr, public_addr)| {
+                (from_socket_inner(socket, &bind_addr, &handle), public_addr)
+            })
+            .into_boxed()
     }
 
     /// Returns the local address that this rendezvous server is bound to.
@@ -90,7 +91,10 @@ fn from_socket_inner(
 /// Handles randezvous server request.
 ///
 /// Reponds with client address.
-fn on_addr_echo_request(msg_opt: Option<Bytes>, with_addr: WithAddress) ->  BoxFuture<(), io::Error> {
+fn on_addr_echo_request(
+    msg_opt: Option<Bytes>,
+    with_addr: WithAddress,
+) -> BoxFuture<(), io::Error> {
     if let Some(msg) = msg_opt {
         if &msg == &ECHO_REQ[..] {
             let addr = with_addr.remote_addr();
@@ -98,10 +102,10 @@ fn on_addr_echo_request(msg_opt: Option<Bytes>, with_addr: WithAddress) ->  BoxF
 
             return {
                 with_addr
-                .send(Bytes::from(encoded))
-                .map(|_with_addr| ())
-                .into_boxed()
-            }
+                    .send(Bytes::from(encoded))
+                    .map(|_with_addr| ())
+                    .into_boxed()
+            };
         }
     }
     future::ok(()).into_boxed()
@@ -119,7 +123,8 @@ mod test {
         fn it_returns_finished_future_when_message_is_none() {
             let ev_loop = unwrap!(Core::new());
             let udp_sock = SharedUdpSocket::share(unwrap!(
-                    UdpSocket::bind(&addr!("0.0.0.0:0"), &ev_loop.handle())));
+                UdpSocket::bind(&addr!("0.0.0.0:0"), &ev_loop.handle())
+            ));
             let udp_sock = udp_sock.with_address(addr!("192.168.1.2:1234"));
 
             let fut = on_addr_echo_request(None, udp_sock);

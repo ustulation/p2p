@@ -24,4 +24,3 @@ impl<T: Eq + Hash> HashSetExt<T> for HashSet<T> {
         Some(ret)
     }
 }
-

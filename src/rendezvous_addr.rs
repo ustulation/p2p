@@ -1,7 +1,7 @@
+use igd_async::{self, GetAnyAddressError};
+use mc;
 use priv_prelude::*;
 use std::error::Error;
-use mc;
-use igd_async::{self, GetAnyAddressError};
 
 #[derive(Debug)]
 pub struct RendezvousAddrError {
@@ -56,7 +56,8 @@ pub fn rendezvous_addr(
     let bind_addr = *bind_addr;
     let handle = handle.clone();
     let mut servers = mc::traversal_servers(protocol);
-    let mut active_queries = stream::FuturesOrdered::<BoxFuture<SocketAddr, QueryPublicAddrError>>::new();
+    let mut active_queries =
+        stream::FuturesOrdered::<BoxFuture<SocketAddr, QueryPublicAddrError>>::new();
     let mut errors = Vec::new();
     let mut more_servers_timeout = None::<Timeout>;
     let mut ports = Vec::new();
@@ -64,16 +65,15 @@ pub fn rendezvous_addr(
     let mut failed_sequences = 0;
 
     igd_async::get_any_address(protocol, bind_addr)
-    .or_else(move |igd_error| {
-        let mut igd_error = Some(igd_error);
-        future::poll_fn(move || {
-            loop {
+        .or_else(move |igd_error| {
+            let mut igd_error = Some(igd_error);
+            future::poll_fn(move || loop {
                 trace!("in rendezvous_addr loop");
                 match active_queries.poll() {
                     Err(e) => {
                         trace!("query returned error: {}", e);
                         errors.push(e);
-                    },
+                    }
                     Ok(Async::Ready(Some(addr))) => {
                         trace!("query returned address: {}", addr);
                         let ip = addr.ip();
@@ -82,7 +82,10 @@ pub fn rendezvous_addr(
                                 if known_ip != ip {
                                     return Err(RendezvousAddrError {
                                         igd_error: unwrap!(igd_error.take()),
-                                        kind: RendezvousAddrErrorKind::InconsistentIpAddrs(known_ip, ip),
+                                        kind: RendezvousAddrErrorKind::InconsistentIpAddrs(
+                                            known_ip,
+                                            ip,
+                                        ),
                                     });
                                 }
                             }
@@ -97,21 +100,26 @@ pub fn rendezvous_addr(
                                 let diff0 = ports[1].wrapping_sub(ports[0]);
                                 let diff1 = ports[2].wrapping_sub(ports[1]);
                                 if diff0 == diff1 {
-                                    return Ok(Async::Ready(SocketAddr::new(ip, ports[2].wrapping_add(diff0))));
-                                }
-                                else {
+                                    return Ok(Async::Ready(
+                                        SocketAddr::new(ip, ports[2].wrapping_add(diff0)),
+                                    ));
+                                } else {
                                     ports.remove(0);
                                     failed_sequences += 1;
                                     if failed_sequences >= 3 {
                                         return Err(RendezvousAddrError {
                                             igd_error: unwrap!(igd_error.take()),
-                                            kind: RendezvousAddrErrorKind::UnpredictablePorts(ports[0], ports[1], ports[2]),
+                                            kind: RendezvousAddrErrorKind::UnpredictablePorts(
+                                                ports[0],
+                                                ports[1],
+                                                ports[2],
+                                            ),
                                         });
                                     }
                                 }
                             }
                         }
-                    },
+                    }
                     _ => (),
                 }
 
@@ -130,12 +138,17 @@ pub fn rendezvous_addr(
                 match servers.poll().void_unwrap() {
                     Async::Ready(Some(server_addr)) => {
                         trace!("got a new server to try: {}", server_addr);
-                        let active_query = mc::query_public_addr(protocol, &bind_addr, &server_addr, &handle);
+                        let active_query =
+                            mc::query_public_addr(protocol, &bind_addr, &server_addr, &handle);
                         active_queries.push(active_query);
                         more_servers_timeout = None;
-                    },
+                    }
                     Async::Ready(None) => {
-                        trace!("run out of rendezvous servers with {} active queries, {} ports", active_queries.len(), ports.len());
+                        trace!(
+                            "run out of rendezvous servers with {} active queries, {} ports",
+                            active_queries.len(),
+                            ports.len()
+                        );
                         if active_queries.len() == 0 {
                             if ports.len() == 1 {
                                 let ip = unwrap!(known_ip_opt);
@@ -146,7 +159,7 @@ pub fn rendezvous_addr(
                                 kind: RendezvousAddrErrorKind::LackOfServers,
                             });
                         }
-                    },
+                    }
                     Async::NotReady => {
                         trace!("no new rendezvous servers ready");
                         if active_queries.len() == 0 {
@@ -166,18 +179,15 @@ pub fn rendezvous_addr(
                                     }
                                     break;
                                 } else {
-                                    more_servers_timeout = Some(
-                                        Timeout::new(Duration::from_secs(2), &handle)
-                                    );
+                                    more_servers_timeout =
+                                        Some(Timeout::new(Duration::from_secs(2), &handle));
                                 }
                             }
                         }
                         return Ok(Async::NotReady);
-                    },
+                    }
                 }
-            }
+            })
         })
-    })
-    .into_boxed()
+        .into_boxed()
 }
-

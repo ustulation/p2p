@@ -1,5 +1,5 @@
+use future_utils::mpsc::{SendError, UnboundedReceiver, UnboundedSender, unbounded};
 use priv_prelude::*;
-use future_utils::mpsc::{unbounded, UnboundedSender, UnboundedReceiver, SendError};
 
 #[derive(Debug)]
 pub struct TwoWayChannel<T> {
@@ -34,14 +34,7 @@ pub fn two_way_channel<T>() -> (TwoWayChannel<T>, TwoWayChannel<T>) {
     let (tx1, rx1) = unbounded();
 
     (
-        TwoWayChannel {
-            tx: tx0,
-            rx: rx1,
-        },
-        TwoWayChannel {
-            tx: tx1,
-            rx: rx0,
-        },
+        TwoWayChannel { tx: tx0, rx: rx1 },
+        TwoWayChannel { tx: tx1, rx: rx0 },
     )
 }
-

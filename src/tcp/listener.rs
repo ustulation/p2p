@@ -1,8 +1,8 @@
+use open_addr::{BindPublicError, open_addr};
 use priv_prelude::*;
+use socket_addr::SocketAddrExt;
 
 use tcp::builder::TcpBuilderExt;
-use socket_addr::SocketAddrExt;
-use open_addr::{open_addr, BindPublicError};
 
 /// Extension methods for `TcpListener`.
 pub trait TcpListenerExt {
@@ -44,10 +44,10 @@ impl TcpListenerExt for TcpListener {
         handle: &Handle,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError> {
         bind_public_with_addr(addr, handle)
-        .map(|(listener, _bind_addr, public_addr)| {
-            (listener, public_addr)
-        })
-        .into_boxed()
+            .map(|(listener, _bind_addr, public_addr)| {
+                (listener, public_addr)
+            })
+            .into_boxed()
     }
 }
 
@@ -58,22 +58,16 @@ pub fn bind_public_with_addr(
     let handle = handle.clone();
     let try = || {
         let listener = {
-            TcpListener::bind_reusable(&addr, &handle)
-            .map_err(BindPublicError::Bind)
+            TcpListener::bind_reusable(&addr, &handle).map_err(BindPublicError::Bind)
         }?;
         let bind_addr = {
-            listener
-            .local_addr()
-            .map_err(BindPublicError::Bind)
+            listener.local_addr().map_err(BindPublicError::Bind)
         }?;
         Ok({
             open_addr(Protocol::Tcp, &bind_addr, &handle)
-            .map_err(BindPublicError::OpenAddr)
-            .map(move |public_addr| {
-                (listener, bind_addr, public_addr)
-            })
+                .map_err(BindPublicError::OpenAddr)
+                .map(move |public_addr| (listener, bind_addr, public_addr))
         })
     };
     future::result(try()).flatten().into_boxed()
 }
-

@@ -8,4 +8,3 @@ pub fn random_vec(len: usize) -> Vec<u8> {
     rand::thread_rng().fill_bytes(&mut vec[..]);
     vec
 }
-

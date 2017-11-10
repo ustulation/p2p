@@ -1,8 +1,8 @@
-use priv_prelude::*;
-use std::error::Error;
 use igd_async::{self, GetAnyAddressError};
-use server_set::Servers;
 use mc;
+use priv_prelude::*;
+use server_set::Servers;
+use std::error::Error;
 
 quick_error! {
     #[derive(Debug)]
@@ -76,11 +76,11 @@ pub fn open_addr(
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, OpenAddrError> {
     let addrs_res = {
-        bind_addr
-        .expand_local_unspecified()
-        .map_err(|e| OpenAddrError {
-            igd_err: None,
-            kind: OpenAddrErrorKind::IfAddrs(e),
+        bind_addr.expand_local_unspecified().map_err(|e| {
+            OpenAddrError {
+                igd_err: None,
+                kind: OpenAddrErrorKind::IfAddrs(e),
+            }
         })
     };
 
@@ -89,7 +89,10 @@ pub fn open_addr(
         Err(e) => return future::err(e).into_boxed(),
     };
 
-    if let Some(addr) = addrs.into_iter().find(|addr| IpAddrExt::is_global(&addr.ip())) {
+    if let Some(addr) = addrs.into_iter().find(
+        |addr| IpAddrExt::is_global(&addr.ip()),
+    )
+    {
         trace!("we have a global local address: {}", addr);
         return future::ok(addr).into_boxed();
     }
@@ -98,20 +101,20 @@ pub fn open_addr(
     let handle = handle.clone();
 
     igd_async::get_any_address(protocol, bind_addr)
-    .or_else(move |igd_err| {
-        OpenAddr {
-            protocol: protocol,
-            igd_err: Some(igd_err),
-            handle: handle,
-            bind_addr: bind_addr,
-            known_addr_opt: None,
-            traversal_servers: mc::traversal_servers(protocol),
-            active_queries: stream::FuturesUnordered::new(),
-            errors: Vec::new(),
-            more_servers_timeout: None,
-        }
-    })
-    .into_boxed()
+        .or_else(move |igd_err| {
+            OpenAddr {
+                protocol: protocol,
+                igd_err: Some(igd_err),
+                handle: handle,
+                bind_addr: bind_addr,
+                known_addr_opt: None,
+                traversal_servers: mc::traversal_servers(protocol),
+                active_queries: stream::FuturesUnordered::new(),
+                errors: Vec::new(),
+                more_servers_timeout: None,
+            }
+        })
+        .into_boxed()
 }
 
 struct OpenAddr {
@@ -138,7 +141,7 @@ impl Future for OpenAddr {
                     Err(e) => {
                         trace!("query returned error: {}", e);
                         self.errors.push(e);
-                    },
+                    }
                     Ok(Async::Ready(Some(addr))) => {
                         trace!("query returned address: {}", addr);
                         if let Some(known_addr) = self.known_addr_opt {
@@ -152,7 +155,7 @@ impl Future for OpenAddr {
                             }
                         }
                         self.known_addr_opt = Some(addr);
-                    },
+                    }
                     _ => break,
                 }
             }
@@ -177,11 +180,11 @@ impl Future for OpenAddr {
                         self.protocol,
                         &self.bind_addr,
                         &server_addr,
-                        &self.handle
+                        &self.handle,
                     );
                     self.active_queries.push(active_query);
                     self.more_servers_timeout = None;
-                },
+                }
                 Async::Ready(None) => {
                     trace!("out of servers");
                     if self.active_queries.len() == 0 {
@@ -195,8 +198,11 @@ impl Future for OpenAddr {
                             kind: OpenAddrErrorKind::LackOfServers,
                         });
                     }
-                    trace!("waiting for {} more queries to finish", self.active_queries.len());
-                },
+                    trace!(
+                        "waiting for {} more queries to finish",
+                        self.active_queries.len()
+                    );
+                }
                 Async::NotReady => {
                     if self.active_queries.len() == 0 {
                         trace!("waiting for more servers...");
@@ -214,18 +220,14 @@ impl Future for OpenAddr {
                                 }
                                 break;
                             } else {
-                                self.more_servers_timeout = Some(
-                                    Timeout::new(Duration::from_secs(2), &self.handle)
-                                );
+                                self.more_servers_timeout =
+                                    Some(Timeout::new(Duration::from_secs(2), &self.handle));
                             }
                         }
                     }
                     return Ok(Async::NotReady);
-                },
+                }
             }
         }
     }
 }
-
-
-

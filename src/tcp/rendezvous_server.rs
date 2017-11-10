@@ -1,10 +1,11 @@
-pub use priv_prelude::*;
-use tokio_io;
-use bincode::{self, Infinite};
+
 
 use ECHO_REQ;
-use tcp::listener::{self, TcpListenerExt};
+use bincode::{self, Infinite};
 use open_addr::BindPublicError;
+pub use priv_prelude::*;
+use tcp::listener::{self, TcpListenerExt};
+use tokio_io;
 
 /// A TCP rendezvous server. Other peers can use this when performing rendezvous connects and
 /// hole-punching.
@@ -15,7 +16,10 @@ pub struct TcpRendezvousServer {
 
 impl TcpRendezvousServer {
     /// Create a rendezvous server from a `TcpListener`.
-    pub fn from_listener(listener: TcpListener, handle: &Handle) -> io::Result<TcpRendezvousServer> {
+    pub fn from_listener(
+        listener: TcpListener,
+        handle: &Handle,
+    ) -> io::Result<TcpRendezvousServer> {
         let local_addr = listener.local_addr()?;
         Ok(from_listener_inner(listener, &local_addr, handle))
     }
@@ -43,10 +47,13 @@ impl TcpRendezvousServer {
     ) -> BoxFuture<(TcpRendezvousServer, SocketAddr), BindPublicError> {
         let handle = handle.clone();
         listener::bind_public_with_addr(addr, &handle)
-        .map(move |(listener, bind_addr, public_addr)| {
-            (from_listener_inner(listener, &bind_addr, &handle), public_addr)
-        })
-        .into_boxed()
+            .map(move |(listener, bind_addr, public_addr)| {
+                (
+                    from_listener_inner(listener, &bind_addr, &handle),
+                    public_addr,
+                )
+            })
+            .into_boxed()
     }
 
     /// Returns the local address that this rendezvous server is bound to.
@@ -101,4 +108,3 @@ fn from_listener_inner(
         local_addr: *bind_addr,
     }
 }
-

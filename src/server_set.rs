@@ -1,5 +1,5 @@
+use future_utils::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use priv_prelude::*;
-use future_utils::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 use rand;
 
 #[derive(Default)]
@@ -63,4 +63,3 @@ impl Stream for Servers {
         Ok(Async::Ready(Some(server)))
     }
 }
-
