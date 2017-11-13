@@ -3,12 +3,15 @@
 /// rendezvous connect.
 ///
 /// For example, log into a VPS and run:
+/// ```
 /// $ socat TCP-LISTEN:45666 TCP-LISTEN:45667
+/// ```
 ///
 /// The run this example on two machines, on seperate networks, both hidden behind NATs:
-///
+/// ```
 /// $ cargo run --example tcp_rendezvous_connect -- <address of your vps>:45666 blah blah blah
 /// $ cargo run --example tcp_rendezvous_connect -- <address of your vps>:45667 blah blah blah
+/// ```
 ///
 /// If successful, the peers should be able to form a TCP connection directly to each other.
 #[macro_use]
@@ -31,7 +34,6 @@ use futures::{Async, AsyncSink, Future, Sink, Stream};
 use p2p::TcpStreamExt;
 use std::{env, fmt};
 use std::net::{Shutdown, SocketAddr};
-use std::str::FromStr;
 use tokio_core::net::TcpStream;
 use tokio_io::codec::length_delimited::Framed;
 use void::ResultVoidExt;

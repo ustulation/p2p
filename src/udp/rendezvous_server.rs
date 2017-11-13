@@ -96,7 +96,7 @@ fn on_addr_echo_request(
     with_addr: WithAddress,
 ) -> BoxFuture<(), io::Error> {
     if let Some(msg) = msg_opt {
-        if &msg == &ECHO_REQ[..] {
+        if msg == ECHO_REQ[..] {
             let addr = with_addr.remote_addr();
             let encoded = unwrap!(bincode::serialize(&addr, Infinite));
 
@@ -129,8 +129,7 @@ mod test {
 
             let fut = on_addr_echo_request(None, udp_sock);
 
-            let res = unwrap!(fut.wait());
-            assert_eq!(res, ());
+            unwrap!(fut.wait())
         }
     }
 }

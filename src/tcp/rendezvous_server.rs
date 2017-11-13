@@ -94,7 +94,7 @@ fn from_listener_inner(
                 }
             })
             .with_timeout(Duration::from_secs(2), &handle)
-            .and_then(|opt| opt.ok_or(io::ErrorKind::TimedOut.into()))
+            .and_then(|opt| opt.ok_or_else(|| io::ErrorKind::TimedOut.into()))
         })
         .buffer_unordered(1024)
         .log_errors(LogLevel::Info, "processing echo request")

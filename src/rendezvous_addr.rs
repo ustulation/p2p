@@ -91,10 +91,8 @@ pub fn rendezvous_addr(
                             }
                             known_ip_opt = Some(ip);
                             ports.push(addr.port());
-                            if ports.len() == 2 {
-                                if ports[0] == ports[1] {
-                                    return Ok(Async::Ready(SocketAddr::new(ip, ports[0])));
-                                }
+                            if ports.len() == 2 && ports[0] == ports[1] {
+                                return Ok(Async::Ready(SocketAddr::new(ip, ports[0])));
                             }
                             if ports.len() == 3 {
                                 let diff0 = ports[1].wrapping_sub(ports[0]);
@@ -149,7 +147,7 @@ pub fn rendezvous_addr(
                             active_queries.len(),
                             ports.len()
                         );
-                        if active_queries.len() == 0 {
+                        if active_queries.is_empty() {
                             if ports.len() == 1 {
                                 let ip = unwrap!(known_ip_opt);
                                 return Ok(Async::Ready(SocketAddr::new(ip, ports[0])));
@@ -162,7 +160,7 @@ pub fn rendezvous_addr(
                     }
                     Async::NotReady => {
                         trace!("no new rendezvous servers ready");
-                        if active_queries.len() == 0 {
+                        if active_queries.is_empty() {
                             trace!("waiting for more rendezvous servers...");
                             loop {
                                 if let Some(ref mut timeout) = more_servers_timeout {

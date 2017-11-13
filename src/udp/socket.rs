@@ -28,7 +28,11 @@ where
     DeserializeMsg(bincode::Error),
     SocketWrite(io::Error),
     SetTtl(io::Error),
-    AllAttemptsFailed(Vec<HolePunchError>, Option<BindPublicError>, Option<RendezvousAddrError>),
+    AllAttemptsFailed(
+        Vec<HolePunchError>,
+        Option<Box<BindPublicError>>,
+        Option<Box<RendezvousAddrError>>
+    ),
 }
 
 // Note: this has to be implemented manually or else it demands there be a Debug impl on C. This is
@@ -125,11 +129,11 @@ where
             IfAddrs(ref e) |
             SocketWrite(ref e) |
             SetTtl(ref e) => Some(e),
-            ChannelClosed => None,
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
-            ChannelTimeout => None,
             DeserializeMsg(ref e) => Some(e),
+            ChannelClosed |
+            ChannelTimeout |
             AllAttemptsFailed(..) => None,
         }
     }
@@ -256,7 +260,7 @@ impl UdpSocketExt for UdpSocket {
 
                         trace!("exchanging rendezvous info with peer");
                         Ok({
-                            exchange_msgs(channel, msg).map(move |their_msg| {
+                            exchange_msgs(channel, &msg).map(move |their_msg| {
                                 trace!("received rendezvous info");
                                 let UdpRendezvousMsg::Init {
                                     enc_pk: their_pk,
@@ -345,7 +349,7 @@ impl UdpSocketExt for UdpSocket {
                                     rendezvous_addrs: rendezvous_addrs,
                                 };
                                 trace!("exchanging rendezvous info with peer");
-                                exchange_msgs(channel, msg).and_then(move |their_msg| {
+                                exchange_msgs(channel, &msg).and_then(move |their_msg| {
                                     let UdpRendezvousMsg::Init {
                                         enc_pk: their_pk,
                                         open_addrs: their_open_addrs,
@@ -426,8 +430,8 @@ impl UdpSocketExt for UdpSocket {
                         .map_err(|v| {
                             UdpRendezvousConnectError::AllAttemptsFailed(
                                 v,
-                                bind_public_error_opt,
-                                rendezvous_error_opt,
+                                bind_public_error_opt.map(Box::new),
+                                rendezvous_error_opt.map(Box::new),
                             )
                         })
                         .and_then(move |socket| choose(&handle1, socket, 0))
@@ -447,8 +451,8 @@ impl UdpSocketExt for UdpSocket {
                         .map_err(|v| {
                             UdpRendezvousConnectError::AllAttemptsFailed(
                                 v,
-                                bind_public_error_opt,
-                                rendezvous_error_opt,
+                                bind_public_error_opt.map(Box::new),
+                                rendezvous_error_opt.map(Box::new),
                             )
                         })
                         .into_boxed()
@@ -465,7 +469,7 @@ pub fn bind_public_with_addr(
     let handle = handle.clone();
     let try = || {
         let socket = {
-            UdpSocket::bind_reusable(&addr, &handle).map_err(BindPublicError::Bind)
+            UdpSocket::bind_reusable(addr, &handle).map_err(BindPublicError::Bind)
         }?;
         let bind_addr = {
             socket.local_addr().map_err(BindPublicError::Bind)
@@ -968,7 +972,7 @@ fn got_chosen(socket: WithAddress) -> Option<(UdpSocket, SocketAddr)> {
 // exchange rendezvous messages along the channel
 fn exchange_msgs<C>(
     channel: C,
-    msg: UdpRendezvousMsg,
+    msg: &UdpRendezvousMsg,
 ) -> BoxFuture<UdpRendezvousMsg, UdpRendezvousConnectError<C>>
 where
     C: Stream<Item = Bytes>,
@@ -1009,7 +1013,6 @@ mod test {
 
     use env_logger;
     use tokio_core::reactor::Core;
-    use tokio_io;
 
     use util;
 
@@ -1042,7 +1045,7 @@ mod test {
                     let socket = SharedUdpSocket::share(socket).with_address(addr);
                     socket
                     .filter_map(|data| {
-                        if &data == &b"hello"[..] { Some(()) } else { None }
+                        if data == b"hello"[..] { Some(()) } else { None }
                     })
                     .next_or_else(|| panic!("Didn't receive a message"))
                 })

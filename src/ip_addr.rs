@@ -33,14 +33,14 @@ impl IpAddrExt for IpAddr {
                 v4_addr
                     .expand_local_unspecified()?
                     .into_iter()
-                    .map(|v4_addr| IpAddr::V4(v4_addr))
+                    .map(IpAddr::V4)
                     .collect()
             }
             IpAddr::V6(v6_addr) => {
                 v6_addr
                     .expand_local_unspecified()?
                     .into_iter()
-                    .map(|v6_addr| IpAddr::V6(v6_addr))
+                    .map(IpAddr::V6)
                     .collect()
             }
         };
