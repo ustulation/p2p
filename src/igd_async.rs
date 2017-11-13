@@ -171,10 +171,9 @@ pub fn get_any_address(
 /// IPv4 because gateway always has IPv4 address as well.
 fn discover_local_addr_to_gateway(gateway_addr: Ipv4Addr) -> io::Result<Ipv4Addr> {
     let ifs = get_if_addrs::get_if_addrs()?;
-    let addr = local_addr_to_gateway(ifs, gateway_addr).ok_or_else(|| {
+    local_addr_to_gateway(ifs, gateway_addr).ok_or_else(|| {
         io::Error::new(io::ErrorKind::NotFound, "No local addresses to gateway")
-    })?;
-    Ok(addr)
+    })
 }
 
 fn local_addr_to_gateway(interfaces: Vec<Interface>, gateway_addr: Ipv4Addr) -> Option<Ipv4Addr> {
