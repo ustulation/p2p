@@ -72,7 +72,8 @@ impl Gateway {
         let (tx, rx) = oneshot::channel();
 
         let _ = thread::spawn(move || {
-            let res = add_port_mapping(&gateway, protocol, local_addr, lease_duration, &description);
+            let res =
+                add_port_mapping(&gateway, protocol, local_addr, lease_duration, &description);
             tx.send(res)
         });
 

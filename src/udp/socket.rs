@@ -31,7 +31,7 @@ where
     AllAttemptsFailed(
         Vec<HolePunchError>,
         Option<Box<BindPublicError>>,
-        Option<Box<RendezvousAddrError>>,
+        Option<Box<RendezvousAddrError>>
     ),
 }
 
