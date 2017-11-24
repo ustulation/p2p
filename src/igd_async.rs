@@ -152,8 +152,9 @@ pub fn get_any_address(
                         Protocol::Tcp => PortMappingProtocol::TCP,
                         Protocol::Udp => PortMappingProtocol::UDP,
                     };
+                    // TODO(povilas): make port mapping description configurable
                     gateway
-                        .get_any_address(protocol, socket_addr_v4, 0, "tokio-nat-traversal")
+                        .get_any_address(protocol, socket_addr_v4, 0, "p2p")
                         .map_err(GetAnyAddressError::RequestPort)
                         .map(|addr| {
                             trace!("igd returned address {}", addr);
