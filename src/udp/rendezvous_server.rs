@@ -51,8 +51,7 @@ impl UdpRendezvousServer {
     /// Returns all local addresses of this rendezvous server, expanding the unspecified address
     /// into a vector of all local interface addresses.
     pub fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>> {
-        let addrs = self.local_addr.expand_local_unspecified()?;
-        Ok(addrs)
+        self.local_addr.expand_local_unspecified()
     }
 }
 
