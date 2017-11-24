@@ -300,42 +300,46 @@ impl UdpSocketExt for UdpSocket {
                                 if sockets.len() == 6 {
                                     return future::ok(Loop::Break((sockets, None))).into_boxed();
                                 }
-                                let try =
-                                    || {
-                                        let ttl_increments = 2 << sockets.len();
-                                        let socket = {
-                                            UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle0)
-                                                .map_err(UdpRendezvousConnectError::Rebind)
-                                        }?;
-                                        let bind_addr = {
-                                            socket.local_addr().map_err(
-                                                UdpRendezvousConnectError::Rebind,
-                                            )?
-                                        };
-                                        socket.set_ttl(ttl_increments).map_err(
-                                            UdpRendezvousConnectError::SetTtl,
-                                        )?;
-                                        Ok({
-                                            rendezvous_addr(Protocol::Udp, &bind_addr, &handle0)
-                                    .then(move |res| {
-                                        match res {
-                                            Ok(addr) => {
-                                                sockets.push((socket, addr));
-                                                trace!("generated {} rendezvous sockets",
-                                                       sockets.len());
-                                                Ok(Loop::Continue(sockets))
-                                            },
-                                            Err(err) => {
-                                                trace!("error generating rendezvous socket: {}",
-                                                       err);
-                                                trace!("stopping after generating {} sockets",
-                                                       sockets.len());
-                                                Ok(Loop::Break((sockets, Some(err))))
-                                            },
-                                        }
-                                    })
-                                        })
+                                let try = || {
+                                    let ttl_increments = 2 << sockets.len();
+                                    let socket = {
+                                        UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle0)
+                                            .map_err(UdpRendezvousConnectError::Rebind)
+                                    }?;
+                                    let bind_addr = {
+                                        socket.local_addr().map_err(
+                                            UdpRendezvousConnectError::Rebind,
+                                        )?
                                     };
+                                    socket.set_ttl(ttl_increments).map_err(
+                                        UdpRendezvousConnectError::SetTtl,
+                                    )?;
+                                    Ok({
+                                        rendezvous_addr(Protocol::Udp, &bind_addr, &handle0).then(
+                                            move |res| match res {
+                                                Ok(addr) => {
+                                                    sockets.push((socket, addr));
+                                                    trace!(
+                                                        "generated {} rendezvous sockets",
+                                                        sockets.len()
+                                                    );
+                                                    Ok(Loop::Continue(sockets))
+                                                }
+                                                Err(err) => {
+                                                    trace!(
+                                                        "error generating rendezvous socket: {}",
+                                                        err
+                                                    );
+                                                    trace!(
+                                                        "stopping after generating {} sockets",
+                                                        sockets.len()
+                                                    );
+                                                    Ok(Loop::Break((sockets, Some(err))))
+                                                }
+                                            },
+                                        )
+                                    })
+                                };
                                 future::result(try()).flatten().into_boxed()
                             }).and_then(move |(sockets, rendezvous_error_opt)| {
                                 let (sockets, rendezvous_addrs) = {
