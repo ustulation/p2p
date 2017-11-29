@@ -100,7 +100,7 @@ pub fn open_addr(
     let bind_addr = *bind_addr;
     let handle = handle.clone();
 
-    igd_async::get_any_address(protocol, bind_addr)
+    igd_async::get_any_address(protocol, bind_addr, None, &handle)
         .or_else(move |igd_err| {
             OpenAddr {
                 protocol: protocol,

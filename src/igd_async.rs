@@ -1,6 +1,6 @@
 use futures::sync::oneshot;
 use get_if_addrs::{self, IfAddr, Interface};
-use igd::{self, AddAnyPortError, PortMappingProtocol, RequestError, SearchError};
+use igd::{self, AddAnyPortError, PortMappingProtocol, RemovePortError, RequestError, SearchError};
 use priv_prelude::*;
 
 use std::thread;
@@ -37,23 +37,6 @@ pub struct Gateway {
     inner: igd::Gateway,
 }
 
-#[derive(Debug)]
-pub struct GetAnyAddress {
-    rx: oneshot::Receiver<Result<SocketAddrV4, AddAnyPortError>>,
-}
-
-impl Future for GetAnyAddress {
-    type Item = SocketAddrV4;
-    type Error = AddAnyPortError;
-
-    fn poll(&mut self) -> Result<Async<SocketAddrV4>, AddAnyPortError> {
-        match unwrap!(self.rx.poll()) {
-            Async::Ready(res) => Ok(Async::Ready(res?)),
-            Async::NotReady => Ok(Async::NotReady),
-        }
-    }
-}
-
 impl Gateway {
     /// Asynchronously maps local address to external one.
     ///
@@ -66,48 +49,59 @@ impl Gateway {
         local_addr: SocketAddrV4,
         lease_duration: u32,
         description: &str,
-    ) -> GetAnyAddress {
+    ) -> BoxFuture<SocketAddrV4, GetAnyAddressError> {
         let description = String::from(description);
         let gateway = self.inner.clone();
         let (tx, rx) = oneshot::channel();
 
         let _ = thread::spawn(move || {
-            let res =
-                add_port_mapping(&gateway, protocol, local_addr, lease_duration, &description);
+            let res = {
+                specified_local_addr_to_gateway(local_addr, *gateway.addr.ip())
+                    .map_err(|e| GetAnyAddressError::PathToGateway(e))
+                    .and_then(move |addr| {
+                        gateway
+                            .get_any_address(protocol, addr, lease_duration, &description)
+                            .map_err(GetAnyAddressError::RequestPort)
+                    })
+            };
             tx.send(res)
         });
 
-        GetAnyAddress { rx: rx }
+        rx.map_err(|_| panic!("worker thread didn't send the result?"))
+            .and_then(|r| r)
+            .into_boxed()
+    }
+
+    pub fn remove_port(
+        &self,
+        protocol: PortMappingProtocol,
+        port: u16,
+    ) -> BoxFuture<(), RemovePortError> {
+        let gateway = self.inner.clone();
+        let (tx, rx) = oneshot::channel();
+
+        let _ = thread::spawn(move || {
+            let res = gateway.remove_port(protocol, port);
+            tx.send(res)
+        });
+
+        rx.map_err(|_| panic!("worker thread didn't send the result?"))
+            .and_then(|r| r)
+            .into_boxed()
     }
 }
 
-/// Maps given local address to external `IP:port`.
-/// If local address is unspecified (`0.0.0.0`), it's resolved by gateway address.
-///
-/// # Returns
-///
-/// Mapped external address on success.
-fn add_port_mapping(
-    gateway: &igd::Gateway,
-    protocol: PortMappingProtocol,
+fn specified_local_addr_to_gateway(
     local_addr: SocketAddrV4,
-    lease_duration: u32,
-    description: &str,
-) -> Result<SocketAddrV4, AddAnyPortError> {
+    gateway_addr: Ipv4Addr,
+) -> io::Result<SocketAddrV4> {
     if local_addr.ip().is_unspecified() {
-        match discover_local_addr_to_gateway(*gateway.addr.ip()) {
-            Ok(ipv4) => {
-                let local_addr = SocketAddrV4::new(ipv4, local_addr.port());
-                gateway.get_any_address(protocol, local_addr, lease_duration, description)
-            }
-            // TODO(povilas): test upper layers, seems like this error is not handled.
-            Err(e) => Err(AddAnyPortError::RequestError(RequestError::IoError(e))),
-        }
+        let addr = discover_local_addr_to_gateway(gateway_addr)?;
+        Ok(SocketAddrV4::new(addr, local_addr.port()))
     } else {
-        gateway.get_any_address(protocol, local_addr, lease_duration, description)
+        Ok(local_addr)
     }
 }
-
 
 quick_error! {
     #[derive(Debug)]
@@ -118,6 +112,11 @@ quick_error! {
         FindGateway(e: SearchError) {
             description("failed to find IGD gateway")
             display("failed to find IGD gateway: {}", e)
+            cause(e)
+        }
+        PathToGateway(e: io::Error) {
+            description("error finding path to gateway")
+            display("error finding path to gateway: {}", e)
             cause(e)
         }
         RequestPort(e: AddAnyPortError) {
@@ -134,11 +133,19 @@ quick_error! {
 pub fn get_any_address(
     protocol: Protocol,
     local_addr: SocketAddr,
+    timeout: Option<Duration>,
+    handle: &Handle,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     if !is_igd_enabled() {
         return future::err(GetAnyAddressError::Disabled).into_boxed();
     }
 
+    let lease_duration = match timeout {
+        None => 0,
+        Some(duration) => duration.as_secs() as u32,
+    };
+
+    let handle = handle.clone();
     let try = || {
         let socket_addr_v4 = match local_addr {
             SocketAddr::V4(socket_addr_v4) => socket_addr_v4,
@@ -154,8 +161,35 @@ pub fn get_any_address(
                     };
                     // TODO(povilas): make port mapping description configurable
                     gateway
-                        .get_any_address(protocol, socket_addr_v4, 0, "p2p")
-                        .map_err(GetAnyAddressError::RequestPort)
+                        .get_any_address(protocol, socket_addr_v4, lease_duration, "p2p")
+                        .or_else(move |e| {
+                            if let GetAnyAddressError::RequestPort(
+                                AddAnyPortError::OnlyPermanentLeasesSupported
+                            ) = e {
+                                if let Some(timeout) = timeout {
+                                    return {
+                                        gateway
+                                        .get_any_address(protocol, socket_addr_v4, 0, "p2p")
+                                        .map(move |addr| {
+                                            let port = addr.port();
+                                            handle.spawn({
+                                                Timeout::new(timeout, &handle)
+                                                .infallible()
+                                                .and_then(move |()| {
+                                                    gateway
+                                                    .remove_port(protocol, port)
+                                                })
+                                                .log_error(LogLevel::Warn, "unregister router port")
+                                                .infallible()
+                                            });
+                                            addr
+                                        })
+                                        .into_boxed()
+                                    };
+                                }
+                            }
+                            return future::err(e).into_boxed();
+                        })
                         .map(|addr| {
                             trace!("igd returned address {}", addr);
                             SocketAddr::V4(addr)
