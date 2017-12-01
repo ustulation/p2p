@@ -185,6 +185,10 @@ pub fn rendezvous_addr(
                         return Ok(Async::NotReady);
                     }
                 }
+            }).map(move |addr| if force_use_local_port() {
+                SocketAddr::new(addr.ip(), bind_addr.port())
+            } else {
+                addr
             })
         })
         .into_boxed()
