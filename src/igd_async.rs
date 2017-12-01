@@ -130,7 +130,28 @@ quick_error! {
     }
 }
 
-pub fn get_any_address(
+pub fn get_any_address_rendezvous(
+    protocol: Protocol,
+    local_addr: SocketAddr,
+    timeout: Duration,
+    handle: &Handle,
+) -> BoxFuture<SocketAddr, GetAnyAddressError> {
+    if !is_igd_enabled_for_rendezvous() {
+        return future::err(GetAnyAddressError::Disabled).into_boxed();
+    }
+
+    get_any_address(protocol, local_addr, Some(timeout), handle)
+}
+
+pub fn get_any_address_open(
+    protocol: Protocol,
+    local_addr: SocketAddr,
+    handle: &Handle,
+) -> BoxFuture<SocketAddr, GetAnyAddressError> {
+    get_any_address(protocol, local_addr, None, handle)
+}
+
+fn get_any_address(
     protocol: Protocol,
     local_addr: SocketAddr,
     timeout: Option<Duration>,
