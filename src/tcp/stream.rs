@@ -29,33 +29,22 @@ quick_error! {
 
 /// Errors returned by `TcpStreamExt::rendezvous_connect`.
 #[derive(Debug)]
-pub enum TcpRendezvousConnectError<C>
-where
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: fmt::Debug,
-    <C as Sink>::SinkError: fmt::Debug,
-    C: 'static,
-{
+pub enum TcpRendezvousConnectError<Ei, Eo> {
     Bind(io::Error),
     Rebind(io::Error),
     IfAddrs(io::Error),
     Listen(io::Error),
     ChannelClosed,
-    ChannelRead(<C as Stream>::Error),
-    ChannelWrite(<C as Sink>::SinkError),
+    ChannelRead(Ei),
+    ChannelWrite(Eo),
     DeserializeMsg(bincode::Error),
     AllAttemptsFailed(Vec<SingleRendezvousAttemptError>, Option<RendezvousAddrError>),
 }
 
-impl<C> fmt::Display for TcpRendezvousConnectError<C>
+impl<Ei, Eo> fmt::Display for TcpRendezvousConnectError<Ei, Eo>
 where
-    C: fmt::Debug,
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: Error,
-    <C as Sink>::SinkError: Error,
-    C: 'static,
+    Ei: Error,
+    Eo: Error,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use TcpRendezvousConnectError::*;
@@ -94,14 +83,10 @@ where
     }
 }
 
-impl<C> Error for TcpRendezvousConnectError<C>
+impl<Ei, Eo> Error for TcpRendezvousConnectError<Ei, Eo>
 where
-    C: fmt::Debug,
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: Error,
-    <C as Sink>::SinkError: Error,
-    C: 'static,
+    Ei: Error,
+    Eo: Error,
 {
     fn description(&self) -> &'static str {
         use TcpRendezvousConnectError::*;
@@ -351,25 +336,23 @@ pub struct TcpRendezvousConnect<C>
 where
     C: Stream<Item = Bytes>,
     C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: fmt::Debug,
-    <C as Sink>::SinkError: fmt::Debug,
     C: 'static,
 {
-    inner: BoxFuture<TcpStream, TcpRendezvousConnectError<C>>,
+    inner: BoxFuture<TcpStream, TcpRendezvousConnectError<C::Error, C::SinkError>>,
 }
 
 impl<C> Future for TcpRendezvousConnect<C>
 where
     C: Stream<Item = Bytes>,
     C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: fmt::Debug,
-    <C as Sink>::SinkError: fmt::Debug,
     C: 'static,
 {
     type Item = TcpStream;
-    type Error = TcpRendezvousConnectError<C>;
+    type Error = TcpRendezvousConnectError<C::Error, C::SinkError>;
 
-    fn poll(&mut self) -> Result<Async<TcpStream>, TcpRendezvousConnectError<C>> {
+    fn poll(
+        &mut self,
+    ) -> Result<Async<TcpStream>, TcpRendezvousConnectError<C::Error, C::SinkError>> {
         self.inner.poll()
     }
 }
