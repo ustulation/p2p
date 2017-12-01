@@ -64,7 +64,7 @@ pub fn rendezvous_addr(
     let mut known_ip_opt = None;
     let mut failed_sequences = 0;
 
-    igd_async::get_any_address(protocol, bind_addr, Some(Duration::from_secs(300)), &handle)
+    igd_async::get_any_address_rendezvous(protocol, bind_addr, Duration::from_secs(300), &handle)
         .or_else(move |igd_error| {
             let mut igd_error = Some(igd_error);
             future::poll_fn(move || loop {
