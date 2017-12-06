@@ -1,6 +1,6 @@
 use futures::sync::oneshot;
 use get_if_addrs::{self, IfAddr, Interface};
-use igd::{self, AddAnyPortError, PortMappingProtocol, RemovePortError, RequestError, SearchError};
+use igd::{self, AddAnyPortError, PortMappingProtocol, RemovePortError, SearchError};
 use priv_prelude::*;
 
 use std::thread;
@@ -54,7 +54,7 @@ impl Gateway {
         let gateway = self.inner.clone();
         let (tx, rx) = oneshot::channel();
 
-        let _ = thread::spawn(move || {
+        let jh = thread::spawn(move || {
             let res = {
                 specified_local_addr_to_gateway(local_addr, *gateway.addr.ip())
                     .map_err(|e| GetAnyAddressError::PathToGateway(e))
@@ -67,9 +67,45 @@ impl Gateway {
             tx.send(res)
         });
 
-        rx.map_err(|_| panic!("worker thread didn't send the result?"))
+        rx.map_err(|_| {
+                // Note: this will always fail.
+                // the fact that we reached this line of code means that `send` was dropped without
+                // sending anything. The type here is used to enforce the fact that the
+                // worker thread tried to call `.send()`.
+                let res: Result<(), Result<SocketAddrV4, GetAnyAddressError>> = unwrap!(jh.join());
+                res.unwrap_err().unwrap_err()
+            })
             .and_then(|r| r)
             .into_boxed()
+    }
+
+    /// Same as `get_any_address` except that we manually implement a timeout on the port. Used for
+    /// routers which don't support timeouts on port allocations.
+    pub fn get_any_address_manual_timeout(
+        self,
+        protocol: PortMappingProtocol,
+        local_addr: SocketAddrV4,
+        timeout: Duration,
+        description: &str,
+        handle: Handle,
+    ) -> BoxFuture<SocketAddrV4, GetAnyAddressError> {
+        self
+        .get_any_address(protocol, local_addr, 0, description)
+        .map(move |addr| {
+            let port = addr.port();
+            handle.spawn({
+                Timeout::new(timeout, &handle)
+                .infallible()
+                .and_then(move |()| {
+                    self
+                    .remove_port(protocol, port)
+                })
+                .log_error(LogLevel::Warn, "unregister router port")
+                .infallible()
+            });
+            addr
+        })
+        .into_boxed()
     }
 
     pub fn remove_port(
@@ -80,12 +116,19 @@ impl Gateway {
         let gateway = self.inner.clone();
         let (tx, rx) = oneshot::channel();
 
-        let _ = thread::spawn(move || {
+        let jh = thread::spawn(move || {
             let res = gateway.remove_port(protocol, port);
             tx.send(res)
         });
 
-        rx.map_err(|_| panic!("worker thread didn't send the result?"))
+        rx.map_err(|_| {
+                // Note: this will always fail.
+                // the fact that we reached this line of code means that `send` was dropped without
+                // sending anything. The type here is used to enforce the fact that the
+                // worker thread tried to call `.send()`.
+                let res: Result<(), Result<(), RemovePortError>> = unwrap!(jh.join());
+                res.unwrap_err().unwrap_err()
+            })
             .and_then(|r| r)
             .into_boxed()
     }
@@ -130,6 +173,8 @@ quick_error! {
     }
 }
 
+/// Used by the `rendezvous_addr` module. This function will try to temporarily open a port for you
+/// during a rendezvous connect.
 pub fn get_any_address_rendezvous(
     protocol: Protocol,
     local_addr: SocketAddr,
@@ -143,6 +188,8 @@ pub fn get_any_address_rendezvous(
     get_any_address(protocol, local_addr, Some(timeout), handle)
 }
 
+/// Used by the `open_addr` module. This function will try to permanently open port for a server to
+/// listen on.
 pub fn get_any_address_open(
     protocol: Protocol,
     local_addr: SocketAddr,
@@ -188,25 +235,13 @@ fn get_any_address(
                                 AddAnyPortError::OnlyPermanentLeasesSupported
                             ) = e {
                                 if let Some(timeout) = timeout {
-                                    return {
-                                        gateway
-                                        .get_any_address(protocol, socket_addr_v4, 0, "p2p")
-                                        .map(move |addr| {
-                                            let port = addr.port();
-                                            handle.spawn({
-                                                Timeout::new(timeout, &handle)
-                                                .infallible()
-                                                .and_then(move |()| {
-                                                    gateway
-                                                    .remove_port(protocol, port)
-                                                })
-                                                .log_error(LogLevel::Warn, "unregister router port")
-                                                .infallible()
-                                            });
-                                            addr
-                                        })
-                                        .into_boxed()
-                                    };
+                                    return gateway.get_any_address_manual_timeout(
+                                        protocol,
+                                        socket_addr_v4,
+                                        timeout,
+                                        "p2p",
+                                        handle,
+                                    );
                                 }
                             }
                             return future::err(e).into_boxed();
