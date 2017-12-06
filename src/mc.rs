@@ -19,6 +19,8 @@ struct Mc {
     tcp_server_set: ServerSet,
     udp_server_set: ServerSet,
     igd_disabled: bool,
+    igd_disabled_for_rendezvous: bool,
+    force_use_local_port: bool,
 }
 
 impl Mc {
@@ -99,6 +101,31 @@ pub fn query_public_addr(
         Protocol::Tcp => tcp_query_public_addr(bind_addr, server_addr, handle),
         Protocol::Udp => udp_query_public_addr(bind_addr, server_addr, handle),
     }
+}
+
+pub fn enable_igd_for_rendezvous() {
+    let mut mc = unwrap!(MC.lock());
+    mc.igd_disabled_for_rendezvous = false;
+}
+
+pub fn disable_igd_for_rendezvous() {
+    let mut mc = unwrap!(MC.lock());
+    mc.igd_disabled_for_rendezvous = true;
+}
+
+pub fn is_igd_enabled_for_rendezvous() -> bool {
+    let mc = unwrap!(MC.lock());
+    !mc.igd_disabled_for_rendezvous
+}
+
+pub fn force_use_local_port() -> bool {
+    let mc = unwrap!(MC.lock());
+    mc.force_use_local_port
+}
+
+pub fn set_force_use_local_port(force: bool) {
+    let mut mc = unwrap!(MC.lock());
+    mc.force_use_local_port = force;
 }
 
 quick_error! {
