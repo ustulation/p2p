@@ -1,4 +1,3 @@
-
 use future_utils::thread_future;
 use get_if_addrs::{self, IfAddr, Interface};
 use igd::{self, AddAnyPortError, PortMappingProtocol, RemovePortError, SearchError};
