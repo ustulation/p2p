@@ -1,35 +1,17 @@
-use futures::sync::oneshot;
 use get_if_addrs::{self, IfAddr, Interface};
 use igd::{self, AddAnyPortError, PortMappingProtocol, RemovePortError, SearchError};
+use future_utils::thread_future;
 use priv_prelude::*;
 
-use std::thread;
-
-#[derive(Debug)]
-pub struct SearchGatewayFromTimeout {
-    rx: oneshot::Receiver<Result<Gateway, SearchError>>,
-}
-
-impl Future for SearchGatewayFromTimeout {
-    type Item = Gateway;
-    type Error = SearchError;
-
-    fn poll(&mut self) -> Result<Async<Gateway>, SearchError> {
-        match unwrap!(self.rx.poll()) {
-            Async::Ready(res) => Ok(Async::Ready(res?)),
-            Async::NotReady => Ok(Async::NotReady),
-        }
-    }
-}
-
-pub fn search_gateway_from_timeout(ipv4: Ipv4Addr, timeout: Duration) -> SearchGatewayFromTimeout {
-    let (tx, rx) = oneshot::channel();
-    let _ = thread::spawn(move || {
+pub fn search_gateway_from_timeout(ipv4: Ipv4Addr, timeout: Duration) -> BoxFuture<Gateway, SearchError> {
+    thread_future(move || {
         let res = igd::search_gateway_from_timeout(ipv4, timeout);
         let res = res.map(|gateway| Gateway { inner: gateway });
-        tx.send(res)
-    });
-    SearchGatewayFromTimeout { rx: rx }
+        res
+    })
+    .infallible()
+    .and_then(|r| r)
+    .into_boxed()
 }
 
 #[derive(Debug)]
@@ -52,31 +34,19 @@ impl Gateway {
     ) -> BoxFuture<SocketAddrV4, GetAnyAddressError> {
         let description = String::from(description);
         let gateway = self.inner.clone();
-        let (tx, rx) = oneshot::channel();
 
-        let jh = thread::spawn(move || {
-            let res = {
-                specified_local_addr_to_gateway(local_addr, *gateway.addr.ip())
-                    .map_err(|e| GetAnyAddressError::PathToGateway(e))
-                    .and_then(move |addr| {
-                        gateway
-                            .get_any_address(protocol, addr, lease_duration, &description)
-                            .map_err(GetAnyAddressError::RequestPort)
-                    })
-            };
-            tx.send(res)
-        });
-
-        rx.map_err(|_| {
-                // Note: this will always fail.
-                // the fact that we reached this line of code means that `send` was dropped without
-                // sending anything. The type here is used to enforce the fact that the
-                // worker thread tried to call `.send()`.
-                let res: Result<(), Result<SocketAddrV4, GetAnyAddressError>> = unwrap!(jh.join());
-                res.unwrap_err().unwrap_err()
-            })
-            .and_then(|r| r)
-            .into_boxed()
+        thread_future(move || {
+            specified_local_addr_to_gateway(local_addr, *gateway.addr.ip())
+                .map_err(|e| GetAnyAddressError::PathToGateway(e))
+                .and_then(move |addr| {
+                    gateway
+                        .get_any_address(protocol, addr, lease_duration, &description)
+                        .map_err(GetAnyAddressError::RequestPort)
+                })
+        })
+        .infallible()
+        .and_then(|r| r)
+        .into_boxed()
     }
 
     /// Same as `get_any_address` except that we manually implement a timeout on the port. Used for
@@ -87,8 +57,9 @@ impl Gateway {
         local_addr: SocketAddrV4,
         timeout: Duration,
         description: &str,
-        handle: Handle,
+        handle: &Handle,
     ) -> BoxFuture<SocketAddrV4, GetAnyAddressError> {
+        let handle = handle.clone();
         self
         .get_any_address(protocol, local_addr, 0, description)
         .map(move |addr| {
@@ -114,23 +85,13 @@ impl Gateway {
         port: u16,
     ) -> BoxFuture<(), RemovePortError> {
         let gateway = self.inner.clone();
-        let (tx, rx) = oneshot::channel();
 
-        let jh = thread::spawn(move || {
-            let res = gateway.remove_port(protocol, port);
-            tx.send(res)
-        });
-
-        rx.map_err(|_| {
-                // Note: this will always fail.
-                // the fact that we reached this line of code means that `send` was dropped without
-                // sending anything. The type here is used to enforce the fact that the
-                // worker thread tried to call `.send()`.
-                let res: Result<(), Result<(), RemovePortError>> = unwrap!(jh.join());
-                res.unwrap_err().unwrap_err()
-            })
-            .and_then(|r| r)
-            .into_boxed()
+        thread_future(move || {
+            gateway.remove_port(protocol, port)
+        })
+        .infallible()
+        .and_then(|r| r)
+        .into_boxed()
     }
 }
 
@@ -240,7 +201,7 @@ fn get_any_address(
                                         socket_addr_v4,
                                         timeout,
                                         "p2p",
-                                        handle,
+                                        &handle,
                                     );
                                 }
                             }
