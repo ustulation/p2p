@@ -1,17 +1,20 @@
+
+use future_utils::thread_future;
 use get_if_addrs::{self, IfAddr, Interface};
 use igd::{self, AddAnyPortError, PortMappingProtocol, RemovePortError, SearchError};
-use future_utils::thread_future;
 use priv_prelude::*;
 
-pub fn search_gateway_from_timeout(ipv4: Ipv4Addr, timeout: Duration) -> BoxFuture<Gateway, SearchError> {
+pub fn search_gateway_from_timeout(
+    ipv4: Ipv4Addr,
+    timeout: Duration,
+) -> BoxFuture<Gateway, SearchError> {
     thread_future(move || {
         let res = igd::search_gateway_from_timeout(ipv4, timeout);
         let res = res.map(|gateway| Gateway { inner: gateway });
         res
-    })
-    .infallible()
-    .and_then(|r| r)
-    .into_boxed()
+    }).infallible()
+        .and_then(|r| r)
+        .into_boxed()
 }
 
 #[derive(Debug)]
@@ -43,10 +46,9 @@ impl Gateway {
                         .get_any_address(protocol, addr, lease_duration, &description)
                         .map_err(GetAnyAddressError::RequestPort)
                 })
-        })
-        .infallible()
-        .and_then(|r| r)
-        .into_boxed()
+        }).infallible()
+            .and_then(|r| r)
+            .into_boxed()
     }
 
     /// Same as `get_any_address` except that we manually implement a timeout on the port. Used for
@@ -60,12 +62,11 @@ impl Gateway {
         handle: &Handle,
     ) -> BoxFuture<SocketAddrV4, GetAnyAddressError> {
         let handle = handle.clone();
-        self
-        .get_any_address(protocol, local_addr, 0, description)
-        .map(move |addr| {
-            let port = addr.port();
-            handle.spawn({
-                Timeout::new(timeout, &handle)
+        self.get_any_address(protocol, local_addr, 0, description)
+            .map(move |addr| {
+                let port = addr.port();
+                handle.spawn({
+                    Timeout::new(timeout, &handle)
                 .infallible()
                 .and_then(move |()| {
                     self
@@ -73,10 +74,10 @@ impl Gateway {
                 })
                 .log_error(LogLevel::Warn, "unregister router port")
                 .infallible()
-            });
-            addr
-        })
-        .into_boxed()
+                });
+                addr
+            })
+            .into_boxed()
     }
 
     pub fn remove_port(
@@ -86,12 +87,10 @@ impl Gateway {
     ) -> BoxFuture<(), RemovePortError> {
         let gateway = self.inner.clone();
 
-        thread_future(move || {
-            gateway.remove_port(protocol, port)
-        })
-        .infallible()
-        .and_then(|r| r)
-        .into_boxed()
+        thread_future(move || gateway.remove_port(protocol, port))
+            .infallible()
+            .and_then(|r| r)
+            .into_boxed()
     }
 }
 
