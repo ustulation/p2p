@@ -13,4 +13,4 @@ pub use tcp::listener::TcpListenerExt;
 pub use tcp::rendezvous_server::TcpRendezvousServer;
 pub use tcp::stream::{ConnectReusableError, TcpRendezvousConnectError, TcpStreamExt};
 pub use udp::rendezvous_server::UdpRendezvousServer;
-pub use udp::socket::UdpSocketExt;
+pub use udp::socket::{UdpRendezvousConnectError, UdpSocketExt};

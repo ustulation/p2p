@@ -10,20 +10,14 @@ use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
 
 /// Errors returned by `UdpSocketExt::rendezvous_connect`.
-pub enum UdpRendezvousConnectError<C>
-where
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: fmt::Debug,
-    <C as Sink>::SinkError: fmt::Debug,
-    C: 'static,
-{
+#[derive(Debug)]
+pub enum UdpRendezvousConnectError<Ei, Eo> {
     Bind(io::Error),
     Rebind(io::Error),
     IfAddrs(io::Error),
     ChannelClosed,
-    ChannelRead(<C as Stream>::Error),
-    ChannelWrite(<C as Sink>::SinkError),
+    ChannelRead(Ei),
+    ChannelWrite(Eo),
     ChannelTimeout,
     DeserializeMsg(bincode::Error),
     SocketWrite(io::Error),
@@ -35,48 +29,10 @@ where
     ),
 }
 
-// Note: this has to be implemented manually or else it demands there be a Debug impl on C. This is
-// a bug in Rust.
-impl<C> fmt::Debug for UdpRendezvousConnectError<C>
+impl<Ei, Eo> fmt::Display for UdpRendezvousConnectError<Ei, Eo>
 where
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: Error,
-    <C as Sink>::SinkError: Error,
-    C: 'static,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use self::UdpRendezvousConnectError::*;
-
-        match *self {
-            Bind(ref e) => f.debug_tuple("Bind").field(e).finish(),
-            Rebind(ref e) => f.debug_tuple("Rebind").field(e).finish(),
-            IfAddrs(ref e) => f.debug_tuple("IfAddrs").field(e).finish(),
-            ChannelClosed => write!(f, "ChannelClosed"),
-            ChannelRead(ref e) => f.debug_tuple("ChannelRead").field(e).finish(),
-            ChannelWrite(ref e) => f.debug_tuple("ChannelWrite").field(e).finish(),
-            ChannelTimeout => write!(f, "ChannelTimeout"),
-            DeserializeMsg(ref e) => f.debug_tuple("DeserializeMsg").field(e).finish(),
-            SocketWrite(ref e) => f.debug_tuple("SocketWrite").field(e).finish(),
-            SetTtl(ref e) => f.debug_tuple("SetTtl").field(e).finish(),
-            AllAttemptsFailed(ref v, ref b, ref r) => {
-                f.debug_tuple("AllAttemptsFailed")
-                    .field(v)
-                    .field(b)
-                    .field(r)
-                    .finish()
-            }
-        }
-    }
-}
-
-impl<C> fmt::Display for UdpRendezvousConnectError<C>
-where
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: Error,
-    <C as Sink>::SinkError: Error,
-    C: 'static,
+    Ei: Error,
+    Eo: Error,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.description())?;
@@ -112,13 +68,10 @@ where
     }
 }
 
-impl<C> Error for UdpRendezvousConnectError<C>
+impl<Ei, Eo> Error for UdpRendezvousConnectError<Ei, Eo>
 where
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: Error,
-    <C as Sink>::SinkError: Error,
-    C: 'static,
+    Ei: Error,
+    Eo: Error,
 {
     fn cause(&self) -> Option<&Error> {
         use self::UdpRendezvousConnectError::*;
@@ -177,7 +130,7 @@ pub trait UdpSocketExt {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
-    ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C>>
+    ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -224,7 +177,7 @@ impl UdpSocketExt for UdpSocket {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
-    ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C>>
+    ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -902,17 +855,14 @@ fn open_connect(
 }
 
 // choose the given socket+address to be the socket+address we return successfully with.
-fn choose<C>(
+fn choose<Ei, Eo>(
     handle: &Handle,
     socket: WithAddress,
     chooses_sent: u32,
-) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C>>
+) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<Ei, Eo>>
 where
-    C: Stream<Item = Bytes>,
-    C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: fmt::Debug,
-    <C as Sink>::SinkError: fmt::Debug,
-    C: 'static,
+    Ei: 'static,
+    Eo: 'static,
 {
     if chooses_sent >= 5 {
         let addr = socket.remote_addr();
@@ -977,12 +927,10 @@ fn got_chosen(socket: WithAddress) -> Option<(UdpSocket, SocketAddr)> {
 fn exchange_msgs<C>(
     channel: C,
     msg: &UdpRendezvousMsg,
-) -> BoxFuture<UdpRendezvousMsg, UdpRendezvousConnectError<C>>
+) -> BoxFuture<UdpRendezvousMsg, UdpRendezvousConnectError<C::Error, C::SinkError>>
 where
     C: Stream<Item = Bytes>,
     C: Sink<SinkItem = Bytes>,
-    <C as Stream>::Error: fmt::Debug,
-    <C as Sink>::SinkError: fmt::Debug,
     C: 'static,
 {
     let msg = unwrap!(bincode::serialize(&msg, bincode::Infinite));
