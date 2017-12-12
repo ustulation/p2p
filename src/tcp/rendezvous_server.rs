@@ -1,11 +1,18 @@
-
-
 use ECHO_REQ;
 use bincode::{self, Infinite};
+use future_utils::IoFuture;
 use open_addr::BindPublicError;
 pub use priv_prelude::*;
 use tcp::listener::{self, TcpListenerExt};
 use tokio_io;
+
+/// Sends response to randezvous address request (`ECHO_REQ`).
+pub fn respond_with_addr(stream: TcpStream, addr: SocketAddr) -> IoFuture<TcpStream> {
+    let encoded = unwrap!(bincode::serialize(&addr, Infinite));
+    tokio_io::io::write_all(stream, encoded)
+        .map(|(stream, _encoded)| stream)
+        .into_boxed()
+}
 
 /// A TCP rendezvous server. Other peers can use this when performing rendezvous connects and
 /// hole-punching.
@@ -85,10 +92,9 @@ fn from_listener_inner(
             tokio_io::io::read_exact(stream, buf)
             .and_then(move |(stream, buf)| {
                 if buf == ECHO_REQ {
-                    let encoded = unwrap!(bincode::serialize(&addr, Infinite));
-                    tokio_io::io::write_all(stream, encoded)
-                    .map(|(_stream, _encoded)| ())
-                    .into_boxed()
+                    respond_with_addr(stream, addr)
+                        .map(|_stream| ())
+                        .into_boxed()
                 } else {
                     future::ok(()).into_boxed()
                 }
@@ -106,5 +112,46 @@ fn from_listener_inner(
     TcpRendezvousServer {
         _drop_tx: drop_tx,
         local_addr: *bind_addr,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_core::reactor::Core;
+
+    mod respond_with_addr {
+        use super::*;
+        use futures::IntoFuture;
+
+        #[test]
+        fn it_sends_serialized_client_address() {
+            let mut event_loop = unwrap!(Core::new());
+            let handle = event_loop.handle();
+
+            let listener = unwrap!(TcpListener::bind(&addr!("127.0.0.1:0"), &handle));
+            let listener_addr = unwrap!(listener.local_addr());
+            let handle_conns = listener
+                .incoming()
+                .for_each(|(stream, addr)| {
+                    respond_with_addr(stream, addr).then(|_| Ok(()))
+                })
+                .then(|_| Ok(()));
+            handle.spawn(handle_conns);
+
+            let conn = unwrap!(event_loop.run(TcpStream::connect(&listener_addr, &handle)));
+            let actual_addr = unwrap!(conn.local_addr());
+
+            let buf = unwrap!(
+                event_loop.run(
+                    tokio_io::io::read_to_end(conn, Vec::new())
+                        .into_future()
+                        .and_then(|(_stream, buf)| Ok(buf)),
+                )
+            );
+            let received_addr: SocketAddr = unwrap!(bincode::deserialize(&buf));
+
+            assert_eq!(received_addr, actual_addr);
+        }
     }
 }
