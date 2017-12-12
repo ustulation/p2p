@@ -9,8 +9,7 @@ pub fn search_gateway_from_timeout(
 ) -> BoxFuture<Gateway, SearchError> {
     thread_future(move || {
         let res = igd::search_gateway_from_timeout(ipv4, timeout);
-        let res = res.map(|gateway| Gateway { inner: gateway });
-        res
+        res.map(|gateway| Gateway { inner: gateway })
     }).infallible()
         .and_then(|r| r)
         .into_boxed()
@@ -39,7 +38,7 @@ impl Gateway {
 
         thread_future(move || {
             specified_local_addr_to_gateway(local_addr, *gateway.addr.ip())
-                .map_err(|e| GetAnyAddressError::PathToGateway(e))
+                .map_err(GetAnyAddressError::PathToGateway)
                 .and_then(move |addr| {
                     gateway
                         .get_any_address(protocol, addr, lease_duration, &description)
@@ -203,7 +202,7 @@ fn get_any_address(
                                     );
                                 }
                             }
-                            return future::err(e).into_boxed();
+                            future::err(e).into_boxed()
                         })
                         .map(|addr| {
                             trace!("igd returned address {}", addr);
