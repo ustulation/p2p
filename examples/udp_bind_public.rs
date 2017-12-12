@@ -1,4 +1,4 @@
-//! Demonstrates how bind to public address (using UPnP) and receive some data
+//! Demonstrates how to bind to public address (using UPnP) and receive some data
 
 #[macro_use]
 extern crate unwrap;

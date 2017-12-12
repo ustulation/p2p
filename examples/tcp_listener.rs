@@ -1,4 +1,4 @@
-//! Demonstrates how bind to public address (using UPnP) and listen for incoming connections
+//! Demonstrates how to bind to public address (using UPnP) and listen for incoming connections
 
 #[macro_use]
 extern crate unwrap;
