@@ -74,6 +74,7 @@ pub fn open_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
+    mc: &Mc,
 ) -> BoxFuture<SocketAddr, OpenAddrError> {
     let addrs_res = {
         bind_addr.expand_local_unspecified().map_err(|e| {
@@ -100,7 +101,8 @@ pub fn open_addr(
     let bind_addr = *bind_addr;
     let handle = handle.clone();
 
-    igd_async::get_any_address_open(protocol, bind_addr, &handle)
+    let mut mc0 = mc.clone();
+    igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
         .or_else(move |igd_err| {
             OpenAddr {
                 protocol: protocol,
@@ -108,7 +110,7 @@ pub fn open_addr(
                 handle: handle,
                 bind_addr: bind_addr,
                 known_addr_opt: None,
-                traversal_servers: mc::traversal_servers(protocol),
+                traversal_servers: mc0.iter_servers(protocol),
                 active_queries: stream::FuturesUnordered::new(),
                 errors: Vec::new(),
                 more_servers_timeout: None,

@@ -103,12 +103,13 @@ fn main() {
             .unwrap_or_else(|e| e.exit())
     };
 
+    let mut mc = p2p::Mc::default();
     if args.flag_disable_igd {
-        p2p::disable_igd();
+        mc.disable_igd();
     }
 
     if let Some(server) = args.flag_traversal_server {
-        p2p::add_tcp_traversal_server(&server);
+        mc.add_tcp_traversal_server(&server);
     }
 
     let relay_addr = args.flag_relay;
@@ -122,7 +123,7 @@ fn main() {
             .and_then(move |relay_stream| {
                 let relay_channel =
                     DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
-                TcpStream::rendezvous_connect(relay_channel, &handle)
+                TcpStream::rendezvous_connect(relay_channel, &handle, &mut mc)
                     .map_err(|e| panic!("rendezvous connect failed: {}", e))
                     .and_then(|stream| {
                         println!("connected!");

@@ -34,9 +34,10 @@ impl UdpRendezvousServer {
     pub fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
+        mc: &mut Mc,
     ) -> BoxFuture<(UdpRendezvousServer, SocketAddr), BindPublicError> {
         let handle = handle.clone();
-        socket::bind_public_with_addr(addr, &handle)
+        socket::bind_public_with_addr(addr, &handle, mc)
             .map(move |(socket, bind_addr, public_addr)| {
                 (from_socket_inner(socket, &bind_addr, &handle), public_addr)
             })

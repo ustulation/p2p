@@ -8,7 +8,7 @@ pub use future_utils::Timeout;
 pub use futures::{Async, AsyncSink, Future, Sink, Stream, future, sink, stream};
 
 pub use log::LogLevel;
-pub use mc::QueryPublicAddrError;
+pub use mc::{Mc, QueryPublicAddrError};
 pub use net2::{TcpBuilder, UdpBuilder};
 
 pub use prelude::*;

@@ -2,7 +2,7 @@ use future_utils::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use priv_prelude::*;
 use rand;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ServerSet {
     servers: HashSet<SocketAddr>,
     iterators: Vec<UnboundedSender<(SocketAddr, bool)>>,
