@@ -104,7 +104,7 @@ fn main() {
             .unwrap_or_else(|e| e.exit())
     };
 
-    let mut mc = p2p::P2p::default();
+    let mc = p2p::P2p::default();
     if args.flag_disable_igd {
         mc.disable_igd();
     }
@@ -124,7 +124,7 @@ fn main() {
             .and_then(move |relay_stream| {
                 let relay_channel =
                     DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
-                UdpSocket::rendezvous_connect(relay_channel, &handle, &mut mc)
+                UdpSocket::rendezvous_connect(relay_channel, &handle, &mc)
                     .map_err(|e| panic!("rendezvous connect failed: {}", e))
                     .and_then(|(socket, addr)| {
                         println!("connected!");

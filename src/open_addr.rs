@@ -101,7 +101,7 @@ pub fn open_addr(
     let bind_addr = *bind_addr;
     let handle = handle.clone();
 
-    let mut mc0 = mc.clone();
+    let mc0 = mc.clone();
     igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
         .or_else(move |igd_err| {
             OpenAddr {

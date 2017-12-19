@@ -51,11 +51,11 @@ impl P2p {
         !inner_get!(self, igd_disabled_for_rendezvous)
     }
 
-    pub fn enable_igd_for_rendezvous(&mut self) {
+    pub fn enable_igd_for_rendezvous(&self) {
         inner_set!(self, igd_disabled_for_rendezvous, false);
     }
 
-    pub fn disable_igd_for_rendezvous(&mut self) {
+    pub fn disable_igd_for_rendezvous(&self) {
         inner_set!(self, igd_disabled_for_rendezvous, true);
     }
 
@@ -71,61 +71,61 @@ impl P2p {
 
     /// By default `p2p` attempts to use IGD to open external ports for it's own use.
     /// Use this function to disable such behaviour.
-    pub fn disable_igd(&mut self) {
+    pub fn disable_igd(&self) {
         inner_set!(self, igd_disabled, true);
     }
 
     /// Re-enables IGD use.
-    pub fn enable_igd(&mut self) {
+    pub fn enable_igd(&self) {
         inner_set!(self, igd_disabled, false);
     }
 
     /// Tell about a `TcpTraversalServer` than can be used to help use perform rendezvous
     /// connects and hole punching.
-    pub fn add_tcp_traversal_server(&mut self, addr: &SocketAddr) {
+    pub fn add_tcp_traversal_server(&self, addr: &SocketAddr) {
         self.add_server(Protocol::Tcp, addr);
     }
 
     /// Tells the library to forget a `TcpTraversalServer` previously added with
     /// `add_tcp_traversal_server`.
-    pub fn remove_tcp_traversal_server(&mut self, addr: &SocketAddr) {
+    pub fn remove_tcp_traversal_server(&self, addr: &SocketAddr) {
         self.remove_server(Protocol::Tcp, addr);
     }
 
     /// Returns a iterator over all tcp traversal server addresses.
-    pub fn tcp_traversal_servers(&mut self) -> Servers {
+    pub fn tcp_traversal_servers(&self) -> Servers {
         self.iter_servers(Protocol::Tcp)
     }
 
     /// Tell about a `UdpTraversalServer` than can be used to help use perform rendezvous
     /// connects and hole punching.
-    pub fn add_udp_traversal_server(&mut self, addr: &SocketAddr) {
+    pub fn add_udp_traversal_server(&self, addr: &SocketAddr) {
         self.add_server(Protocol::Udp, addr);
     }
 
     /// Tells the library to forget a `UdpTraversalServer` previously added with
     /// `add_udp_traversal_server`.
-    pub fn remove_udp_traversal_server(&mut self, addr: &SocketAddr) {
+    pub fn remove_udp_traversal_server(&self, addr: &SocketAddr) {
         self.remove_server(Protocol::Udp, addr);
     }
 
     /// Returns an iterator over all udp traversal server addresses added with
     /// `add_tcp_traversal_server`.
-    pub fn udp_traversal_servers(&mut self) -> Servers {
+    pub fn udp_traversal_servers(&self) -> Servers {
         self.iter_servers(Protocol::Udp)
     }
 
-    pub fn iter_servers(&mut self, protocol: Protocol) -> Servers {
+    pub fn iter_servers(&self, protocol: Protocol) -> Servers {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).iter_servers()
     }
 
-    fn add_server(&mut self, protocol: Protocol, addr: &SocketAddr) {
+    fn add_server(&self, protocol: Protocol, addr: &SocketAddr) {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).add_server(addr);
     }
 
-    fn remove_server(&mut self, protocol: Protocol, addr: &SocketAddr) {
+    fn remove_server(&self, protocol: Protocol, addr: &SocketAddr) {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).remove_server(addr);
     }
@@ -300,7 +300,7 @@ mod tests {
 
             #[test]
             fn it_returns_current_tcp_traversal_servers() {
-                let mut p2p = P2p::default();
+                let p2p = P2p::default();
 
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
@@ -316,7 +316,7 @@ mod tests {
 
             #[test]
             fn it_removes_given_server_from_the_list_if_it_exists() {
-                let mut p2p = P2p::default();
+                let p2p = P2p::default();
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
 
@@ -329,7 +329,7 @@ mod tests {
 
             #[test]
             fn it_does_nothing_if_give_address_is_not_in_the_list() {
-                let mut p2p = P2p::default();
+                let p2p = P2p::default();
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
 
                 p2p.remove_tcp_traversal_server(&addr!("1.2.3.4:4000"));

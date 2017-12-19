@@ -34,7 +34,7 @@ impl UdpRendezvousServer {
     pub fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(UdpRendezvousServer, SocketAddr), BindPublicError> {
         let handle = handle.clone();
         socket::bind_public_with_addr(addr, &handle, mc)

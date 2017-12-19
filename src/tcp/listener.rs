@@ -21,7 +21,7 @@ pub trait TcpListenerExt {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError>;
 }
 
@@ -43,7 +43,7 @@ impl TcpListenerExt for TcpListener {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError> {
         bind_public_with_addr(addr, handle, mc)
             .map(|(listener, _bind_addr, public_addr)| {

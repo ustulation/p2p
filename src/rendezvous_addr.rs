@@ -52,7 +52,7 @@ pub fn rendezvous_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
-    mc: &mut P2p,
+    mc: &P2p,
 ) -> BoxFuture<SocketAddr, RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();

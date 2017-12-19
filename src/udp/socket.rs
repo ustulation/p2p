@@ -122,7 +122,7 @@ pub trait UdpSocketExt {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError>;
 
     /// Perform a UDP rendezvous connection to another peer. Both peers must call this
@@ -131,7 +131,7 @@ pub trait UdpSocketExt {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -170,7 +170,7 @@ impl UdpSocketExt for UdpSocket {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError> {
         bind_public_with_addr(addr, handle, mc)
             .map(|(socket, _bind_addr, public_addr)| (socket, public_addr))
@@ -181,7 +181,7 @@ impl UdpSocketExt for UdpSocket {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
-        mc: &mut P2p,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -255,7 +255,7 @@ impl UdpSocketExt for UdpSocket {
 
                         Ok({
                             let handle2 = handle0.clone();
-                            let mut mc = mc0.clone();
+                            let mc = mc0.clone();
                             future::loop_fn(Vec::new(), move |mut sockets| {
                                 if sockets.len() == 6 {
                                     return future::ok(Loop::Break((sockets, None))).into_boxed();
@@ -275,32 +275,28 @@ impl UdpSocketExt for UdpSocket {
                                         UdpRendezvousConnectError::SetTtl,
                                     )?;
                                     Ok({
-                                        rendezvous_addr(
-                                            Protocol::Udp,
-                                            &bind_addr,
-                                            &handle0,
-                                            &mut mc,
-                                        ).then(move |res| match res {
-                                            Ok(addr) => {
-                                                sockets.push((socket, addr));
-                                                trace!(
-                                                    "generated {} rendezvous sockets",
-                                                    sockets.len()
-                                                );
-                                                Ok(Loop::Continue(sockets))
-                                            }
-                                            Err(err) => {
-                                                trace!(
-                                                    "error generating rendezvous socket: {}",
-                                                    err
-                                                );
-                                                trace!(
-                                                    "stopping after generating {} sockets",
-                                                    sockets.len()
-                                                );
-                                                Ok(Loop::Break((sockets, Some(err))))
-                                            }
-                                        })
+                                        rendezvous_addr(Protocol::Udp, &bind_addr, &handle0, &mc)
+                                            .then(move |res| match res {
+                                                Ok(addr) => {
+                                                    sockets.push((socket, addr));
+                                                    trace!(
+                                                        "generated {} rendezvous sockets",
+                                                        sockets.len()
+                                                    );
+                                                    Ok(Loop::Continue(sockets))
+                                                }
+                                                Err(err) => {
+                                                    trace!(
+                                                        "error generating rendezvous socket: {}",
+                                                        err
+                                                    );
+                                                    trace!(
+                                                        "stopping after generating {} sockets",
+                                                        sockets.len()
+                                                    );
+                                                    Ok(Loop::Break((sockets, Some(err))))
+                                                }
+                                            })
                                     })
                                 };
                                 future::result(try()).flatten().into_boxed()
@@ -987,12 +983,12 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
-        let mut mc0 = P2p::default();
-        let mut mc1 = mc0.clone();
+        let mc0 = P2p::default();
+        let mc1 = mc0.clone();
 
         let result = core.run({
             let f0 = {
-                UdpSocket::rendezvous_connect(ch0, &handle, &mut mc0)
+                UdpSocket::rendezvous_connect(ch0, &handle, &mc0)
                     .map_err(|e| panic!("connect failed: {:?}", e))
                     .and_then(|(socket, addr)| {
                         trace!("rendezvous connect successful! connected to {}", addr);
@@ -1003,7 +999,7 @@ mod test {
                     .map(|_| ())
             };
             let f1 = {
-                UdpSocket::rendezvous_connect(ch1, &handle, &mut mc1)
+                UdpSocket::rendezvous_connect(ch1, &handle, &mc1)
                 .map_err(|e| panic!("connect failed: {:?}", e))
                 .and_then(|(socket, addr)| {
                     trace!("rendezvous connect successful! connected to {}", addr);

@@ -24,9 +24,9 @@ use p2p::UdpRendezvousServer;
 fn main() {
     let mut core = unwrap!(tokio_core::reactor::Core::new());
     let handle = core.handle();
-    let mut mc = p2p::P2p::default();
+    let mc = p2p::P2p::default();
     let res = core.run({
-        UdpRendezvousServer::bind_public(&addr!("0.0.0.0:0"), &handle, &mut mc)
+        UdpRendezvousServer::bind_public(&addr!("0.0.0.0:0"), &handle, &mc)
             .map_err(|e| panic!("Error binding server publicly: {}", e))
             .and_then(|(server, public_addr)| {
                 println!("listening on public socket address {}", public_addr);
