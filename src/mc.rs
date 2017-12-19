@@ -69,6 +69,10 @@ impl P2p {
         inner_get!(self, force_use_local_port)
     }
 
+    pub fn set_force_use_local_port(&self, force: bool) {
+        inner_set!(self, force_use_local_port, force);
+    }
+
     /// By default `p2p` attempts to use IGD to open external ports for it's own use.
     /// Use this function to disable such behaviour.
     pub fn disable_igd(&self) {
