@@ -52,10 +52,11 @@ pub fn rendezvous_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
+    mc: &P2p,
 ) -> BoxFuture<SocketAddr, RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();
-    let mut servers = mc::traversal_servers(protocol);
+    let mut servers = mc.iter_servers(protocol);
     let mut active_queries =
         stream::FuturesOrdered::<BoxFuture<SocketAddr, QueryPublicAddrError>>::new();
     let mut errors = Vec::new();
@@ -63,8 +64,10 @@ pub fn rendezvous_addr(
     let mut ports = Vec::new();
     let mut known_ip_opt = None;
     let mut failed_sequences = 0;
+    let mc0 = mc.clone();
 
-    igd_async::get_any_address_rendezvous(protocol, bind_addr, Duration::from_secs(300), &handle)
+    let timeout = Duration::from_secs(300);
+    igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, mc)
         .or_else(move |igd_error| {
             let mut igd_error = Some(igd_error);
             future::poll_fn(move || loop {
@@ -185,7 +188,7 @@ pub fn rendezvous_addr(
                         return Ok(Async::NotReady);
                     }
                 }
-            }).map(move |addr| if force_use_local_port() {
+            }).map(move |addr| if mc0.force_use_local_port() {
                 SocketAddr::new(addr.ip(), bind_addr.port())
             } else {
                 addr

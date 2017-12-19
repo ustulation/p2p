@@ -15,8 +15,9 @@ use tokio_core::net::TcpListener;
 fn main() {
     let mut core = unwrap!(tokio_core::reactor::Core::new());
     let handle = core.handle();
+    let mc = p2p::P2p::default();
     let res = core.run({
-        TcpListener::bind_public(&addr!("0.0.0.0:0"), &handle)
+        TcpListener::bind_public(&addr!("0.0.0.0:0"), &handle, &mc)
             .map_err(|e| panic!("Error binding listener publicly: {}", e))
             .and_then(|(listener, public_addr)| {
                 println!("listening on public socket address {}", public_addr);

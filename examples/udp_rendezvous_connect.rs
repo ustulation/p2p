@@ -104,12 +104,13 @@ fn main() {
             .unwrap_or_else(|e| e.exit())
     };
 
+    let mc = p2p::P2p::default();
     if args.flag_disable_igd {
-        p2p::disable_igd();
+        mc.disable_igd();
     }
 
     if let Some(server) = args.flag_traversal_server {
-        p2p::add_udp_traversal_server(&server);
+        mc.add_udp_traversal_server(&server);
     }
 
     let relay_addr = args.flag_relay;
@@ -123,7 +124,7 @@ fn main() {
             .and_then(move |relay_stream| {
                 let relay_channel =
                     DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
-                UdpSocket::rendezvous_connect(relay_channel, &handle)
+                UdpSocket::rendezvous_connect(relay_channel, &handle, &mc)
                     .map_err(|e| panic!("rendezvous connect failed: {}", e))
                     .and_then(|(socket, addr)| {
                         println!("connected!");

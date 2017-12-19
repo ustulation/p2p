@@ -122,6 +122,7 @@ pub trait UdpSocketExt {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError>;
 
     /// Perform a UDP rendezvous connection to another peer. Both peers must call this
@@ -130,6 +131,7 @@ pub trait UdpSocketExt {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -168,15 +170,18 @@ impl UdpSocketExt for UdpSocket {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError> {
-        bind_public_with_addr(addr, handle)
+        bind_public_with_addr(addr, handle, mc)
             .map(|(socket, _bind_addr, public_addr)| (socket, public_addr))
             .into_boxed()
     }
 
+    // TODO(povilas): decompose this method - it would be more readable, maintainable and testable
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
+        mc: &P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -187,10 +192,11 @@ impl UdpSocketExt for UdpSocket {
     {
         let handle0 = handle.clone();
         let handle1 = handle.clone();
+        let mc0 = mc.clone();
         let (our_pk, _sk) = crypto::box_::gen_keypair();
 
         trace!("starting rendezvous connect");
-        UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle)
+        UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
             .then(move |res| match res {
                 Ok((socket, public_addr)) => {
                     let try = || {
@@ -249,6 +255,7 @@ impl UdpSocketExt for UdpSocket {
 
                         Ok({
                             let handle2 = handle0.clone();
+                            let mc = mc0.clone();
                             future::loop_fn(Vec::new(), move |mut sockets| {
                                 if sockets.len() == 6 {
                                     return future::ok(Loop::Break((sockets, None))).into_boxed();
@@ -268,8 +275,8 @@ impl UdpSocketExt for UdpSocket {
                                         UdpRendezvousConnectError::SetTtl,
                                     )?;
                                     Ok({
-                                        rendezvous_addr(Protocol::Udp, &bind_addr, &handle0).then(
-                                            move |res| match res {
+                                        rendezvous_addr(Protocol::Udp, &bind_addr, &handle0, &mc)
+                                            .then(move |res| match res {
                                                 Ok(addr) => {
                                                     sockets.push((socket, addr));
                                                     trace!(
@@ -289,8 +296,7 @@ impl UdpSocketExt for UdpSocket {
                                                     );
                                                     Ok(Loop::Break((sockets, Some(err))))
                                                 }
-                                            },
-                                        )
+                                            })
                                     })
                                 };
                                 future::result(try()).flatten().into_boxed()
@@ -422,6 +428,7 @@ impl UdpSocketExt for UdpSocket {
 pub fn bind_public_with_addr(
     addr: &SocketAddr,
     handle: &Handle,
+    mc: &P2p,
 ) -> BoxFuture<(UdpSocket, SocketAddr, SocketAddr), BindPublicError> {
     let handle = handle.clone();
     let try = || {
@@ -432,7 +439,7 @@ pub fn bind_public_with_addr(
             socket.local_addr().map_err(BindPublicError::Bind)
         }?;
         Ok({
-            open_addr(Protocol::Udp, &bind_addr, &handle)
+            open_addr(Protocol::Udp, &bind_addr, &handle, mc)
                 .map_err(BindPublicError::OpenAddr)
                 .map(move |public_addr| (socket, bind_addr, public_addr))
         })
@@ -976,10 +983,12 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
+        let mc0 = P2p::default();
+        let mc1 = mc0.clone();
 
         let result = core.run({
             let f0 = {
-                UdpSocket::rendezvous_connect(ch0, &handle)
+                UdpSocket::rendezvous_connect(ch0, &handle, &mc0)
                     .map_err(|e| panic!("connect failed: {:?}", e))
                     .and_then(|(socket, addr)| {
                         trace!("rendezvous connect successful! connected to {}", addr);
@@ -990,7 +999,7 @@ mod test {
                     .map(|_| ())
             };
             let f1 = {
-                UdpSocket::rendezvous_connect(ch1, &handle)
+                UdpSocket::rendezvous_connect(ch1, &handle, &mc1)
                 .map_err(|e| panic!("connect failed: {:?}", e))
                 .and_then(|(socket, addr)| {
                     trace!("rendezvous connect successful! connected to {}", addr);

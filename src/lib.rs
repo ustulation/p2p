@@ -186,8 +186,6 @@
 //!
 //! [0]: https://en.wikipedia.org/wiki/Internet_Gateway_Device_Protocol
 
-#[macro_use]
-extern crate lazy_static;
 extern crate tokio_io;
 extern crate tokio_core;
 extern crate futures;

@@ -9,13 +9,16 @@ use protocol::Protocol;
 use server_set::{ServerSet, Servers};
 use tokio_io;
 
-lazy_static! {
-    static ref MC: Mutex<Mc> = Mutex::new(Mc::default());
+/// `P2p` allows you to manage how NAT traversal works.
+///
+/// You can edit rendezvous (traversal) servers, enable/Disable IGD use, etc.
+#[derive(Default, Clone)]
+pub struct P2p {
+    inner: Arc<Mutex<P2pInner>>,
 }
 
-/// `Mc` stands for `MappingContext` and is related to port mapping.
-#[derive(Default)]
-struct Mc {
+#[derive(Default, Clone)]
+struct P2pInner {
     tcp_server_set: ServerSet,
     udp_server_set: ServerSet,
     igd_disabled: bool,
@@ -23,72 +26,118 @@ struct Mc {
     force_use_local_port: bool,
 }
 
-impl Mc {
+// Some macros to reduce boilerplate
+
+macro_rules! inner_get {
+    ($self:ident, $field:ident) => {
+        {
+            let inner = unwrap!($self.inner.lock());
+            inner.$field
+        }
+    };
+}
+
+macro_rules! inner_set {
+    ($self:ident, $field:ident, $value:ident) => {
+        {
+            let mut inner = unwrap!($self.inner.lock());
+            inner.$field = $value;
+        }
+    };
+}
+
+impl P2p {
+    pub fn is_igd_enabled_for_rendezvous(&self) -> bool {
+        !inner_get!(self, igd_disabled_for_rendezvous)
+    }
+
+    pub fn enable_igd_for_rendezvous(&self) {
+        inner_set!(self, igd_disabled_for_rendezvous, false);
+    }
+
+    pub fn disable_igd_for_rendezvous(&self) {
+        inner_set!(self, igd_disabled_for_rendezvous, true);
+    }
+
+    /// Tests if IGD use is enabled or not.
+    /// It's enabled by default.
+    pub fn is_igd_enabled(&self) -> bool {
+        !inner_get!(self, igd_disabled)
+    }
+
+    pub fn force_use_local_port(&self) -> bool {
+        inner_get!(self, force_use_local_port)
+    }
+
+    /// By default `p2p` attempts to use IGD to open external ports for it's own use.
+    /// Use this function to disable such behaviour.
+    pub fn disable_igd(&self) {
+        inner_set!(self, igd_disabled, true);
+    }
+
+    /// Re-enables IGD use.
+    pub fn enable_igd(&self) {
+        inner_set!(self, igd_disabled, false);
+    }
+
+    /// Tell about a `TcpTraversalServer` than can be used to help use perform rendezvous
+    /// connects and hole punching.
+    pub fn add_tcp_traversal_server(&self, addr: &SocketAddr) {
+        self.add_server(Protocol::Tcp, addr);
+    }
+
+    /// Tells the library to forget a `TcpTraversalServer` previously added with
+    /// `add_tcp_traversal_server`.
+    pub fn remove_tcp_traversal_server(&self, addr: &SocketAddr) {
+        self.remove_server(Protocol::Tcp, addr);
+    }
+
+    /// Returns a iterator over all tcp traversal server addresses.
+    pub fn tcp_traversal_servers(&self) -> Servers {
+        self.iter_servers(Protocol::Tcp)
+    }
+
+    /// Tell about a `UdpTraversalServer` than can be used to help use perform rendezvous
+    /// connects and hole punching.
+    pub fn add_udp_traversal_server(&self, addr: &SocketAddr) {
+        self.add_server(Protocol::Udp, addr);
+    }
+
+    /// Tells the library to forget a `UdpTraversalServer` previously added with
+    /// `add_udp_traversal_server`.
+    pub fn remove_udp_traversal_server(&self, addr: &SocketAddr) {
+        self.remove_server(Protocol::Udp, addr);
+    }
+
+    /// Returns an iterator over all udp traversal server addresses added with
+    /// `add_tcp_traversal_server`.
+    pub fn udp_traversal_servers(&self) -> Servers {
+        self.iter_servers(Protocol::Udp)
+    }
+
+    pub fn iter_servers(&self, protocol: Protocol) -> Servers {
+        let mut inner = unwrap!(self.inner.lock());
+        inner.server_set(protocol).iter_servers()
+    }
+
+    fn add_server(&self, protocol: Protocol, addr: &SocketAddr) {
+        let mut inner = unwrap!(self.inner.lock());
+        inner.server_set(protocol).add_server(addr);
+    }
+
+    fn remove_server(&self, protocol: Protocol, addr: &SocketAddr) {
+        let mut inner = unwrap!(self.inner.lock());
+        inner.server_set(protocol).remove_server(addr);
+    }
+}
+
+impl P2pInner {
     fn server_set(&mut self, protocol: Protocol) -> &mut ServerSet {
         match protocol {
             Protocol::Udp => &mut self.udp_server_set,
             Protocol::Tcp => &mut self.tcp_server_set,
         }
     }
-
-    fn add_server(&mut self, protocol: Protocol, addr: &SocketAddr) {
-        self.server_set(protocol).add_server(addr)
-    }
-
-    fn remove_server(&mut self, protocol: Protocol, addr: &SocketAddr) {
-        self.server_set(protocol).remove_server(addr)
-    }
-
-    fn iter_servers(&mut self, protocol: Protocol) -> Servers {
-        self.server_set(protocol).iter_servers()
-    }
-}
-
-/// Tell the library about a `TcpTraversalServer` than can be used to help use perform rendezvous
-/// connects and hole punching.
-pub fn add_tcp_traversal_server(addr: &SocketAddr) {
-    let mut mc = unwrap!(MC.lock());
-    mc.add_server(Protocol::Tcp, addr)
-}
-
-/// Tells the library to forget a `TcpTraversalServer` previously added with
-/// `add_tcp_traversal_server`.
-pub fn remove_tcp_traversal_server(addr: &SocketAddr) {
-    let mut mc = unwrap!(MC.lock());
-    mc.remove_server(Protocol::Tcp, addr)
-}
-
-/// Returns an iterator over all tcp traversal server addresses added with
-/// `add_tcp_traversal_server`.
-pub fn tcp_traversal_servers() -> Servers {
-    let mut mc = unwrap!(MC.lock());
-    mc.iter_servers(Protocol::Tcp)
-}
-
-/// Tell the library about a `UdpTraversalServer` than can be used to help use perform rendezvous
-/// connects and hole punching.
-pub fn add_udp_traversal_server(addr: &SocketAddr) {
-    let mut mc = unwrap!(MC.lock());
-    mc.add_server(Protocol::Udp, addr)
-}
-
-/// Tells the library to forget a `UdpTraversalServer` previously added with
-/// `add_udp_traversal_server`.
-pub fn remove_udp_traversal_server(addr: &SocketAddr) {
-    let mut mc = unwrap!(MC.lock());
-    mc.remove_server(Protocol::Udp, addr)
-}
-
-/// Returns an iterator over all udp traversal server addresses added with
-/// `add_tcp_traversal_server`.
-pub fn udp_traversal_servers() -> Servers {
-    let mut mc = unwrap!(MC.lock());
-    mc.iter_servers(Protocol::Udp)
-}
-
-pub fn traversal_servers(protocol: Protocol) -> Servers {
-    let mut mc = unwrap!(MC.lock());
-    mc.iter_servers(protocol)
 }
 
 pub fn query_public_addr(
@@ -101,31 +150,6 @@ pub fn query_public_addr(
         Protocol::Tcp => tcp_query_public_addr(bind_addr, server_addr, handle),
         Protocol::Udp => udp_query_public_addr(bind_addr, server_addr, handle),
     }
-}
-
-pub fn enable_igd_for_rendezvous() {
-    let mut mc = unwrap!(MC.lock());
-    mc.igd_disabled_for_rendezvous = false;
-}
-
-pub fn disable_igd_for_rendezvous() {
-    let mut mc = unwrap!(MC.lock());
-    mc.igd_disabled_for_rendezvous = true;
-}
-
-pub fn is_igd_enabled_for_rendezvous() -> bool {
-    let mc = unwrap!(MC.lock());
-    !mc.igd_disabled_for_rendezvous
-}
-
-pub fn force_use_local_port() -> bool {
-    let mc = unwrap!(MC.lock());
-    mc.force_use_local_port
-}
-
-pub fn set_force_use_local_port(force: bool) {
-    let mut mc = unwrap!(MC.lock());
-    mc.force_use_local_port = force;
 }
 
 quick_error! {
@@ -239,23 +263,80 @@ pub fn udp_query_public_addr(
     future::result(try()).flatten().into_boxed()
 }
 
-/// Tests if IGD use is enabled or not.
-/// It's enabled by default.
-pub fn is_igd_enabled() -> bool {
-    let mc = unwrap!(MC.lock());
-    !mc.igd_disabled
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// By default `p2p` attempts to use IGD to open external ports for it's own use.
-/// Use this function to disable such behaviour. It set's a singleton flag value hence
-/// disables IGD for a whole `p2p` crate.
-pub fn disable_igd() {
-    let mut mc = unwrap!(MC.lock());
-    mc.igd_disabled = true;
-}
+    mod p2p {
+        use super::*;
 
-/// Re-enables IGD use in `p2p` crate.
-pub fn enable_igd() {
-    let mut mc = unwrap!(MC.lock());
-    mc.igd_disabled = false;
+        mod default {
+            use super::*;
+
+            #[test]
+            fn it_creates_mapping_context_with_igd_enabled() {
+                let p2p = P2p::default();
+
+                assert!(p2p.is_igd_enabled())
+            }
+
+            #[test]
+            fn it_creates_mapping_context_with_igd_enabled_for_rendezvous() {
+                let p2p = P2p::default();
+
+                assert!(p2p.is_igd_enabled_for_rendezvous())
+            }
+
+            #[test]
+            fn it_creates_mapping_context_with_force_use_local_port_disabled() {
+                let p2p = P2p::default();
+
+                assert!(!p2p.force_use_local_port())
+            }
+        }
+
+        mod tcp_traversal_servers {
+            use super::*;
+
+            #[test]
+            fn it_returns_current_tcp_traversal_servers() {
+                let p2p = P2p::default();
+
+                p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
+                p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
+
+                let addrs = p2p.tcp_traversal_servers().snapshot();
+                assert!(addrs.contains(&addr!("1.2.3.4:4000")));
+                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
+            }
+        }
+
+        mod remove_tcp_traversal_server {
+            use super::*;
+
+            #[test]
+            fn it_removes_given_server_from_the_list_if_it_exists() {
+                let p2p = P2p::default();
+                p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
+                p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
+
+                p2p.remove_tcp_traversal_server(&addr!("1.2.3.4:4000"));
+
+                let addrs = p2p.tcp_traversal_servers().snapshot();
+                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
+                assert!(!addrs.contains(&addr!("1.2.3.4:4000")));
+            }
+
+            #[test]
+            fn it_does_nothing_if_give_address_is_not_in_the_list() {
+                let p2p = P2p::default();
+                p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
+
+                p2p.remove_tcp_traversal_server(&addr!("1.2.3.4:4000"));
+
+                let addrs = p2p.tcp_traversal_servers().snapshot();
+                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
+            }
+        }
+    }
 }

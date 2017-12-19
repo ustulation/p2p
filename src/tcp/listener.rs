@@ -21,6 +21,7 @@ pub trait TcpListenerExt {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
+        mc: &P2p,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError>;
 }
 
@@ -42,8 +43,9 @@ impl TcpListenerExt for TcpListener {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
+        mc: &P2p,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError> {
-        bind_public_with_addr(addr, handle)
+        bind_public_with_addr(addr, handle, mc)
             .map(|(listener, _bind_addr, public_addr)| {
                 (listener, public_addr)
             })
@@ -54,6 +56,7 @@ impl TcpListenerExt for TcpListener {
 pub fn bind_public_with_addr(
     addr: &SocketAddr,
     handle: &Handle,
+    mc: &P2p,
 ) -> BoxFuture<(TcpListener, SocketAddr, SocketAddr), BindPublicError> {
     let handle = handle.clone();
     let try = || {
@@ -64,7 +67,7 @@ pub fn bind_public_with_addr(
             listener.local_addr().map_err(BindPublicError::Bind)
         }?;
         Ok({
-            open_addr(Protocol::Tcp, &bind_addr, &handle)
+            open_addr(Protocol::Tcp, &bind_addr, &handle, mc)
                 .map_err(BindPublicError::OpenAddr)
                 .map(move |public_addr| (listener, bind_addr, public_addr))
         })

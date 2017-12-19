@@ -157,7 +157,7 @@ pub trait TcpStreamExt {
     /// to form one TCP connection, connected from both ends. `channel` must provide a channel
     /// through which the two connecting peers can communicate with each other out-of-band while
     /// negotiating the connection.
-    fn rendezvous_connect<C>(channel: C, handle: &Handle) -> TcpRendezvousConnect<C>
+    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &P2p) -> TcpRendezvousConnect<C>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -189,7 +189,7 @@ impl TcpStreamExt for TcpStream {
         future::result(try()).flatten().into_boxed()
     }
 
-    fn rendezvous_connect<C>(channel: C, handle: &Handle) -> TcpRendezvousConnect<C>
+    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &P2p) -> TcpRendezvousConnect<C>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -225,7 +225,7 @@ impl TcpStreamExt for TcpStream {
 
             Ok({
                 trace!("getting rendezvous address");
-                rendezvous_addr(Protocol::Tcp, &bind_addr, &handle)
+                rendezvous_addr(Protocol::Tcp, &bind_addr, &handle, mc)
                     .then(|res| match res {
                         Ok(addr) => Ok((Some(addr), None)),
                         Err(e) => Ok((None, Some(e))),
@@ -376,10 +376,12 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
+        let mc0 = P2p::default();
+        let mc1 = mc0.clone();
 
         let result = core.run({
             let f0 = {
-                TcpStream::rendezvous_connect(ch0, &handle)
+                TcpStream::rendezvous_connect(ch0, &handle, &mc0)
                     .map_err(|e| panic!("connect failed: {:?}", e))
                     .and_then(|stream| tokio_io::io::write_all(stream, b"hello"))
                     .map_err(|e| panic!("writing failed: {:?}", e))
@@ -387,7 +389,7 @@ mod test {
             };
 
             let f1 = {
-                TcpStream::rendezvous_connect(ch1, &handle)
+                TcpStream::rendezvous_connect(ch1, &handle, &mc1)
                     .map_err(|e| panic!("connect failed: {:?}", e))
                     .and_then(|stream| tokio_io::io::read_to_end(stream, Vec::new()))
                     .map_err(|e| panic!("reading failed: {:?}", e))

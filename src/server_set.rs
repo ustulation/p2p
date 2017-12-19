@@ -2,7 +2,7 @@ use future_utils::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use priv_prelude::*;
 use rand;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ServerSet {
     servers: HashSet<SocketAddr>,
     iterators: Vec<UnboundedSender<(SocketAddr, bool)>>,
@@ -42,6 +42,13 @@ pub struct Servers {
     modifications: UnboundedReceiver<(SocketAddr, bool)>,
 }
 
+impl Servers {
+    /// Returns a snapshot of current server list.
+    pub fn snapshot(&self) -> HashSet<SocketAddr> {
+        self.servers.clone()
+    }
+}
+
 impl Stream for Servers {
     type Item = SocketAddr;
     type Error = Void;
@@ -61,5 +68,30 @@ impl Stream for Servers {
         };
 
         Ok(Async::Ready(Some(server)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod servers {
+        use super::*;
+
+        mod snapshot {
+            use super::*;
+
+            #[test]
+            fn it_returns_current_server_list() {
+                let mut servers = ServerSet::default();
+                servers.add_server(&addr!("1.2.3.4:4000"));
+                servers.add_server(&addr!("1.2.3.5:5000"));
+
+                let addrs = servers.iter_servers().snapshot();
+
+                assert!(addrs.contains(&addr!("1.2.3.4:4000")));
+                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
+            }
+        }
     }
 }
