@@ -1,6 +1,6 @@
 pub use ip_addr::{IpAddrExt, Ipv4AddrExt, Ipv6AddrExt};
 
-pub use mc::Mc;
+pub use mc::P2p;
 pub use open_addr::{BindPublicError, OpenAddrError, OpenAddrErrorKind};
 pub use rendezvous_addr::{RendezvousAddrError, RendezvousAddrErrorKind};
 pub use socket_addr::{SocketAddrExt, SocketAddrV4Ext, SocketAddrV6Ext};

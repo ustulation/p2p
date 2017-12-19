@@ -138,7 +138,7 @@ pub fn get_any_address_rendezvous(
     local_addr: SocketAddr,
     timeout: Duration,
     handle: &Handle,
-    mc: &Mc,
+    mc: &P2p,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     if !mc.is_igd_enabled_for_rendezvous() {
         return future::err(GetAnyAddressError::Disabled).into_boxed();
@@ -153,7 +153,7 @@ pub fn get_any_address_open(
     protocol: Protocol,
     local_addr: SocketAddr,
     handle: &Handle,
-    mc: &Mc,
+    mc: &P2p,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     get_any_address(protocol, local_addr, None, handle, mc)
 }
@@ -163,7 +163,7 @@ fn get_any_address(
     local_addr: SocketAddr,
     timeout: Option<Duration>,
     handle: &Handle,
-    mc: &Mc,
+    mc: &P2p,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     if !mc.is_igd_enabled() {
         return future::err(GetAnyAddressError::Disabled).into_boxed();

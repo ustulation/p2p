@@ -74,7 +74,7 @@ pub fn open_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
-    mc: &Mc,
+    mc: &P2p,
 ) -> BoxFuture<SocketAddr, OpenAddrError> {
     let addrs_res = {
         bind_addr.expand_local_unspecified().map_err(|e| {

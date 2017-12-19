@@ -51,7 +51,7 @@ impl TcpRendezvousServer {
     pub fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut Mc,
+        mc: &mut P2p,
     ) -> BoxFuture<(TcpRendezvousServer, SocketAddr), BindPublicError> {
         let handle = handle.clone();
         listener::bind_public_with_addr(addr, &handle, mc)

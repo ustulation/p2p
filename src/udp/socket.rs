@@ -122,7 +122,7 @@ pub trait UdpSocketExt {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut Mc,
+        mc: &mut P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError>;
 
     /// Perform a UDP rendezvous connection to another peer. Both peers must call this
@@ -131,7 +131,7 @@ pub trait UdpSocketExt {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
-        mc: &mut Mc,
+        mc: &mut P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -170,7 +170,7 @@ impl UdpSocketExt for UdpSocket {
     fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &mut Mc,
+        mc: &mut P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError> {
         bind_public_with_addr(addr, handle, mc)
             .map(|(socket, _bind_addr, public_addr)| (socket, public_addr))
@@ -181,7 +181,7 @@ impl UdpSocketExt for UdpSocket {
     fn rendezvous_connect<C>(
         channel: C,
         handle: &Handle,
-        mc: &mut Mc,
+        mc: &mut P2p,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -432,7 +432,7 @@ impl UdpSocketExt for UdpSocket {
 pub fn bind_public_with_addr(
     addr: &SocketAddr,
     handle: &Handle,
-    mc: &Mc,
+    mc: &P2p,
 ) -> BoxFuture<(UdpSocket, SocketAddr, SocketAddr), BindPublicError> {
     let handle = handle.clone();
     let try = || {
@@ -987,7 +987,7 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
-        let mut mc0 = Mc::default();
+        let mut mc0 = P2p::default();
         let mut mc1 = mc0.clone();
 
         let result = core.run({

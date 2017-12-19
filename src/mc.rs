@@ -13,7 +13,7 @@ use tokio_io;
 ///
 /// You can edit rendezvous (traversal) servers, enable/Disable IGD use, etc.
 #[derive(Default, Clone)]
-pub struct Mc {
+pub struct P2p {
     inner: Arc<Mutex<P2pInner>>,
 }
 
@@ -46,7 +46,7 @@ macro_rules! inner_set {
     };
 }
 
-impl Mc {
+impl P2p {
     pub fn is_igd_enabled_for_rendezvous(&self) -> bool {
         !inner_get!(self, igd_disabled_for_rendezvous)
     }
@@ -275,21 +275,21 @@ mod tests {
 
             #[test]
             fn it_creates_mapping_context_with_igd_enabled() {
-                let p2p = Mc::default();
+                let p2p = P2p::default();
 
                 assert!(p2p.is_igd_enabled())
             }
 
             #[test]
             fn it_creates_mapping_context_with_igd_enabled_for_rendezvous() {
-                let p2p = Mc::default();
+                let p2p = P2p::default();
 
                 assert!(p2p.is_igd_enabled_for_rendezvous())
             }
 
             #[test]
             fn it_creates_mapping_context_with_force_use_local_port_disabled() {
-                let p2p = Mc::default();
+                let p2p = P2p::default();
 
                 assert!(!p2p.force_use_local_port())
             }
@@ -300,7 +300,7 @@ mod tests {
 
             #[test]
             fn it_returns_current_tcp_traversal_servers() {
-                let mut p2p = Mc::default();
+                let mut p2p = P2p::default();
 
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
@@ -316,7 +316,7 @@ mod tests {
 
             #[test]
             fn it_removes_given_server_from_the_list_if_it_exists() {
-                let mut p2p = Mc::default();
+                let mut p2p = P2p::default();
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
 
@@ -329,7 +329,7 @@ mod tests {
 
             #[test]
             fn it_does_nothing_if_give_address_is_not_in_the_list() {
-                let mut p2p = Mc::default();
+                let mut p2p = P2p::default();
                 p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
 
                 p2p.remove_tcp_traversal_server(&addr!("1.2.3.4:4000"));

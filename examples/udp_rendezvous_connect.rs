@@ -104,7 +104,7 @@ fn main() {
             .unwrap_or_else(|e| e.exit())
     };
 
-    let mut mc = p2p::Mc::default();
+    let mut mc = p2p::P2p::default();
     if args.flag_disable_igd {
         mc.disable_igd();
     }

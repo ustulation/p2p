@@ -157,7 +157,7 @@ pub trait TcpStreamExt {
     /// to form one TCP connection, connected from both ends. `channel` must provide a channel
     /// through which the two connecting peers can communicate with each other out-of-band while
     /// negotiating the connection.
-    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &mut Mc) -> TcpRendezvousConnect<C>
+    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &mut P2p) -> TcpRendezvousConnect<C>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -189,7 +189,7 @@ impl TcpStreamExt for TcpStream {
         future::result(try()).flatten().into_boxed()
     }
 
-    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &mut Mc) -> TcpRendezvousConnect<C>
+    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &mut P2p) -> TcpRendezvousConnect<C>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -376,7 +376,7 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
-        let mut mc0 = Mc::default();
+        let mut mc0 = P2p::default();
         let mut mc1 = mc0.clone();
 
         let result = core.run({
