@@ -3,10 +3,20 @@
 use ECHO_REQ;
 use bincode::{self, Infinite};
 use bytes::Bytes;
+use future_utils::IoFuture;
 use open_addr::BindPublicError;
 pub use priv_prelude::*;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::socket;
+
+pub fn respond_with_addr<S>(sink: S, addr: SocketAddr) -> IoFuture<S>
+where
+    S: Sink<SinkItem = Bytes, SinkError = io::Error> + 'static,
+{
+    let encoded = unwrap!(bincode::serialize(&addr, Infinite));
+    let bytes = Bytes::from(encoded);
+    sink.send(bytes).into_boxed()
+}
 
 pub struct UdpRendezvousServer {
     local_addr: SocketAddr,
@@ -98,11 +108,8 @@ fn on_addr_echo_request(
     if let Some(msg) = msg_opt {
         if msg == ECHO_REQ[..] {
             let addr = with_addr.remote_addr();
-            let encoded = unwrap!(bincode::serialize(&addr, Infinite));
-
             return {
-                with_addr
-                    .send(Bytes::from(encoded))
+                respond_with_addr(with_addr, addr)
                     .map(|_with_addr| ())
                     .into_boxed()
             };
