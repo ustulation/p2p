@@ -10,4 +10,5 @@ pub use tcp::rendezvous_server::TcpRendezvousServer;
 pub use tcp::rendezvous_server::respond_with_addr as tcp_respond_with_addr;
 pub use tcp::stream::{ConnectReusableError, TcpRendezvousConnectError, TcpStreamExt};
 pub use udp::rendezvous_server::UdpRendezvousServer;
+pub use udp::rendezvous_server::respond_with_addr as udp_respond_with_addr;
 pub use udp::socket::{UdpRendezvousConnectError, UdpSocketExt};
