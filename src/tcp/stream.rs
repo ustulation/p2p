@@ -35,6 +35,7 @@ pub enum TcpRendezvousConnectError<Ei, Eo> {
     IfAddrs(io::Error),
     Listen(io::Error),
     ChannelClosed,
+    ChannelTimedOut,
     ChannelRead(Ei),
     ChannelWrite(Eo),
     DeserializeMsg(bincode::Error),
@@ -54,6 +55,7 @@ where
                 write!(f, "IO error: {}", e)?;
             }
             ChannelClosed => (),
+            ChannelTimedOut => (),
             ChannelRead(ref e) => {
                 write!(f, "channel error: {}", e)?;
             }
@@ -96,6 +98,7 @@ where
             IfAddrs(..) => "error getting network interface addresses",
             Listen(..) => "error listening on socket",
             ChannelClosed => "rendezvous channel closed unexpectedly",
+            ChannelTimedOut => "timed out waiting for message via rendezvous channel",
             ChannelRead(..) => "error reading from rendezvous channel",
             ChannelWrite(..) => "error writing to rendezvous channel",
             DeserializeMsg(..) => "error deserializing rendezvous message",
@@ -111,6 +114,7 @@ where
             ChannelWrite(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
             ChannelClosed |
+            ChannelTimedOut |
             AllAttemptsFailed(..) => None,
         }
     }
@@ -201,13 +205,14 @@ impl TcpStreamExt for TcpStream {
         // along the channel. This is because we can't (currently) rely on routing to forward
         // anything other than the first message to the other peer.
 
-        let handle = handle.clone();
+        let handle0 = handle.clone();
+        let handle1 = handle.clone();
         let (pk, _sk) = crypto::box_::gen_keypair();
 
         let try = || {
             trace!("starting tcp rendezvous connect");
             let listener = {
-                TcpListener::bind_reusable(&addr!("0.0.0.0:0"), &handle)
+                TcpListener::bind_reusable(&addr!("0.0.0.0:0"), &handle0)
                     .map_err(TcpRendezvousConnectError::Bind)
             }?;
             let bind_addr = {
@@ -225,7 +230,7 @@ impl TcpStreamExt for TcpStream {
 
             Ok({
                 trace!("getting rendezvous address");
-                rendezvous_addr(Protocol::Tcp, &bind_addr, &handle, mc)
+                rendezvous_addr(Protocol::Tcp, &bind_addr, &handle0, mc)
                     .then(|res| match res {
                         Ok(addr) => Ok((Some(addr), None)),
                         Err(e) => Ok((None, Some(e))),
@@ -243,10 +248,12 @@ impl TcpStreamExt for TcpStream {
                         trace!("exchanging rendezvous info with peer");
                         channel.send(msg)
                     .map_err(TcpRendezvousConnectError::ChannelWrite)
-                    .and_then(|channel| {
+                    .and_then(move |channel| {
                         channel
                         .map_err(TcpRendezvousConnectError::ChannelRead)
                         .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
+                        .with_timeout(Duration::from_secs(20), &handle1)
+                        .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
                     })
                     .and_then(|(msg, _channel)| {
                         bincode::deserialize(&msg)
@@ -271,7 +278,7 @@ impl TcpStreamExt for TcpStream {
                             their_addrs
                             .into_iter()
                             .map(|addr| {
-                                TcpStream::connect_reusable(&bind_addr, &addr, &handle)
+                                TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
                                 .map_err(SingleRendezvousAttemptError::Connect)
                             })
                             .collect::<Vec<_>>()
@@ -283,7 +290,7 @@ impl TcpStreamExt for TcpStream {
                             .map(|(stream, _addr)| stream)
                             .map_err(SingleRendezvousAttemptError::Accept)
                             .until({
-                                Timeout::new(Duration::from_secs(RENDEZVOUS_TIMEOUT_SEC), &handle)
+                                Timeout::new(Duration::from_secs(RENDEZVOUS_TIMEOUT_SEC), &handle0)
                                 .infallible()
                             })
                         };
