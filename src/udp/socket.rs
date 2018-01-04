@@ -115,6 +115,8 @@ pub trait UdpSocketExt {
     /// Bind reusably to the given address. This method can be used to create multiple UDP sockets
     /// bound to the same local address.
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
+    /// Bind reusably to the given address and connect to the remote address.
+    fn bind_connect_reusable(addr: &SocketAddr, remote_addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
 
     /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
@@ -141,21 +143,38 @@ pub trait UdpSocketExt {
         C: 'static;
 }
 
+fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
+    let socket = match addr.ip() {
+        IpAddr::V4(..) => UdpBuilder::new_v4()?,
+        IpAddr::V6(..) => UdpBuilder::new_v6()?,
+    };
+    socket.reuse_address(true)?;
+
+    #[cfg(target_family = "unix")]
+    {
+        use net2::unix::UnixUdpBuilderExt;
+        socket.reuse_port(true)?;
+    }
+
+    let socket = socket.bind(addr)?;
+    Ok(socket)
+}
+
 impl UdpSocketExt for UdpSocket {
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket> {
-        let socket = match addr.ip() {
-            IpAddr::V4(..) => UdpBuilder::new_v4()?,
-            IpAddr::V6(..) => UdpBuilder::new_v6()?,
-        };
-        socket.reuse_address(true)?;
+        let socket = bind_reusable(addr)?;
+        let socket = UdpSocket::from_socket(socket, handle)?;
 
-        #[cfg(target_family = "unix")]
-        {
-            use net2::unix::UnixUdpBuilderExt;
-            socket.reuse_port(true)?;
-        }
+        Ok(socket)
+    }
 
-        let socket = socket.bind(addr)?;
+    fn bind_connect_reusable(
+        addr: &SocketAddr,
+        remote_addr: &SocketAddr,
+        handle: &Handle,
+    ) -> io::Result<UdpSocket> {
+        let socket = bind_reusable(addr)?;
+        socket.connect(remote_addr)?;
         let socket = UdpSocket::from_socket(socket, handle)?;
 
         Ok(socket)
