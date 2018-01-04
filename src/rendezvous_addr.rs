@@ -74,57 +74,19 @@ pub fn rendezvous_addr(
             let mut igd_error = Some(igd_error);
             future::poll_fn(move || loop {
                 trace!("in rendezvous_addr loop");
-                match active_queries.poll() {
-                    Err(e) => {
-                        trace!("query returned error: {}", e);
-                        errors.push(e);
-                    }
-                    Ok(Async::Ready(Some(addr))) => {
-                        trace!("query returned address: {}", addr);
-                        let ip = addr.ip();
-                        if IpAddrExt::is_global(&ip) {
-                            if let Some(known_ip) = known_ip_opt {
-                                if known_ip != ip {
-                                    return Err(RendezvousAddrError {
-                                        igd_error: unwrap!(igd_error.take()),
-                                        kind: RendezvousAddrErrorKind::InconsistentIpAddrs(
-                                            known_ip,
-                                            ip,
-                                        ),
-                                    });
-                                }
-                            }
-                            known_ip_opt = Some(ip);
-                            ports.push(addr.port());
-                            if ports.len() == 2 && ports[0] == ports[1] {
-                                return Ok(Async::Ready(SocketAddr::new(ip, ports[0])));
-                            }
-                            if ports.len() == 3 {
-                                let diff0 = ports[1].wrapping_sub(ports[0]);
-                                let diff1 = ports[2].wrapping_sub(ports[1]);
-                                if diff0 == diff1 {
-                                    return Ok(Async::Ready(
-                                        SocketAddr::new(ip, ports[2].wrapping_add(diff0)),
-                                    ));
-                                } else {
-                                    ports.remove(0);
-                                    failed_sequences += 1;
-                                    if failed_sequences >= 3 {
-                                        return Err(RendezvousAddrError {
-                                            igd_error: unwrap!(igd_error.take()),
-                                            kind: RendezvousAddrErrorKind::UnpredictablePorts(
-                                                ports[0],
-                                                ports[1],
-                                                ports[2],
-                                            ),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
+                let res = PublicAddrsFromStun {
+                    stun_queries: &mut active_queries,
+                    ports: &mut ports,
+                    errors: &mut errors,
+                    known_ip_opt: &mut known_ip_opt,
+                    igd_error: &mut igd_error,
+                    failed_sequences: &mut failed_sequences,
+                }.poll();
+                match res {
+                    Ok(Async::Ready(addr)) => return Ok(Async::Ready(addr)),
+                    Err(e) => return Err(e),
                     _ => (),
-                }
+                };
 
                 if errors.len() >= 5 {
                     let errors = mem::replace(&mut errors, Vec::new());
@@ -197,4 +159,132 @@ pub fn rendezvous_addr(
             })
         })
         .into_boxed()
+}
+
+/// Handles STUN queries.
+///
+/// It returns our public address if:
+/// * we received 2 responses with the same port. That means router is consistently giving us the
+///   same port for the same bind address.
+/// * we received 3 responses with different ports but same difference between those ports.
+///   In this case we guess the future address using consistent differece between ports.
+struct PublicAddrsFromStun<'a> {
+    stun_queries: &'a mut stream::FuturesOrdered<BoxFuture<SocketAddr, QueryPublicAddrError>>,
+    ports: &'a mut Vec<u16>,
+    errors: &'a mut Vec<QueryPublicAddrError>,
+    known_ip_opt: &'a mut Option<IpAddr>,
+    igd_error: &'a mut Option<GetAnyAddressError>,
+    failed_sequences: &'a mut usize,
+}
+
+impl<'a> Future for PublicAddrsFromStun<'a> {
+    type Item = SocketAddr;
+    type Error = RendezvousAddrError;
+
+    // Note, that this is in the process of refactoring and it has way more side effects than
+    // I'd like it to.
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.stun_queries.poll() {
+            Err(e) => {
+                trace!("query returned error: {}", e);
+                self.errors.push(e);
+                Ok(Async::NotReady)
+            }
+            Ok(Async::Ready(Some(addr))) => {
+                trace!("query returned address: {}", addr);
+                let ip = addr.ip();
+                if IpAddrExt::is_global(&ip) {
+                    if let Some(known_ip) = *self.known_ip_opt {
+                        if known_ip != ip {
+                            return Err(RendezvousAddrError {
+                                igd_error: unwrap!(self.igd_error.take()),
+                                kind: RendezvousAddrErrorKind::InconsistentIpAddrs(known_ip, ip),
+                            });
+                        }
+                    }
+                    *self.known_ip_opt = Some(ip);
+                    self.ports.push(addr.port());
+                    if self.ports.len() == 2 && self.ports[0] == self.ports[1] {
+                        return Ok(Async::Ready(SocketAddr::new(ip, self.ports[0])));
+                    }
+                    if self.ports.len() == 3 {
+                        let diff0 = self.ports[1].wrapping_sub(self.ports[0]);
+                        let diff1 = self.ports[2].wrapping_sub(self.ports[1]);
+                        if diff0 == diff1 {
+                            return Ok(Async::Ready(
+                                SocketAddr::new(ip, self.ports[2].wrapping_add(diff0)),
+                            ));
+                        } else {
+                            self.ports.remove(0);
+                            *self.failed_sequences += 1;
+                            if *self.failed_sequences >= 3 {
+                                return Err(RendezvousAddrError {
+                                    igd_error: unwrap!(self.igd_error.take()),
+                                    kind: RendezvousAddrErrorKind::UnpredictablePorts(
+                                        self.ports[0],
+                                        self.ports[1],
+                                        self.ports[2],
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok(Async::NotReady)
+            }
+            _ => Ok(Async::NotReady),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod public_addrs_from_stun {
+        use super::*;
+
+        mod poll {
+            use super::*;
+            use tokio_core::reactor::Core;
+
+            #[test]
+            fn it_returns_address_when_same_port_is_returned_twice_by_stun_queries() {
+                let mut evloop = unwrap!(Core::new());
+
+                let mut errors = Vec::new();
+                let mut ports = Vec::new();
+                let mut known_ip_opt = None;
+                let mut igd_error = None;
+                let mut failed_sequences = 0;
+
+                let mut stun_queries = stream::FuturesOrdered::new();
+                let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(
+                    addr!("1.2.3.4:4000"),
+                ).into_boxed();
+                stun_queries.push(addr_fut);
+                let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(
+                    addr!("1.2.3.4:4000"),
+                ).into_boxed();
+                stun_queries.push(addr_fut);
+
+                let mut public_addrs = PublicAddrsFromStun {
+                    stun_queries: &mut stun_queries,
+                    ports: &mut ports,
+                    errors: &mut errors,
+                    known_ip_opt: &mut known_ip_opt,
+                    igd_error: &mut igd_error,
+                    failed_sequences: &mut failed_sequences,
+                };
+                let poll_addrs = future::poll_fn(|| {
+                    let _ = public_addrs.poll(); // consume 1st address
+                    public_addrs.poll() // consume 2nd address
+                });
+
+                let addr = unwrap!(evloop.run(poll_addrs));
+
+                assert_eq!(addr, addr!("1.2.3.4:4000"));
+            }
+        }
+    }
 }
