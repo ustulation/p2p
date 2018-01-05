@@ -163,9 +163,8 @@ fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
 impl UdpSocketExt for UdpSocket {
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket> {
         let socket = bind_reusable(addr)?;
-        let socket = UdpSocket::from_socket(socket, handle)?;
-
-        Ok(socket)
+        
+        UdpSocket::from_socket(socket, handle)
     }
 
     fn bind_connect_reusable(
@@ -175,9 +174,8 @@ impl UdpSocketExt for UdpSocket {
     ) -> io::Result<UdpSocket> {
         let socket = bind_reusable(addr)?;
         socket.connect(remote_addr)?;
-        let socket = UdpSocket::from_socket(socket, handle)?;
 
-        Ok(socket)
+        UdpSocket::from_socket(socket, handle)
     }
 
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>> {
