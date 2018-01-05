@@ -66,9 +66,11 @@ pub fn rendezvous_addr(
     let mut failed_sequences = 0;
     let mc0 = mc.clone();
 
+    trace!("creating rendezvous addr");
     let timeout = Duration::from_secs(300);
     igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, mc)
         .or_else(move |igd_error| {
+            trace!("failed to open port with igd: {}", igd_error);
             let mut igd_error = Some(igd_error);
             future::poll_fn(move || loop {
                 trace!("in rendezvous_addr loop");

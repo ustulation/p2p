@@ -16,9 +16,9 @@ pub enum UdpRendezvousConnectError<Ei, Eo> {
     Rebind(io::Error),
     IfAddrs(io::Error),
     ChannelClosed,
+    ChannelTimedOut,
     ChannelRead(Ei),
     ChannelWrite(Eo),
-    ChannelTimeout,
     DeserializeMsg(bincode::Error),
     SocketWrite(io::Error),
     SetTtl(io::Error),
@@ -86,7 +86,7 @@ where
             ChannelWrite(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
             ChannelClosed |
-            ChannelTimeout |
+            ChannelTimedOut |
             AllAttemptsFailed(..) => None,
         }
     }
@@ -101,7 +101,7 @@ where
             ChannelClosed => "rendezvous channel closed unexpectedly",
             ChannelRead(..) => "error reading from rendezvous channel",
             ChannelWrite(..) => "error writing to rendezvous channel",
-            ChannelTimeout => "timed out waiting for response on rendezvous channel",
+            ChannelTimedOut => "timedout waiting for message via rendezvous channel",
             DeserializeMsg(..) => "error deserializing message from rendezvous channel",
             SocketWrite(..) => "error writing to socket",
             SetTtl(..) => "error setting ttl value on socket",
@@ -115,6 +115,12 @@ pub trait UdpSocketExt {
     /// Bind reusably to the given address. This method can be used to create multiple UDP sockets
     /// bound to the same local address.
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
+    /// Bind reusably to the given address and connect to the remote address.
+    fn bind_connect_reusable(
+        addr: &SocketAddr,
+        remote_addr: &SocketAddr,
+        handle: &Handle,
+    ) -> io::Result<UdpSocket>;
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
 
     /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
@@ -141,24 +147,39 @@ pub trait UdpSocketExt {
         C: 'static;
 }
 
+fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
+    let socket = match addr.ip() {
+        IpAddr::V4(..) => UdpBuilder::new_v4()?,
+        IpAddr::V6(..) => UdpBuilder::new_v6()?,
+    };
+    socket.reuse_address(true)?;
+
+    #[cfg(target_family = "unix")]
+    {
+        use net2::unix::UnixUdpBuilderExt;
+        socket.reuse_port(true)?;
+    }
+
+    let socket = socket.bind(addr)?;
+    Ok(socket)
+}
+
 impl UdpSocketExt for UdpSocket {
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket> {
-        let socket = match addr.ip() {
-            IpAddr::V4(..) => UdpBuilder::new_v4()?,
-            IpAddr::V6(..) => UdpBuilder::new_v6()?,
-        };
-        socket.reuse_address(true)?;
+        let socket = bind_reusable(addr)?;
 
-        #[cfg(target_family = "unix")]
-        {
-            use net2::unix::UnixUdpBuilderExt;
-            socket.reuse_port(true)?;
-        }
+        UdpSocket::from_socket(socket, handle)
+    }
 
-        let socket = socket.bind(addr)?;
-        let socket = UdpSocket::from_socket(socket, handle)?;
+    fn bind_connect_reusable(
+        addr: &SocketAddr,
+        remote_addr: &SocketAddr,
+        handle: &Handle,
+    ) -> io::Result<UdpSocket> {
+        let socket = bind_reusable(addr)?;
+        socket.connect(remote_addr)?;
 
-        Ok(socket)
+        UdpSocket::from_socket(socket, handle)
     }
 
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>> {
@@ -219,7 +240,7 @@ impl UdpSocketExt for UdpSocket {
 
                         trace!("exchanging rendezvous info with peer");
                         Ok({
-                            exchange_msgs(channel, &msg).map(move |their_msg| {
+                            exchange_msgs(&handle0, channel, &msg).map(move |their_msg| {
                                 trace!("received rendezvous info");
                                 let UdpRendezvousMsg::Init {
                                     enc_pk: their_pk,
@@ -312,7 +333,7 @@ impl UdpSocketExt for UdpSocket {
                                     rendezvous_addrs: rendezvous_addrs,
                                 };
                                 trace!("exchanging rendezvous info with peer");
-                                exchange_msgs(channel, &msg).and_then(move |their_msg| {
+                                exchange_msgs(&handle2, channel, &msg).and_then(move |their_msg| {
                                     let UdpRendezvousMsg::Init {
                                         enc_pk: their_pk,
                                         open_addrs: their_open_addrs,
@@ -335,14 +356,8 @@ impl UdpSocketExt for UdpSocket {
                                         )?;
                                         let shared = SharedUdpSocket::share(socket);
                                         let with_addr = shared.with_address(their_addr);
-                                        let timeout = Instant::now() + Duration::from_millis(200);
-                                        let puncher = send_from_syn(
-                                            &handle2,
-                                            with_addr,
-                                            timeout,
-                                            0,
-                                            ttl_increment,
-                                        );
+                                        let puncher =
+                                            start_puncher(&handle2, with_addr, ttl_increment);
                                         punchers.push(puncher);
                                     }
 
@@ -391,6 +406,7 @@ impl UdpSocketExt for UdpSocket {
                         })
                         .first_ok()
                         .map_err(|v| {
+                            trace!("all attempts failed (us)");
                             UdpRendezvousConnectError::AllAttemptsFailed(
                                 v,
                                 bind_public_error_opt.map(Box::new),
@@ -412,6 +428,7 @@ impl UdpSocketExt for UdpSocket {
                         .filter_map(|opt| opt)
                         .first_ok()
                         .map_err(|v| {
+                            trace!("all attempts failed (them)");
                             UdpRendezvousConnectError::AllAttemptsFailed(
                                 v,
                                 bind_public_error_opt.map(Box::new),
@@ -469,7 +486,26 @@ quick_error! {
             display("error setting ttl on socket: {}", e)
             cause(e)
         }
+        TimedOut {
+            description("hole punching timed out without making a connection")
+        }
     }
+}
+
+fn start_puncher(
+    handle: &Handle,
+    socket: WithAddress,
+    ttl_increment: u32,
+) -> BoxFuture<(WithAddress, bool), HolePunchError> {
+    send_from_syn(
+        handle,
+        socket,
+        Instant::now() + Duration::from_millis(200),
+        0,
+        ttl_increment,
+    ).with_timeout(Duration::from_secs(10), handle)
+        .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
+        .into_boxed()
 }
 
 // send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
@@ -793,13 +829,7 @@ fn open_connect(
     let mut punchers = FuturesUnordered::new();
     for addr in their_addrs {
         let with_addr = shared.with_address(addr);
-        punchers.push(send_from_syn(
-            handle,
-            with_addr,
-            Instant::now() + Duration::from_millis(200),
-            0,
-            0,
-        ))
+        punchers.push(start_puncher(handle, with_addr, 0))
     }
 
     let handle = handle.clone();
@@ -932,6 +962,7 @@ fn got_chosen(socket: WithAddress) -> Option<(UdpSocket, SocketAddr)> {
 
 // exchange rendezvous messages along the channel
 fn exchange_msgs<C>(
+    handle: &Handle,
     channel: C,
     msg: &UdpRendezvousMsg,
 ) -> BoxFuture<UdpRendezvousMsg, UdpRendezvousConnectError<C::Error, C::SinkError>>
@@ -940,22 +971,22 @@ where
     C: Sink<SinkItem = Bytes>,
     C: 'static,
 {
+    let handle = handle.clone();
     let msg = unwrap!(bincode::serialize(&msg, bincode::Infinite));
     channel
-    .send(Bytes::from(msg))
-    .map_err(UdpRendezvousConnectError::ChannelWrite)
-    .and_then(|channel| {
-        channel
-        .map_err(UdpRendezvousConnectError::ChannelRead)
-        .next_or_else(|| UdpRendezvousConnectError::ChannelClosed)
-        .and_then(|(msg, _channel)| {
-            bincode::deserialize(&msg)
-            .map_err(UdpRendezvousConnectError::DeserializeMsg)
+        .send(Bytes::from(msg))
+        .map_err(UdpRendezvousConnectError::ChannelWrite)
+        .and_then(move |channel| {
+            channel
+                .map_err(UdpRendezvousConnectError::ChannelRead)
+                .next_or_else(|| UdpRendezvousConnectError::ChannelClosed)
+                .with_timeout(Duration::from_secs(20), &handle)
+                .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
+                .and_then(|(msg, _channel)| {
+                    bincode::deserialize(&msg).map_err(UdpRendezvousConnectError::DeserializeMsg)
+                })
         })
-    })
-    //.with_timeout(Duration::from_secs(20))
-    //.and_then(|msg_opt| msg_opt.ok().unwrap_or(UdpRendezvousConnectError::ChannelTimeout))
-    .into_boxed()
+        .into_boxed()
 }
 
 #[derive(Serialize, Deserialize)]
