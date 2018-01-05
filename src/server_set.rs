@@ -93,5 +93,31 @@ mod tests {
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));
             }
         }
+
+        mod poll {
+            use super::*;
+            use tokio_core::reactor::Core;
+
+            #[test]
+            fn it_returns_random_server_and_removes_it_from_the_list() {
+                let mut servers = ServerSet::default();
+                servers.add_server(&addr!("1.2.3.4:4000"));
+
+                let mut evloop = unwrap!(Core::new());
+
+                let ret = evloop.run(servers.iter_servers().into_future().and_then(
+                    |(addr, servers)| {
+                        Ok((addr, servers))
+                    },
+                ));
+                let (random_addr, servers) = match ret {
+                    Ok(result) => result,
+                    Err(_e) => panic!("Failed to poll server address."),
+                };
+
+                assert_eq!(servers.snapshot().len(), 0);
+                assert_eq!(random_addr, Some(addr!("1.2.3.4:4000")));
+            }
+        }
     }
 }
