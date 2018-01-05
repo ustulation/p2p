@@ -335,11 +335,8 @@ impl UdpSocketExt for UdpSocket {
                                         )?;
                                         let shared = SharedUdpSocket::share(socket);
                                         let with_addr = shared.with_address(their_addr);
-                                        let puncher = start_puncher(
-                                            &handle2,
-                                            with_addr,
-                                            ttl_increment,
-                                        );
+                                        let puncher =
+                                            start_puncher(&handle2, with_addr, ttl_increment);
                                         punchers.push(puncher);
                                     }
 
@@ -485,10 +482,9 @@ fn start_puncher(
         Instant::now() + Duration::from_millis(200),
         0,
         ttl_increment,
-    )
-    .with_timeout(Duration::from_secs(10), handle)
-    .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
-    .into_boxed()
+    ).with_timeout(Duration::from_secs(10), handle)
+        .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
+        .into_boxed()
 }
 
 // send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
@@ -812,11 +808,7 @@ fn open_connect(
     let mut punchers = FuturesUnordered::new();
     for addr in their_addrs {
         let with_addr = shared.with_address(addr);
-        punchers.push(start_puncher(
-            handle,
-            with_addr,
-            0,
-        ))
+        punchers.push(start_puncher(handle, with_addr, 0))
     }
 
     let handle = handle.clone();
@@ -875,8 +867,7 @@ fn open_connect(
                 Ok(Async::NotReady)
             }
         }
-    })
-    .into_boxed()
+    }).into_boxed()
 }
 
 // choose the given socket+address to be the socket+address we return successfully with.
@@ -962,20 +953,19 @@ where
     let handle = handle.clone();
     let msg = unwrap!(bincode::serialize(&msg, bincode::Infinite));
     channel
-    .send(Bytes::from(msg))
-    .map_err(UdpRendezvousConnectError::ChannelWrite)
-    .and_then(move |channel| {
-        channel
-        .map_err(UdpRendezvousConnectError::ChannelRead)
-        .next_or_else(|| UdpRendezvousConnectError::ChannelClosed)
-        .with_timeout(Duration::from_secs(20), &handle)
-        .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
-        .and_then(|(msg, _channel)| {
-            bincode::deserialize(&msg)
-            .map_err(UdpRendezvousConnectError::DeserializeMsg)
+        .send(Bytes::from(msg))
+        .map_err(UdpRendezvousConnectError::ChannelWrite)
+        .and_then(move |channel| {
+            channel
+                .map_err(UdpRendezvousConnectError::ChannelRead)
+                .next_or_else(|| UdpRendezvousConnectError::ChannelClosed)
+                .with_timeout(Duration::from_secs(20), &handle)
+                .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
+                .and_then(|(msg, _channel)| {
+                    bincode::deserialize(&msg).map_err(UdpRendezvousConnectError::DeserializeMsg)
+                })
         })
-    })
-    .into_boxed()
+        .into_boxed()
 }
 
 #[derive(Serialize, Deserialize)]
