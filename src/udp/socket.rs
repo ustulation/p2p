@@ -116,7 +116,11 @@ pub trait UdpSocketExt {
     /// bound to the same local address.
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
     /// Bind reusably to the given address and connect to the remote address.
-    fn bind_connect_reusable(addr: &SocketAddr, remote_addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
+    fn bind_connect_reusable(
+        addr: &SocketAddr,
+        remote_addr: &SocketAddr,
+        handle: &Handle,
+    ) -> io::Result<UdpSocket>;
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
 
     /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
@@ -163,7 +167,7 @@ fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
 impl UdpSocketExt for UdpSocket {
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket> {
         let socket = bind_reusable(addr)?;
-        
+
         UdpSocket::from_socket(socket, handle)
     }
 
