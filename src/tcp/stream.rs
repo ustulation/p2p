@@ -54,7 +54,7 @@ where
             Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | Listen(ref e) => {
                 write!(f, "IO error: {}", e)?;
             }
-            ChannelClosed => (),
+            ChannelClosed |
             ChannelTimedOut => (),
             ChannelRead(ref e) => {
                 write!(f, "channel error: {}", e)?;

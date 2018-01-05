@@ -486,7 +486,7 @@ fn start_puncher(
         0,
         ttl_increment,
     )
-    .with_timeout(Duration::from_secs(10), &handle)
+    .with_timeout(Duration::from_secs(10), handle)
     .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
     .into_boxed()
 }
