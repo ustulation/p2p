@@ -56,8 +56,6 @@ pub fn rendezvous_addr(
 ) -> BoxFuture<SocketAddr, RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();
-    let mut servers = mc.iter_servers(protocol);
-    let mut more_servers_timeout = None::<Timeout>;
     let mc0 = mc.clone();
 
     trace!("creating rendezvous addr");
@@ -65,7 +63,13 @@ pub fn rendezvous_addr(
     igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, mc)
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
-            let mut public_addr_fut = PublicAddrsFromStun::new(igd_error);
+            let mut public_addr_fut = PublicAddrsFromStun::new(
+                handle.clone(),
+                mc0.clone(),
+                protocol,
+                bind_addr,
+                igd_error,
+            );
             future::poll_fn(move || loop {
                 trace!("in rendezvous_addr loop");
                 match public_addr_fut.poll() {
@@ -78,59 +82,13 @@ pub fn rendezvous_addr(
                     return Ok(Async::NotReady);
                 }
 
-                match servers.poll().void_unwrap() {
-                    Async::Ready(Some(server_addr)) => {
-                        trace!("got a new server to try: {}", server_addr);
-                        let active_query =
-                            mc::query_public_addr(protocol, &bind_addr, &server_addr, &handle);
-                        public_addr_fut.add_stun_query(active_query);
-                        more_servers_timeout = None;
-                    }
-                    Async::Ready(None) => {
-                        trace!(
-                            "run out of rendezvous servers with {} active queries, {} ports",
-                            public_addr_fut.stun_queries.len(),
-                            public_addr_fut.ports.len()
-                        );
-                        if public_addr_fut.stun_queries.is_empty() {
-                            if public_addr_fut.ports.len() == 1 {
-                                let ip = unwrap!(public_addr_fut.known_ip_opt);
-                                return Ok(
-                                    Async::Ready(SocketAddr::new(ip, public_addr_fut.ports[0])),
-                                );
-                            }
-                            return Err(RendezvousAddrError {
-                                igd_error: unwrap!(public_addr_fut.igd_error.take()),
-                                kind: RendezvousAddrErrorKind::LackOfServers,
-                            });
+                match public_addr_fut.poll_stun_servers() {
+                    Err(e) => return Err(e),
+                    Ok(Async::Ready(addr)) => return Ok(Async::Ready(addr)),
+                    Ok(Async::NotReady) => {
+                        if !public_addr_fut.keep_querying_stun {
+                            return Ok(Async::NotReady);
                         }
-                    }
-                    Async::NotReady => {
-                        trace!("no new rendezvous servers ready");
-                        if public_addr_fut.stun_queries.is_empty() {
-                            trace!("waiting for more rendezvous servers...");
-                            loop {
-                                if let Some(ref mut timeout) = more_servers_timeout {
-                                    if let Async::Ready(()) = timeout.poll().void_unwrap() {
-                                        trace!("... timed out");
-                                        if public_addr_fut.ports.len() == 1 {
-                                            let ip = unwrap!(public_addr_fut.known_ip_opt);
-                                            return Ok(Async::Ready(
-                                                SocketAddr::new(ip, public_addr_fut.ports[0])));
-                                        }
-                                        return Err(RendezvousAddrError {
-                                            igd_error: unwrap!(public_addr_fut.igd_error.take()),
-                                            kind: RendezvousAddrErrorKind::LackOfServers,
-                                        });
-                                    }
-                                    break;
-                                } else {
-                                    more_servers_timeout =
-                                        Some(Timeout::new(Duration::from_secs(2), &handle));
-                                }
-                            }
-                        }
-                        return Ok(Async::NotReady);
                     }
                 }
             }).map(move |addr| if mc0.force_use_local_port() {
@@ -150,6 +108,10 @@ pub fn rendezvous_addr(
 /// * we received 3 responses with different ports but same difference between those ports.
 ///   In this case we guess the future address using consistent differece between ports.
 struct PublicAddrsFromStun {
+    handle: Handle,
+    p2p: P2p,
+    protocol: Protocol,
+    bind_addr: SocketAddr,
     stun_queries: stream::FuturesOrdered<BoxFuture<SocketAddr, QueryPublicAddrError>>,
     ports: Vec<u16>,
     errors: Vec<QueryPublicAddrError>,
@@ -157,13 +119,25 @@ struct PublicAddrsFromStun {
     igd_error: Option<GetAnyAddressError>,
     failed_sequences: usize,
     max_stun_errors: usize,
+    keep_querying_stun: bool,
+    more_servers_timeout: Option<Timeout>,
 }
 
 impl PublicAddrsFromStun {
     /// Constructs future that yields our public IP address.
     /// This code is only meant to be used, if IGD fails. Hence, IGD error must be always passed.
-    fn new(igd_error: GetAnyAddressError) -> PublicAddrsFromStun {
+    fn new(
+        handle: Handle,
+        p2p: P2p,
+        protocol: Protocol,
+        bind_addr: SocketAddr,
+        igd_error: GetAnyAddressError,
+    ) -> PublicAddrsFromStun {
         PublicAddrsFromStun {
+            handle,
+            p2p,
+            protocol,
+            bind_addr,
             stun_queries:
                 stream::FuturesOrdered::<BoxFuture<SocketAddr, QueryPublicAddrError>>::new(),
             ports: Vec::new(),
@@ -172,11 +146,92 @@ impl PublicAddrsFromStun {
             igd_error: Some(igd_error),
             failed_sequences: 0,
             max_stun_errors: 5,
+            keep_querying_stun: false,
+            more_servers_timeout: None,
         }
+    }
+
+    /// Constructs `PublicAddrsFromStun` with convenient defaults for testing.
+    #[cfg(test)]
+    fn with_defaults(handle: Handle, igd_error: GetAnyAddressError) -> PublicAddrsFromStun {
+        PublicAddrsFromStun::new(
+            handle,
+            P2p::default(),
+            Protocol::Udp,
+            addr!("0.0.0.0:0"),
+            igd_error,
+        )
     }
 
     fn add_stun_query(&mut self, query: BoxFuture<SocketAddr, QueryPublicAddrError>) {
         self.stun_queries.push(query)
+    }
+
+    /// Polls for new STUN servers. If there are some, adds new STUN queries.
+    fn poll_stun_servers(&mut self) -> Poll<SocketAddr, RendezvousAddrError> {
+        let mut servers = self.p2p.iter_servers(self.protocol);
+        self.keep_querying_stun = false;
+        match servers.poll().void_unwrap() {
+            Async::Ready(Some(server_addr)) => {
+                trace!("got a new server to try: {}", server_addr);
+                let active_query = mc::query_public_addr(
+                    self.protocol,
+                    &self.bind_addr,
+                    &server_addr,
+                    &self.handle,
+                );
+                self.add_stun_query(active_query);
+                self.more_servers_timeout = None;
+                self.keep_querying_stun = true;
+                Ok(Async::NotReady)
+            }
+            Async::Ready(None) => {
+                trace!(
+                    "run out of rendezvous servers with {} active queries, {} ports",
+                    self.stun_queries.len(),
+                    self.ports.len()
+                );
+                if self.stun_queries.is_empty() {
+                    if self.ports.len() == 1 {
+                        let ip = unwrap!(self.known_ip_opt);
+                        return Ok(Async::Ready(SocketAddr::new(ip, self.ports[0])));
+                    }
+                    return Err(RendezvousAddrError {
+                        igd_error: unwrap!(self.igd_error.take()),
+                        kind: RendezvousAddrErrorKind::LackOfServers,
+                    });
+                }
+                self.keep_querying_stun = true;
+                Ok(Async::NotReady)
+            }
+            Async::NotReady => {
+                trace!("no new rendezvous servers ready");
+                if self.stun_queries.is_empty() {
+                    trace!("waiting for more rendezvous servers...");
+                    loop {
+                        if let Some(ref mut timeout) = self.more_servers_timeout {
+                            if let Async::Ready(()) = timeout.poll().void_unwrap() {
+                                trace!("... timed out");
+                                if self.ports.len() == 1 {
+                                    let ip = unwrap!(self.known_ip_opt);
+                                    return Ok(Async::Ready(
+                                        SocketAddr::new(ip, self.ports[0])));
+                                }
+                                return Err(RendezvousAddrError {
+                                    igd_error: unwrap!(self.igd_error.take()),
+                                    kind: RendezvousAddrErrorKind::LackOfServers,
+                                });
+                            }
+                            break;
+                        } else {
+                            self.more_servers_timeout =
+                                Some(Timeout::new(Duration::from_secs(2), &self.handle));
+                        }
+                    }
+                }
+                Ok(Async::NotReady)
+            }
+        }
     }
 }
 
@@ -252,16 +307,49 @@ mod tests {
 
     mod public_addrs_from_stun {
         use super::*;
+        use tokio_core::reactor::Core;
+
+        mod poll_stun_servers {
+            use super::*;
+
+            #[test]
+            fn it_notifies_that_stun_servers_should_be_queried_when_new_servers_are_polled() {
+                let mut evloop = unwrap!(Core::new());
+
+                let p2p = P2p::default();
+                p2p.add_udp_traversal_server(&addr!("1.2.3.4:4000"));
+                let mut public_addrs = PublicAddrsFromStun::new(
+                    evloop.handle(),
+                    p2p,
+                    Protocol::Udp,
+                    addr!("0.0.0.0:0"),
+                    GetAnyAddressError::Disabled,
+                );
+
+                {
+                    let poll_stun = future::poll_fn(|| match public_addrs.poll_stun_servers() {
+                        Ok(Async::NotReady) => Ok(Async::Ready(())),
+                        Err(e) => Err(e),
+                        _ => panic!("Unexpected poll_stun_servers() result!"),
+                    });
+                    unwrap!(evloop.run(poll_stun));
+                }
+
+                assert!(public_addrs.keep_querying_stun);
+            }
+        }
 
         mod poll {
             use super::*;
-            use tokio_core::reactor::Core;
 
             #[test]
             fn it_returns_address_when_same_port_is_returned_twice_by_stun_queries() {
                 let mut evloop = unwrap!(Core::new());
 
-                let mut public_addrs = PublicAddrsFromStun::new(GetAnyAddressError::Disabled);
+                let mut public_addrs = PublicAddrsFromStun::with_defaults(
+                    evloop.handle(),
+                    GetAnyAddressError::Disabled,
+                );
 
                 let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(
                     addr!("1.2.3.4:4000"),
@@ -285,7 +373,10 @@ mod tests {
             #[test]
             fn it_returns_error_when_stun_query_error_limit_is_reached() {
                 let mut evloop = unwrap!(Core::new());
-                let mut public_addrs = PublicAddrsFromStun::new(GetAnyAddressError::Disabled);
+                let mut public_addrs = PublicAddrsFromStun::with_defaults(
+                    evloop.handle(),
+                    GetAnyAddressError::Disabled,
+                );
                 public_addrs.max_stun_errors = 2;
 
                 let addr_fut = future::err(QueryPublicAddrError::ResponseTimeout).into_boxed();
