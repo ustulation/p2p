@@ -74,14 +74,6 @@ pub fn rendezvous_addr(
                     _ => (),
                 };
 
-                if public_addr_fut.errors.len() >= 5 {
-                    let errors = mem::replace(&mut public_addr_fut.errors, Vec::new());
-                    return Err(RendezvousAddrError {
-                        igd_error: unwrap!(public_addr_fut.igd_error.take()),
-                        kind: RendezvousAddrErrorKind::HitErrorLimit(errors),
-                    });
-                }
-
                 if public_addr_fut.stun_queries.len() == 3 {
                     return Ok(Async::NotReady);
                 }
@@ -164,6 +156,7 @@ struct PublicAddrsFromStun {
     known_ip_opt: Option<IpAddr>,
     igd_error: Option<GetAnyAddressError>,
     failed_sequences: usize,
+    max_stun_errors: usize,
 }
 
 impl PublicAddrsFromStun {
@@ -178,6 +171,7 @@ impl PublicAddrsFromStun {
             known_ip_opt: None,
             igd_error: Some(igd_error),
             failed_sequences: 0,
+            max_stun_errors: 5,
         }
     }
 
@@ -195,7 +189,15 @@ impl Future for PublicAddrsFromStun {
             Err(e) => {
                 trace!("query returned error: {}", e);
                 self.errors.push(e);
-                Ok(Async::NotReady)
+                if self.errors.len() >= self.max_stun_errors {
+                    let errors = mem::replace(&mut self.errors, Vec::new());
+                    Err(RendezvousAddrError {
+                        igd_error: unwrap!(self.igd_error.take()),
+                        kind: RendezvousAddrErrorKind::HitErrorLimit(errors),
+                    })
+                } else {
+                    Ok(Async::NotReady)
+                }
             }
             Ok(Async::Ready(Some(addr))) => {
                 trace!("query returned address: {}", addr);
@@ -278,6 +280,32 @@ mod tests {
                 let addr = unwrap!(evloop.run(poll_addrs));
 
                 assert_eq!(addr, addr!("1.2.3.4:4000"));
+            }
+
+            #[test]
+            fn it_returns_error_when_stun_query_error_limit_is_reached() {
+                let mut evloop = unwrap!(Core::new());
+                let mut public_addrs = PublicAddrsFromStun::new(GetAnyAddressError::Disabled);
+                public_addrs.max_stun_errors = 2;
+
+                let addr_fut = future::err(QueryPublicAddrError::ResponseTimeout).into_boxed();
+                public_addrs.add_stun_query(addr_fut);
+                let addr_fut = future::err(QueryPublicAddrError::ResponseTimeout).into_boxed();
+                public_addrs.add_stun_query(addr_fut);
+
+                let poll_addrs = future::poll_fn(|| {
+                    let _ = public_addrs.poll_stun_queries(); // consume 1st address
+                    public_addrs.poll_stun_queries() // consume 2nd address
+                });
+
+                let res = evloop.run(poll_addrs);
+
+                assert!(res.is_err());
+                let error_limit_reached = match unwrap!(res.err()).kind {
+                    RendezvousAddrErrorKind::HitErrorLimit(_) => true,
+                    _ => false,
+                };
+                assert!(error_limit_reached);
             }
         }
     }
