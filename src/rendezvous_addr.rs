@@ -63,50 +63,17 @@ pub fn rendezvous_addr(
     igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, mc)
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
-            let mut public_addr_fut = PublicAddrsFromStun::new(
-                handle.clone(),
-                mc0.clone(),
-                protocol,
-                bind_addr,
-                igd_error,
-            );
-            future::poll_fn(move || loop {
-                trace!("in rendezvous_addr loop");
-                match public_addr_fut.poll() {
-                    Ok(Async::Ready(addr)) => return Ok(Async::Ready(addr)),
-                    Err(e) => return Err(e),
-                    _ => (),
-                };
-
-                if public_addr_fut.stun_queries.len() == 3 {
-                    return Ok(Async::NotReady);
-                }
-
-                match public_addr_fut.poll_stun_servers() {
-                    Err(e) => return Err(e),
-                    Ok(Async::Ready(addr)) => return Ok(Async::Ready(addr)),
-                    Ok(Async::NotReady) => {
-                        if !public_addr_fut.keep_querying_stun {
-                            return Ok(Async::NotReady);
-                        }
-                    }
-                }
-            }).map(move |addr| if mc0.force_use_local_port() {
-                SocketAddr::new(addr.ip(), bind_addr.port())
-            } else {
-                addr
-            })
+            PublicAddrsFromStun::new(handle.clone(), mc0.clone(), protocol, bind_addr, igd_error)
+                .map(move |addr| if mc0.force_use_local_port() {
+                    SocketAddr::new(addr.ip(), bind_addr.port())
+                } else {
+                    addr
+                })
         })
         .into_boxed()
 }
 
-/// Handles STUN queries.
-///
-/// It returns our public address if:
-/// * we received 2 responses with the same port. That means router is consistently giving us the
-///   same port for the same bind address.
-/// * we received 3 responses with different ports but same difference between those ports.
-///   In this case we guess the future address using consistent differece between ports.
+/// Does the heavy lifting of public address determination.
 struct PublicAddrsFromStun {
     handle: Handle,
     p2p: P2p,
@@ -233,13 +200,15 @@ impl PublicAddrsFromStun {
             }
         }
     }
-}
 
-impl Future for PublicAddrsFromStun {
-    type Item = SocketAddr;
-    type Error = RendezvousAddrError;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    /// Handles STUN queries.
+    ///
+    /// It returns our public address if:
+    /// * we received 2 responses with the same port. That means router is consistently giving us
+    ///   the same port for the same bind address.
+    /// * we received 3 responses with different ports but same difference between those ports.
+    ///   In this case we guess the future address using consistent differece between ports.
+    fn poll_stun_queries(&mut self) -> Poll<SocketAddr, RendezvousAddrError> {
         match self.stun_queries.poll() {
             Err(e) => {
                 trace!("query returned error: {}", e);
@@ -301,6 +270,36 @@ impl Future for PublicAddrsFromStun {
     }
 }
 
+impl Future for PublicAddrsFromStun {
+    type Item = SocketAddr;
+    type Error = RendezvousAddrError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            trace!("in PublicAddrsFromStun::poll() loop");
+            match self.poll_stun_queries() {
+                Ok(Async::Ready(addr)) => return Ok(Async::Ready(addr)),
+                Err(e) => return Err(e),
+                _ => (),
+            };
+
+            if self.stun_queries.len() == 3 {
+                return Ok(Async::NotReady);
+            }
+
+            match self.poll_stun_servers() {
+                Err(e) => return Err(e),
+                Ok(Async::Ready(addr)) => return Ok(Async::Ready(addr)),
+                Ok(Async::NotReady) => {
+                    if !self.keep_querying_stun {
+                        return Ok(Async::NotReady);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,7 +338,7 @@ mod tests {
             }
         }
 
-        mod poll {
+        mod poll_stun_queries {
             use super::*;
 
             #[test]
@@ -361,8 +360,8 @@ mod tests {
                 public_addrs.add_stun_query(addr_fut);
 
                 let poll_addrs = future::poll_fn(|| {
-                    let _ = public_addrs.poll(); // consume 1st address
-                    public_addrs.poll() // consume 2nd address
+                    let _ = public_addrs.poll_stun_queries(); // consume 1st address
+                    public_addrs.poll_stun_queries() // consume 2nd address
                 });
 
                 let addr = unwrap!(evloop.run(poll_addrs));
