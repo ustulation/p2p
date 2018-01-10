@@ -5,7 +5,7 @@ pub use future_utils::{BoxFuture, BoxStream, FutureExt, StreamExt};
 pub use future_utils::{DropNotice, DropNotify, drop_notify};
 pub use future_utils::Timeout;
 
-pub use futures::{Async, AsyncSink, Future, Sink, Stream, future, sink, stream};
+pub use futures::{Async, AsyncSink, Future, Poll, Sink, Stream, future, sink, stream};
 
 pub use log::LogLevel;
 pub use mc::{P2p, QueryPublicAddrError};

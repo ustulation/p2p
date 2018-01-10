@@ -24,3 +24,27 @@ impl<T: Eq + Hash> HashSetExt<T> for HashSet<T> {
         Some(ret)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod remove_random {
+        use super::*;
+        use rand;
+
+        #[test]
+        fn it_returns_random_element_and_removes_it_from_the_list() {
+            let mut nums = HashSet::new();
+            nums.insert(1u32);
+            nums.insert(2);
+            nums.insert(3);
+
+            let n = nums.remove_random(&mut rand::thread_rng());
+
+            assert!(vec![1, 2, 3].contains(&unwrap!(n)));
+            let remaining_nums = nums.iter().cloned().collect::<Vec<u32>>();
+            assert!(!remaining_nums.contains(&unwrap!(n)));
+        }
+    }
+}
