@@ -154,12 +154,12 @@ fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
         IpAddr::V4(..) => UdpBuilder::new_v4()?,
         IpAddr::V6(..) => UdpBuilder::new_v6()?,
     };
-    socket.reuse_address(true)?;
+    let _ = socket.reuse_address(true)?;
 
     #[cfg(target_family = "unix")]
     {
         use net2::unix::UnixUdpBuilderExt;
-        socket.reuse_port(true)?;
+        let _ = socket.reuse_port(true)?;
     }
 
     let socket = socket.bind(addr)?;

@@ -248,7 +248,7 @@ impl PublicAddrsFromStun {
                                 SocketAddr::new(ip, self.ports[2].wrapping_add(diff0)),
                             ));
                         } else {
-                            self.ports.remove(0);
+                            let _ = self.ports.remove(0);
                             self.failed_sequences += 1;
                             if self.failed_sequences >= 3 {
                                 return Err(RendezvousAddrError {

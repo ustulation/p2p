@@ -274,7 +274,7 @@ impl TcpStreamExt for TcpStream {
                         let their_addrs = open_addrs.into_iter().collect();
                         let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
                         if let Some(rendezvous_addr) = rendezvous_addr {
-                            their_addrs.insert(rendezvous_addr);
+                            let _ = their_addrs.insert(rendezvous_addr);
                         }
 
                         let connectors = {

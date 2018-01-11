@@ -16,7 +16,7 @@ impl<T: Eq + Hash> HashSetExt<T> for HashSet<T> {
         let mut iter = me.into_iter();
 
         for _ in 0..i {
-            self.insert(unwrap!(iter.next()));
+            let _ = self.insert(unwrap!(iter.next()));
         }
         let ret = unwrap!(iter.next());
         self.extend(iter);
@@ -36,9 +36,9 @@ mod tests {
         #[test]
         fn it_returns_random_element_and_removes_it_from_the_list() {
             let mut nums = HashSet::new();
-            nums.insert(1u32);
-            nums.insert(2);
-            nums.insert(3);
+            let _ = nums.insert(1u32);
+            let _ = nums.insert(2);
+            let _ = nums.insert(3);
 
             let n = nums.remove_random(&mut rand::thread_rng());
 

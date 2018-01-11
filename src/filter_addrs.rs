@@ -71,6 +71,8 @@ pub fn filter_addrs(
         .collect()
 }
 
+// TODO(povilas): remove once maplit gets updated
+#[allow(unused_results)]
 #[cfg(test)]
 #[test]
 fn test() {

@@ -18,15 +18,15 @@ impl TcpBuilderExt for TcpBuilder {
             IpAddr::V4(..) => TcpBuilder::new_v4()?,
             IpAddr::V6(..) => TcpBuilder::new_v6()?,
         };
-        socket.reuse_address(true)?;
+        let _ = socket.reuse_address(true)?;
 
         #[cfg(target_family = "unix")]
         {
             use net2::unix::UnixTcpBuilderExt;
-            socket.reuse_port(true)?;
+            let _ = socket.reuse_port(true)?;
         }
 
-        socket.bind(addr)?;
+        let _ = socket.bind(addr)?;
 
         Ok(socket)
     }
