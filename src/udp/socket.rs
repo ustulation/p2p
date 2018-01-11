@@ -9,6 +9,8 @@ use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
 
+const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
+
 /// Errors returned by `UdpSocketExt::rendezvous_connect`.
 #[derive(Debug)]
 pub enum UdpRendezvousConnectError<Ei, Eo> {
@@ -980,7 +982,10 @@ where
             channel
                 .map_err(UdpRendezvousConnectError::ChannelRead)
                 .next_or_else(|| UdpRendezvousConnectError::ChannelClosed)
-                .with_timeout(Duration::from_secs(20), &handle)
+                .with_timeout(
+                    Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
+                    &handle,
+                )
                 .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
                 .and_then(|(msg, _channel)| {
                     bincode::deserialize(&msg).map_err(UdpRendezvousConnectError::DeserializeMsg)

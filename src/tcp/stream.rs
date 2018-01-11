@@ -9,6 +9,7 @@ use tcp::msg::TcpRendezvousMsg;
 use tokio_io;
 
 const RENDEZVOUS_TIMEOUT_SEC: u64 = 10;
+const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
 
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
@@ -251,7 +252,10 @@ impl TcpStreamExt for TcpStream {
                         channel
                         .map_err(TcpRendezvousConnectError::ChannelRead)
                         .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
-                        .with_timeout(Duration::from_secs(20), &handle1)
+                        .with_timeout(
+                            Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
+                            &handle1
+                        )
                         .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
                     })
                     .and_then(|(msg, _channel)| {
