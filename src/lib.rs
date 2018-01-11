@@ -203,7 +203,6 @@
 extern crate tokio_io;
 extern crate tokio_core;
 extern crate futures;
-extern crate rust_sodium as sodium;
 extern crate get_if_addrs;
 #[macro_use]
 extern crate unwrap;
@@ -215,9 +214,9 @@ extern crate net_literals;
 extern crate rust_sodium;
 extern crate bincode;
 extern crate future_utils;
-extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+#[cfg(test)]
 extern crate env_logger;
 extern crate void;
 #[macro_use]
