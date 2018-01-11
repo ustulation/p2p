@@ -1,5 +1,6 @@
 use priv_prelude::*;
 
+/// Some helpful additional methods for `SocketAddr`.
 pub trait SocketAddrExt {
     /// If the IP address is an unspecified address (eg. `0.0.0.0`), then it is expanded into a
     /// vector with a seperate IP address for each network interface.
@@ -28,12 +29,14 @@ impl SocketAddrExt for SocketAddr {
     }
 }
 
+/// Some helpful additional methods for `SocketAddrV4`.
 pub trait SocketAddrV4Ext {
     /// If the IP address is the unspecified address `0.0.0.0`, then it is expanded into a vector
     /// with a seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<SocketAddrV4>>;
 }
 
+/// Some helpful additional methods for `SocketAddrV6`.
 pub trait SocketAddrV6Ext {
     /// If the IP address is the unspecified address `::`, then it is expanded into a vector with a
     /// seperate IP address for each network interface.

@@ -14,16 +14,27 @@ const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
 /// Errors returned by `UdpSocketExt::rendezvous_connect`.
 #[derive(Debug)]
 pub enum UdpRendezvousConnectError<Ei, Eo> {
+    /// Failure to bind socket to some address.
     Bind(io::Error),
+    /// Failure to bind when generating multiple sockets for hole punching with different TTLs.
     Rebind(io::Error),
+    /// Failure to get socket bind addresses.
     IfAddrs(io::Error),
+    /// Rendezvous connection info exchange channel was closed.
     ChannelClosed,
+    /// Rendezvous connection info exchange timed out.
     ChannelTimedOut,
+    /// Failure to read from rendezvous connection info exchange channel.
     ChannelRead(Ei),
+    /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
+    /// Failure to deserialize message received from rendezvous connection info exchange channel.
     DeserializeMsg(bincode::Error),
+    /// Failure to send packets to the socket.
     SocketWrite(io::Error),
+    /// Failure to set socket TTL.
     SetTtl(io::Error),
+    /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(
         Vec<HolePunchError>,
         Option<Box<BindPublicError>>,
@@ -117,12 +128,15 @@ pub trait UdpSocketExt {
     /// Bind reusably to the given address. This method can be used to create multiple UDP sockets
     /// bound to the same local address.
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
+
     /// Bind reusably to the given address and connect to the remote address.
     fn bind_connect_reusable(
         addr: &SocketAddr,
         remote_addr: &SocketAddr,
         handle: &Handle,
     ) -> io::Result<UdpSocket>;
+
+    /// Returns a list of local addresses this socket is bind to.
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
 
     /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`

@@ -15,11 +15,13 @@ quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
     #[derive(Debug)]
     pub enum ConnectReusableError {
+        /// Failure to bind socket to address.
         Bind(e: io::Error) {
             description("error binding to port")
             display("error binding to port: {}", e)
             cause(e)
         }
+        /// Connection failure.
         Connect(e: io::Error) {
             description("error connecting")
             display("error connecting: {}", e)
@@ -31,15 +33,25 @@ quick_error! {
 /// Errors returned by `TcpStreamExt::rendezvous_connect`.
 #[derive(Debug)]
 pub enum TcpRendezvousConnectError<Ei, Eo> {
+    /// Failure to bind socket to some address.
     Bind(io::Error),
+    /// Unused?
     Rebind(io::Error),
+    /// Failure to get socket bind addresses.
     IfAddrs(io::Error),
+    /// Unused?
     Listen(io::Error),
+    /// Rendezvous connection info exchange channel was closed.
     ChannelClosed,
+    /// Rendezvous connection info exchange timed out.
     ChannelTimedOut,
+    /// Failure to read from rendezvous connection info exchange channel.
     ChannelRead(Ei),
+    /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
+    /// Failure to deserialize message received from rendezvous connection info exchange channel.
     DeserializeMsg(bincode::Error),
+    /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(Vec<SingleRendezvousAttemptError>, Option<RendezvousAddrError>),
 }
 
