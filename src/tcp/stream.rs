@@ -35,12 +35,8 @@ quick_error! {
 pub enum TcpRendezvousConnectError<Ei, Eo> {
     /// Failure to bind socket to some address.
     Bind(io::Error),
-    /// Unused?
-    Rebind(io::Error),
     /// Failure to get socket bind addresses.
     IfAddrs(io::Error),
-    /// Unused?
-    Listen(io::Error),
     /// Rendezvous connection info exchange channel was closed.
     ChannelClosed,
     /// Rendezvous connection info exchange timed out.
@@ -64,7 +60,7 @@ where
         use TcpRendezvousConnectError::*;
         write!(f, "{}. ", self.description())?;
         match *self {
-            Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | Listen(ref e) => {
+            Bind(ref e) | IfAddrs(ref e) => {
                 write!(f, "IO error: {}", e)?;
             }
             ChannelClosed | ChannelTimedOut => (),
@@ -106,9 +102,7 @@ where
         use TcpRendezvousConnectError::*;
         match *self {
             Bind(..) => "error binding to local address",
-            Rebind(..) => "error re-binding to same local address",
             IfAddrs(..) => "error getting network interface addresses",
-            Listen(..) => "error listening on socket",
             ChannelClosed => "rendezvous channel closed unexpectedly",
             ChannelTimedOut => "timed out waiting for message via rendezvous channel",
             ChannelRead(..) => "error reading from rendezvous channel",
@@ -121,7 +115,7 @@ where
     fn cause(&self) -> Option<&Error> {
         use TcpRendezvousConnectError::*;
         match *self {
-            Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | Listen(ref e) => Some(e),
+            Bind(ref e) | IfAddrs(ref e) => Some(e),
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
