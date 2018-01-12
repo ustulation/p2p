@@ -5,13 +5,16 @@ use server_set::Servers;
 use std::error::Error;
 
 quick_error! {
+    /// Use this error to notify socket bind failure.
     #[derive(Debug)]
     pub enum BindPublicError {
+        /// Failure to use OS `bind()` function.
         Bind(e: io::Error) {
             description("error binding to local address")
             display("error binding to local address: {}", e)
             cause(e)
         }
+        /// Failure to open external port.
         OpenAddr(e: OpenAddrError) {
             description("error opening external port")
             display("error opening external port: {}", e)
@@ -20,6 +23,7 @@ quick_error! {
     }
 }
 
+/// Wrapper around `OpenAddrErrorKind` and IGD error.
 #[derive(Debug)]
 pub struct OpenAddrError {
     igd_err: Option<GetAnyAddressError>,
@@ -47,21 +51,27 @@ impl Error for OpenAddrError {
 }
 
 quick_error! {
+    /// The actual type of `OpenAddrError`.
     #[derive(Debug)]
     pub enum OpenAddrErrorKind {
+        /// Our public IP addresses received from traversal/STUN servers don't match.
+        /// Such behavior is unexpected and we wouldn't know how to handle that.
         InconsistentAddrs(a0: SocketAddr, a1: SocketAddr) {
             description("NAT did not give us a consistent port mapping")
             display("NAT did not give us a consistent port mapping, got addresses {} and {}",
                      a0, a1)
         }
+        /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
         HitErrorLimit(v: Vec<QueryPublicAddrError>) {
             description("hit error limit contacting traversal servers")
             display("hit error limit contacting traversal servers. {} errors: {:#?}",
                      v.len(), v)
         }
+        /// *p2p* doesn't have enough traversal servers to detect our public IP address.
         LackOfServers {
             description("lack of traversal servers necessary to map port")
         }
+        /// Failure to retrieve address list for network interfaces.
         IfAddrs(e: io::Error) {
             description("error getting interface addresses")
             display("error getting interface addresses: {}", e)

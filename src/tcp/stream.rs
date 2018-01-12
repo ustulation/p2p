@@ -9,16 +9,19 @@ use tcp::msg::TcpRendezvousMsg;
 use tokio_io;
 
 const RENDEZVOUS_TIMEOUT_SEC: u64 = 10;
+const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
 
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
     #[derive(Debug)]
     pub enum ConnectReusableError {
+        /// Failure to bind socket to address.
         Bind(e: io::Error) {
             description("error binding to port")
             display("error binding to port: {}", e)
             cause(e)
         }
+        /// Connection failure.
         Connect(e: io::Error) {
             description("error connecting")
             display("error connecting: {}", e)
@@ -30,15 +33,21 @@ quick_error! {
 /// Errors returned by `TcpStreamExt::rendezvous_connect`.
 #[derive(Debug)]
 pub enum TcpRendezvousConnectError<Ei, Eo> {
+    /// Failure to bind socket to some address.
     Bind(io::Error),
-    Rebind(io::Error),
+    /// Failure to get socket bind addresses.
     IfAddrs(io::Error),
-    Listen(io::Error),
+    /// Rendezvous connection info exchange channel was closed.
     ChannelClosed,
+    /// Rendezvous connection info exchange timed out.
     ChannelTimedOut,
+    /// Failure to read from rendezvous connection info exchange channel.
     ChannelRead(Ei),
+    /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
+    /// Failure to deserialize message received from rendezvous connection info exchange channel.
     DeserializeMsg(bincode::Error),
+    /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(Vec<SingleRendezvousAttemptError>, Option<RendezvousAddrError>),
 }
 
@@ -51,7 +60,7 @@ where
         use TcpRendezvousConnectError::*;
         write!(f, "{}. ", self.description())?;
         match *self {
-            Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | Listen(ref e) => {
+            Bind(ref e) | IfAddrs(ref e) => {
                 write!(f, "IO error: {}", e)?;
             }
             ChannelClosed | ChannelTimedOut => (),
@@ -93,9 +102,7 @@ where
         use TcpRendezvousConnectError::*;
         match *self {
             Bind(..) => "error binding to local address",
-            Rebind(..) => "error re-binding to same local address",
             IfAddrs(..) => "error getting network interface addresses",
-            Listen(..) => "error listening on socket",
             ChannelClosed => "rendezvous channel closed unexpectedly",
             ChannelTimedOut => "timed out waiting for message via rendezvous channel",
             ChannelRead(..) => "error reading from rendezvous channel",
@@ -108,7 +115,7 @@ where
     fn cause(&self) -> Option<&Error> {
         use TcpRendezvousConnectError::*;
         match *self {
-            Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | Listen(ref e) => Some(e),
+            Bind(ref e) | IfAddrs(ref e) => Some(e),
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
@@ -251,7 +258,10 @@ impl TcpStreamExt for TcpStream {
                         channel
                         .map_err(TcpRendezvousConnectError::ChannelRead)
                         .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
-                        .with_timeout(Duration::from_secs(20), &handle1)
+                        .with_timeout(
+                            Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
+                            &handle1
+                        )
                         .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
                     })
                     .and_then(|(msg, _channel)| {
@@ -270,7 +280,7 @@ impl TcpStreamExt for TcpStream {
                         let their_addrs = open_addrs.into_iter().collect();
                         let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
                         if let Some(rendezvous_addr) = rendezvous_addr {
-                            their_addrs.insert(rendezvous_addr);
+                            let _ = their_addrs.insert(rendezvous_addr);
                         }
 
                         let connectors = {

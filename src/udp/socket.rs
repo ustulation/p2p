@@ -9,19 +9,32 @@ use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
 
+const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
+
 /// Errors returned by `UdpSocketExt::rendezvous_connect`.
 #[derive(Debug)]
 pub enum UdpRendezvousConnectError<Ei, Eo> {
+    /// Failure to bind socket to some address.
     Bind(io::Error),
+    /// Failure to bind when generating multiple sockets for hole punching with different TTLs.
     Rebind(io::Error),
+    /// Failure to get socket bind addresses.
     IfAddrs(io::Error),
+    /// Rendezvous connection info exchange channel was closed.
     ChannelClosed,
+    /// Rendezvous connection info exchange timed out.
     ChannelTimedOut,
+    /// Failure to read from rendezvous connection info exchange channel.
     ChannelRead(Ei),
+    /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
+    /// Failure to deserialize message received from rendezvous connection info exchange channel.
     DeserializeMsg(bincode::Error),
+    /// Failure to send packets to the socket.
     SocketWrite(io::Error),
+    /// Failure to set socket TTL.
     SetTtl(io::Error),
+    /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(
         Vec<HolePunchError>,
         Option<Box<BindPublicError>>,
@@ -115,12 +128,15 @@ pub trait UdpSocketExt {
     /// Bind reusably to the given address. This method can be used to create multiple UDP sockets
     /// bound to the same local address.
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpSocket>;
+
     /// Bind reusably to the given address and connect to the remote address.
     fn bind_connect_reusable(
         addr: &SocketAddr,
         remote_addr: &SocketAddr,
         handle: &Handle,
     ) -> io::Result<UdpSocket>;
+
+    /// Returns a list of local addresses this socket is bind to.
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
 
     /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
@@ -152,12 +168,12 @@ fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
         IpAddr::V4(..) => UdpBuilder::new_v4()?,
         IpAddr::V6(..) => UdpBuilder::new_v6()?,
     };
-    socket.reuse_address(true)?;
+    let _ = socket.reuse_address(true)?;
 
     #[cfg(target_family = "unix")]
     {
         use net2::unix::UnixUdpBuilderExt;
-        socket.reuse_port(true)?;
+        let _ = socket.reuse_port(true)?;
     }
 
     let socket = socket.bind(addr)?;
@@ -980,7 +996,10 @@ where
             channel
                 .map_err(UdpRendezvousConnectError::ChannelRead)
                 .next_or_else(|| UdpRendezvousConnectError::ChannelClosed)
-                .with_timeout(Duration::from_secs(20), &handle)
+                .with_timeout(
+                    Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
+                    &handle,
+                )
                 .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
                 .and_then(|(msg, _channel)| {
                     bincode::deserialize(&msg).map_err(UdpRendezvousConnectError::DeserializeMsg)

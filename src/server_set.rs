@@ -14,7 +14,7 @@ impl ServerSet {
             sender.unbounded_send((*addr, true)).is_ok()
         });
 
-        self.servers.insert(*addr);
+        let _ = self.servers.insert(*addr);
     }
 
     pub fn remove_server(&mut self, addr: &SocketAddr) {
@@ -22,7 +22,7 @@ impl ServerSet {
             sender.unbounded_send((*addr, false)).is_ok()
         });
 
-        self.servers.remove(addr);
+        let _ = self.servers.remove(addr);
     }
 
     pub fn iter_servers(&mut self) -> Servers {
@@ -56,9 +56,9 @@ impl Stream for Servers {
     fn poll(&mut self) -> Result<Async<Option<SocketAddr>>, Void> {
         while let Async::Ready(Some((server, add))) = self.modifications.poll().void_unwrap() {
             if add {
-                self.servers.insert(server);
+                let _ = self.servers.insert(server);
             } else {
-                self.servers.remove(&server);
+                let _ = self.servers.remove(&server);
             }
         }
 

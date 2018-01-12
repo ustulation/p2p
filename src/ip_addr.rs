@@ -1,11 +1,14 @@
 use get_if_addrs::{self, IfAddr};
 use priv_prelude::*;
 
+/// Some helpful additional methods for `IpvAddr`.
 pub trait IpAddrExt {
     /// Check whether an IP address is global.
     fn is_global(&self) -> bool;
+
     /// Check whether an IP address belongs to a private subnet.
     fn is_private(&self) -> bool;
+
     /// If the IP address is an unspecified address (eg. `0.0.0.0`), then it is expanded into a
     /// vector with a seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<IpAddr>>;
@@ -48,16 +51,21 @@ impl IpAddrExt for IpAddr {
     }
 }
 
+/// Some helpful additional methods for `Ipv4Addr`.
 pub trait Ipv4AddrExt {
     /// Check whether an IP address is global.
     fn is_global(&self) -> bool;
+
     /// If the IP address is the unspecified address `0.0.0.0`, then it is expanded into a vector
     /// with a seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv4Addr>>;
 }
 
+/// Some helpful additional methods for `Ipv6Addr`.
 pub trait Ipv6AddrExt {
+    /// Check whether an IP address is global.
     fn is_global(&self) -> bool;
+
     /// If the IP address is the unspecified address `::`, then it is expanded into a vector with a
     /// seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv6Addr>>;

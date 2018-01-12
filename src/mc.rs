@@ -47,14 +47,17 @@ macro_rules! inner_set {
 }
 
 impl P2p {
+    /// Check if IGD for rendezvous connections option is on or off.
     pub fn is_igd_enabled_for_rendezvous(&self) -> bool {
         !inner_get!(self, igd_disabled_for_rendezvous)
     }
 
+    /// Try to use IGD port mapping when doing rendezvous connections.
     pub fn enable_igd_for_rendezvous(&self) {
         inner_set!(self, igd_disabled_for_rendezvous, false);
     }
 
+    /// Don't use IGD port mapping when doing rendezvous connections.
     pub fn disable_igd_for_rendezvous(&self) {
         inner_set!(self, igd_disabled_for_rendezvous, true);
     }
@@ -65,10 +68,13 @@ impl P2p {
         !inner_get!(self, igd_disabled)
     }
 
+    /// Returns the value of `force_use_local_port` option.
     pub fn force_use_local_port(&self) -> bool {
         inner_get!(self, force_use_local_port)
     }
 
+    /// If this option is on, when public address is determined, use our local listening port
+    /// as external as well.
     pub fn set_force_use_local_port(&self, force: bool) {
         inner_set!(self, force_use_local_port, force);
     }
@@ -119,6 +125,7 @@ impl P2p {
         self.iter_servers(Protocol::Udp)
     }
 
+    /// Returns a `Stream` of traversal servers.
     pub fn iter_servers(&self, protocol: Protocol) -> Servers {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).iter_servers()

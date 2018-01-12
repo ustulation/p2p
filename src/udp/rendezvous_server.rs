@@ -1,5 +1,3 @@
-
-
 use ECHO_REQ;
 use bincode::{self, Infinite};
 use bytes::Bytes;
@@ -9,6 +7,7 @@ pub use priv_prelude::*;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::socket;
 
+/// Sends client address response.
 pub fn respond_with_addr<S>(sink: S, addr: SocketAddr) -> IoFuture<S>
 where
     S: Sink<SinkItem = Bytes, SinkError = io::Error> + 'static,
@@ -18,29 +17,35 @@ where
     sink.send(bytes).into_boxed()
 }
 
+/// Traversal server implementation for UDP.
+/// Acts much like STUN server except doesn't implement the standard protocol - RFC 5389.
 pub struct UdpRendezvousServer {
     local_addr: SocketAddr,
     _drop_tx: DropNotify,
 }
 
 impl UdpRendezvousServer {
+    /// Takes ownership of already set up UDP socket and starts rendezvous server.
     pub fn from_socket(socket: UdpSocket, handle: &Handle) -> io::Result<UdpRendezvousServer> {
         let local_addr = socket.local_addr()?;
         Ok(from_socket_inner(socket, &local_addr, handle))
     }
 
+    /// Start listening for incoming connections.
     pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpRendezvousServer> {
         let socket = UdpSocket::bind(addr, handle)?;
         let server = UdpRendezvousServer::from_socket(socket, handle)?;
         Ok(server)
     }
 
+    /// Start listening for incoming connection and allow other sockets to bind to the same port.
     pub fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<UdpRendezvousServer> {
         let socket = UdpSocket::bind_reusable(addr, handle)?;
         let server = UdpRendezvousServer::from_socket(socket, handle)?;
         Ok(server)
     }
 
+    /// Try to get an external address and start listening for incoming connections.
     pub fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,

@@ -3,6 +3,7 @@ use mc;
 use priv_prelude::*;
 use std::error::Error;
 
+/// Wrapper around rendezvous connect error and IGD error.
 #[derive(Debug)]
 pub struct RendezvousAddrError {
     igd_error: GetAnyAddressError,
@@ -26,22 +27,29 @@ impl Error for RendezvousAddrError {
 }
 
 quick_error! {
+    /// The actual type of `RendezvousAddrError`.
     #[derive(Debug)]
     pub enum RendezvousAddrErrorKind {
+        /// Our public IP addresses received from traversal/STUN servers don't match.
+        /// Such behavior is unexpected and we wouldn't know how to handle that.
         InconsistentIpAddrs(a0: IpAddr, a1: IpAddr) {
             description("traversal servers giving global IP addresses")
             display("traversal servers giving global IP addresses. Got both {} and {}", a0, a1)
         }
+        /// NAT assigns us ports in an unpredictable manner. Hence we don't know what our public
+        /// port would be when remote peer connected to us.
         UnpredictablePorts(p0: u16, p1: u16, p2: u16) {
             description("NAT is not giving us consistent or predictable external ports")
             display("NAT is not giving us consistent or predictable external ports. \
                     Got {}, then {}, then {}", p0, p1, p2)
         }
+        /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
         HitErrorLimit(v: Vec<QueryPublicAddrError>) {
             description("hit error limit trying to contact traversal servers")
             display("hit error limit trying to contact traversal servers. \
                     Got {} errors: {:#?}", v.len(), v)
         }
+        /// *p2p* doesn't have enough traversal servers to detect our public IP address.
         LackOfServers {
             description("more traversal servers needed to perform hole-punching")
         }
@@ -248,7 +256,7 @@ impl PublicAddrsFromStun {
                                 SocketAddr::new(ip, self.ports[2].wrapping_add(diff0)),
                             ));
                         } else {
-                            self.ports.remove(0);
+                            let _ = self.ports.remove(0);
                             self.failed_sequences += 1;
                             if self.failed_sequences >= 3 {
                                 return Err(RendezvousAddrError {
