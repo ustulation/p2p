@@ -815,7 +815,6 @@ fn send_final_ack_acks(
     next_timeout: Instant,
     ack_acks_sent: u32,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let handle = handle.clone();
     if ack_acks_sent >= 5 {
         return future::ok((socket, false)).into_boxed();
     }
@@ -826,15 +825,19 @@ fn send_final_ack_acks(
         socket.remote_addr()
     );
 
+    let handle = handle.clone();
     Timeout::new_at(next_timeout, &handle)
     .infallible()
     .and_then(move |()| {
-        send_final_ack_acks(
-            &handle,
-            socket,
-            next_timeout + Duration::from_millis(200),
-            ack_acks_sent + 1,
-        )
+        send_ack_ack(socket)
+            .and_then(move |socket| {
+                send_final_ack_acks(
+                    &handle,
+                    socket,
+                    Instant::now() + Duration::from_millis(200),
+                    ack_acks_sent + 1,
+                )
+            })
     })
     .into_boxed()
 }
@@ -1029,6 +1032,50 @@ mod test {
     use tokio_core::reactor::Core;
 
     use util;
+
+    mod send_final_ack_acks {
+        use super::*;
+
+        fn localhost_addr(sock: &UdpSocket) -> SocketAddr {
+            let addr = unwrap!(sock.local_addr());
+            SocketAddr::new(ip!("127.0.0.1"), addr.port())
+        }
+
+        #[test]
+        fn it_sends_5_ack_ack_messages() {
+            let mut core = unwrap!(Core::new());
+            let handle = core.handle();
+
+            let recv_sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+            let sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+
+            let recv_sock_addr = localhost_addr(&recv_sock);
+            let recv_sock = SharedUdpSocket::share(recv_sock).with_address(localhost_addr(&sock));
+            let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
+
+            let timeout = Instant::now() + Duration::from_secs(3);
+            let _ = unwrap!(core.run(send_final_ack_acks(&handle, sock, timeout, 0)));
+
+            let recv_messages = recv_sock
+                .map_err(|e| panic!("Failed to read from socket: {}", e))
+                .map(|msg| {
+                    let msg: Result<HolePunchMsg, bool> = match bincode::deserialize(&msg) {
+                        Err(e) => panic!("Failed to deserialize message: {}", e),
+                        Ok(msg) => Ok(msg),
+                    };
+                    msg
+                })
+                .take(5)
+                .collect();
+            let msgs = unwrap!(core.run(recv_messages));
+
+            let all_ack_ack = msgs.iter().all(|m| match *m {
+                Ok(HolePunchMsg::AckAck) => true,
+                _ => false,
+            });
+            assert!(all_ack_ack);
+        }
+    }
 
     #[test]
     fn udp_rendezvous_connect_over_loopback() {
