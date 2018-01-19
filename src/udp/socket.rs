@@ -601,7 +601,7 @@ fn recv_from_syn(
                             )
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_ack_ack(
+                            send_ack_ack_and_proceed(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -697,7 +697,7 @@ fn recv_from_ack(
                             )
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_ack_ack(
+                            send_ack_ack_and_proceed(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -721,27 +721,32 @@ fn recv_from_ack(
 }
 
 // send an ack-ack to the remote peer, then finish hole punching.
-fn send_ack_ack(
+fn send_ack_ack_and_proceed(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
     ack_acks_sent: u32,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let handle = handle.clone();
-    let send_msg = unwrap!(bincode::serialize(&HolePunchMsg::AckAck, bincode::Infinite));
-
     trace!(
         "sending ack-ack #{} to {}",
         ack_acks_sent,
         socket.remote_addr()
     );
 
-    socket
-        .send(Bytes::from(send_msg))
-        .map_err(HolePunchError::SendMessage)
+    let handle = handle.clone();
+    send_ack_ack(socket)
         .and_then(move |socket| {
             recv_from_ack_ack(&handle, socket, next_timeout, ack_acks_sent + 1)
         })
+        .into_boxed()
+}
+
+/// Only sends `AckAck` message to the given socket.
+fn send_ack_ack(socket: WithAddress) -> BoxFuture<WithAddress, HolePunchError> {
+    let msg = unwrap!(bincode::serialize(&HolePunchMsg::AckAck, bincode::Infinite));
+    socket
+        .send(Bytes::from(msg))
+        .map_err(HolePunchError::SendMessage)
         .into_boxed()
 }
 
@@ -763,7 +768,7 @@ fn recv_from_ack_ack(
             match msg_opt {
                 // TODO: broooooken
                 None => {
-                    send_ack_ack(
+                    send_ack_ack_and_proceed(
                         &handle,
                         socket,
                         timeout + Duration::from_millis(200),
@@ -780,7 +785,7 @@ fn recv_from_ack_ack(
                             recv_from_ack_ack(&handle, socket, timeout, ack_acks_sent)
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_ack_ack(
+                            send_ack_ack_and_proceed(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
