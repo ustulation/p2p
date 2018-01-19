@@ -513,7 +513,7 @@ fn start_puncher(
     socket: WithAddress,
     ttl_increment: u32,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    send_from_syn(
+    send_syn(
         handle,
         socket,
         Instant::now() + Duration::from_millis(200),
@@ -525,7 +525,7 @@ fn start_puncher(
 }
 
 // send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
-fn send_from_syn(
+fn send_syn(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
@@ -577,7 +577,7 @@ fn recv_from_syn(
             let socket = socket_timeout.into_inner();
             match msg_opt {
                 None => {
-                    send_from_syn(
+                    send_syn(
                         &handle,
                         socket,
                         timeout + Duration::from_millis(200),
@@ -592,7 +592,7 @@ fn recv_from_syn(
                             recv_from_syn(&handle, socket, timeout, syns_acks_sent, ttl_increment)
                         }
                         Ok(HolePunchMsg::Syn) => {
-                            send_from_ack(
+                            send_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -601,7 +601,7 @@ fn recv_from_syn(
                             )
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_from_ack_ack(
+                            send_ack_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -620,7 +620,7 @@ fn recv_from_syn(
 }
 
 // send an ack to the other peer, then complete hole-punching from there.
-fn send_from_ack(
+fn send_ack(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
@@ -673,7 +673,7 @@ fn recv_from_ack(
             let socket = socket_timeout.into_inner();
             match msg_opt {
                 None => {
-                    send_from_ack(
+                    send_ack(
                         &handle,
                         socket,
                         timeout + Duration::from_millis(200),
@@ -688,7 +688,7 @@ fn recv_from_ack(
                             recv_from_ack(&handle, socket, timeout, syns_acks_sent, ttl_increment)
                         }
                         Ok(HolePunchMsg::Syn) => {
-                            send_from_ack(
+                            send_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -697,7 +697,7 @@ fn recv_from_ack(
                             )
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_from_ack_ack(
+                            send_ack_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -721,7 +721,7 @@ fn recv_from_ack(
 }
 
 // send an ack-ack to the remote peer, then finish hole punching.
-fn send_from_ack_ack(
+fn send_ack_ack(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
@@ -763,7 +763,7 @@ fn recv_from_ack_ack(
             match msg_opt {
                 // TODO: broooooken
                 None => {
-                    send_from_ack_ack(
+                    send_ack_ack(
                         &handle,
                         socket,
                         timeout + Duration::from_millis(200),
@@ -780,7 +780,7 @@ fn recv_from_ack_ack(
                             recv_from_ack_ack(&handle, socket, timeout, ack_acks_sent)
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_from_ack_ack(
+                            send_ack_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -862,7 +862,7 @@ fn open_connect(
                         "received packet from new address {}. starting punching",
                         with_addr.remote_addr()
                     );
-                    punchers.push(send_from_ack(
+                    punchers.push(send_ack(
                         &handle,
                         with_addr,
                         Instant::now() + Duration::from_millis(200),
