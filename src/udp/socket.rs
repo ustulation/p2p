@@ -580,7 +580,7 @@ fn recv_from_syn(
                     send_syn(
                         &handle,
                         socket,
-                        timeout + Duration::from_millis(200),
+                        Instant::now() + Duration::from_millis(200),
                         syns_acks_sent,
                         ttl_increment,
                     )
@@ -676,7 +676,7 @@ fn recv_from_ack(
                     send_ack(
                         &handle,
                         socket,
-                        timeout + Duration::from_millis(200),
+                        Instant::now() + Duration::from_millis(200),
                         syns_acks_sent,
                         ttl_increment,
                     )
@@ -771,7 +771,7 @@ fn recv_from_ack_ack(
                     send_ack_ack_and_proceed(
                         &handle,
                         socket,
-                        timeout + Duration::from_millis(200),
+                        Instant::now() + Duration::from_millis(200),
                         ack_acks_sent,
                     )
                 }
