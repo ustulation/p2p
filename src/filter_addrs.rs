@@ -71,7 +71,6 @@ pub fn filter_addrs(
         .collect()
 }
 
-#[cfg(test)]
 #[test]
 fn test() {
     let our_addrs =

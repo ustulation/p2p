@@ -513,7 +513,7 @@ fn start_puncher(
     socket: WithAddress,
     ttl_increment: u32,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    send_from_syn(
+    send_syn(
         handle,
         socket,
         Instant::now() + Duration::from_millis(200),
@@ -525,7 +525,7 @@ fn start_puncher(
 }
 
 // send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
-fn send_from_syn(
+fn send_syn(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
@@ -577,10 +577,10 @@ fn recv_from_syn(
             let socket = socket_timeout.into_inner();
             match msg_opt {
                 None => {
-                    send_from_syn(
+                    send_syn(
                         &handle,
                         socket,
-                        timeout + Duration::from_millis(200),
+                        Instant::now() + Duration::from_millis(200),
                         syns_acks_sent,
                         ttl_increment,
                     )
@@ -592,7 +592,7 @@ fn recv_from_syn(
                             recv_from_syn(&handle, socket, timeout, syns_acks_sent, ttl_increment)
                         }
                         Ok(HolePunchMsg::Syn) => {
-                            send_from_ack(
+                            send_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -601,7 +601,7 @@ fn recv_from_syn(
                             )
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_from_ack_ack(
+                            send_ack_ack_and_proceed(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -620,7 +620,7 @@ fn recv_from_syn(
 }
 
 // send an ack to the other peer, then complete hole-punching from there.
-fn send_from_ack(
+fn send_ack(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
@@ -673,10 +673,10 @@ fn recv_from_ack(
             let socket = socket_timeout.into_inner();
             match msg_opt {
                 None => {
-                    send_from_ack(
+                    send_ack(
                         &handle,
                         socket,
-                        timeout + Duration::from_millis(200),
+                        Instant::now() + Duration::from_millis(200),
                         syns_acks_sent,
                         ttl_increment,
                     )
@@ -688,7 +688,7 @@ fn recv_from_ack(
                             recv_from_ack(&handle, socket, timeout, syns_acks_sent, ttl_increment)
                         }
                         Ok(HolePunchMsg::Syn) => {
-                            send_from_ack(
+                            send_ack(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -697,7 +697,7 @@ fn recv_from_ack(
                             )
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_from_ack_ack(
+                            send_ack_ack_and_proceed(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -721,27 +721,32 @@ fn recv_from_ack(
 }
 
 // send an ack-ack to the remote peer, then finish hole punching.
-fn send_from_ack_ack(
+fn send_ack_ack_and_proceed(
     handle: &Handle,
     socket: WithAddress,
     next_timeout: Instant,
     ack_acks_sent: u32,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let handle = handle.clone();
-    let send_msg = unwrap!(bincode::serialize(&HolePunchMsg::AckAck, bincode::Infinite));
-
     trace!(
         "sending ack-ack #{} to {}",
         ack_acks_sent,
         socket.remote_addr()
     );
 
-    socket
-        .send(Bytes::from(send_msg))
-        .map_err(HolePunchError::SendMessage)
+    let handle = handle.clone();
+    send_ack_ack(socket)
         .and_then(move |socket| {
             recv_from_ack_ack(&handle, socket, next_timeout, ack_acks_sent + 1)
         })
+        .into_boxed()
+}
+
+/// Only sends `AckAck` message to the given socket.
+fn send_ack_ack(socket: WithAddress) -> BoxFuture<WithAddress, HolePunchError> {
+    let msg = unwrap!(bincode::serialize(&HolePunchMsg::AckAck, bincode::Infinite));
+    socket
+        .send(Bytes::from(msg))
+        .map_err(HolePunchError::SendMessage)
         .into_boxed()
 }
 
@@ -763,10 +768,10 @@ fn recv_from_ack_ack(
             match msg_opt {
                 // TODO: broooooken
                 None => {
-                    send_from_ack_ack(
+                    send_ack_ack_and_proceed(
                         &handle,
                         socket,
-                        timeout + Duration::from_millis(200),
+                        Instant::now() + Duration::from_millis(200),
                         ack_acks_sent,
                     )
                 }
@@ -780,7 +785,7 @@ fn recv_from_ack_ack(
                             recv_from_ack_ack(&handle, socket, timeout, ack_acks_sent)
                         }
                         Ok(HolePunchMsg::Ack) => {
-                            send_from_ack_ack(
+                            send_ack_ack_and_proceed(
                                 &handle,
                                 socket,
                                 Instant::now() + Duration::from_millis(200),
@@ -810,7 +815,6 @@ fn send_final_ack_acks(
     next_timeout: Instant,
     ack_acks_sent: u32,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let handle = handle.clone();
     if ack_acks_sent >= 5 {
         return future::ok((socket, false)).into_boxed();
     }
@@ -821,15 +825,19 @@ fn send_final_ack_acks(
         socket.remote_addr()
     );
 
+    let handle = handle.clone();
     Timeout::new_at(next_timeout, &handle)
     .infallible()
     .and_then(move |()| {
-        send_final_ack_acks(
-            &handle,
-            socket,
-            next_timeout + Duration::from_millis(200),
-            ack_acks_sent + 1,
-        )
+        send_ack_ack(socket)
+            .and_then(move |socket| {
+                send_final_ack_acks(
+                    &handle,
+                    socket,
+                    Instant::now() + Duration::from_millis(200),
+                    ack_acks_sent + 1,
+                )
+            })
     })
     .into_boxed()
 }
@@ -862,7 +870,7 @@ fn open_connect(
                         "received packet from new address {}. starting punching",
                         with_addr.remote_addr()
                     );
-                    punchers.push(send_from_ack(
+                    punchers.push(send_ack(
                         &handle,
                         with_addr,
                         Instant::now() + Duration::from_millis(200),
@@ -1024,6 +1032,50 @@ mod test {
     use tokio_core::reactor::Core;
 
     use util;
+
+    mod send_final_ack_acks {
+        use super::*;
+
+        fn localhost_addr(sock: &UdpSocket) -> SocketAddr {
+            let addr = unwrap!(sock.local_addr());
+            SocketAddr::new(ip!("127.0.0.1"), addr.port())
+        }
+
+        #[test]
+        fn it_sends_5_ack_ack_messages() {
+            let mut core = unwrap!(Core::new());
+            let handle = core.handle();
+
+            let recv_sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+            let sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+
+            let recv_sock_addr = localhost_addr(&recv_sock);
+            let recv_sock = SharedUdpSocket::share(recv_sock).with_address(localhost_addr(&sock));
+            let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
+
+            let timeout = Instant::now() + Duration::from_secs(3);
+            let _ = unwrap!(core.run(send_final_ack_acks(&handle, sock, timeout, 0)));
+
+            let recv_messages = recv_sock
+                .map_err(|e| panic!("Failed to read from socket: {}", e))
+                .map(|msg| {
+                    let msg: Result<HolePunchMsg, bool> = match bincode::deserialize(&msg) {
+                        Err(e) => panic!("Failed to deserialize message: {}", e),
+                        Ok(msg) => Ok(msg),
+                    };
+                    msg
+                })
+                .take(5)
+                .collect();
+            let msgs = unwrap!(core.run(recv_messages));
+
+            let all_ack_ack = msgs.iter().all(|m| match *m {
+                Ok(HolePunchMsg::AckAck) => true,
+                _ => false,
+            });
+            assert!(all_ack_ack);
+        }
+    }
 
     #[test]
     fn udp_rendezvous_connect_over_loopback() {
