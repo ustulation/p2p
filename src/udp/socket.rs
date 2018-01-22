@@ -542,6 +542,15 @@ impl HolePunching {
             .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
             .into_boxed()
     }
+
+    fn inc_ttl_and_syn_acks(&mut self, socket: WithAddress) -> io::Result<WithAddress> {
+        self.syns_acks_sent += 1;
+        if self.syns_acks_sent % 5 == 0 && self.ttl_increment != 0 {
+            let ttl = socket.ttl()?;
+            socket.set_ttl(ttl + self.ttl_increment)?;
+        }
+        Ok(socket)
+    }
 }
 
 // send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
@@ -559,11 +568,7 @@ fn send_syn(
         .map_err(HolePunchError::SendMessage)
         .and_then(move |socket| {
             let try = || {
-                ctx.syns_acks_sent += 1;
-                if ctx.syns_acks_sent % 5 == 0 && ctx.ttl_increment != 0 {
-                    let ttl = socket.ttl()?;
-                    socket.set_ttl(ttl + ctx.ttl_increment)?;
-                }
+                let socket = ctx.inc_ttl_and_syn_acks(socket)?;
                 Ok(recv_from_syn(ctx, socket, next_timeout))
             };
             future::result(try().map_err(HolePunchError::SetTtl)).flatten()
@@ -627,11 +632,7 @@ fn send_ack(
         .map_err(HolePunchError::SendMessage)
         .and_then(move |socket| {
             let try = || {
-                ctx.syns_acks_sent += 1;
-                if ctx.syns_acks_sent % 5 == 0 && ctx.ttl_increment != 0 {
-                    let ttl = socket.ttl()?;
-                    socket.set_ttl(ttl + ctx.ttl_increment)?;
-                }
+                let socket = ctx.inc_ttl_and_syn_acks(socket)?;
                 Ok(recv_from_ack(ctx, socket, next_timeout))
             };
             future::result(try().map_err(HolePunchError::SetTtl)).flatten()
