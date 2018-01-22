@@ -534,11 +534,8 @@ impl HolePunching {
         socket: WithAddress,
         ttl_increment: u32,
     ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-        send_syn(
-            HolePunching::new(handle, ttl_increment),
-            socket,
-            Instant::now() + Duration::from_millis(200),
-        ).with_timeout(Duration::from_secs(10), handle)
+        send_syn(HolePunching::new(handle, ttl_increment), socket)
+            .with_timeout(Duration::from_secs(10), handle)
             .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
             .into_boxed()
     }
@@ -551,13 +548,18 @@ impl HolePunching {
         }
         Ok(socket)
     }
+
+    /// Creates timeout of 200 miliseconds from when this function is called.
+    /// Reduces boilerplate and allows to easily add some dynamic to timeouts.
+    fn msg_timeout(&self) -> Instant {
+        Instant::now() + Duration::from_millis(200)
+    }
 }
 
 // send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
 fn send_syn(
     mut ctx: HolePunching,
     socket: WithAddress,
-    next_timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     let send_msg = unwrap!(bincode::serialize(&HolePunchMsg::Syn, bincode::Infinite));
 
@@ -569,7 +571,7 @@ fn send_syn(
         .and_then(move |socket| {
             let try = || {
                 let socket = ctx.inc_ttl_and_syn_acks(socket)?;
-                Ok(recv_from_syn(ctx, socket, next_timeout))
+                Ok(recv_from_syn(ctx, socket))
             };
             future::result(try().map_err(HolePunchError::SetTtl)).flatten()
         })
@@ -580,32 +582,23 @@ fn send_syn(
 fn recv_from_syn(
     ctx: HolePunching,
     socket: WithAddress,
-    timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     socket
-        .with_timeout_at(timeout, &ctx.handle)
+        .with_timeout_at(ctx.msg_timeout(), &ctx.handle)
         .into_future()
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
         .and_then(move |(msg_opt, socket_timeout)| {
             let socket = socket_timeout.into_inner();
             match msg_opt {
-                None => send_syn(ctx, socket, Instant::now() + Duration::from_millis(200)),
+                None => send_syn(ctx, socket),
                 Some(recv_msg) => {
                     match bincode::deserialize(&recv_msg) {
                         Err(e) => {
                             warn!("error deserializing packet from peer: {}", e);
-                            recv_from_syn(ctx, socket, timeout)
+                            recv_from_syn(ctx, socket)
                         }
-                        Ok(HolePunchMsg::Syn) => {
-                            send_ack(ctx, socket, Instant::now() + Duration::from_millis(200))
-                        }
-                        Ok(HolePunchMsg::Ack) => {
-                            send_ack_ack_and_proceed(
-                                ctx,
-                                socket,
-                                Instant::now() + Duration::from_millis(200),
-                            )
-                        }
+                        Ok(HolePunchMsg::Syn) => send_ack(ctx, socket),
+                        Ok(HolePunchMsg::Ack) => send_ack_ack_and_proceed(ctx, socket),
                         Ok(HolePunchMsg::AckAck) |
                         Ok(HolePunchMsg::Choose) => {
                             future::err(HolePunchError::UnexpectedMessage).into_boxed()
@@ -621,7 +614,6 @@ fn recv_from_syn(
 fn send_ack(
     mut ctx: HolePunching,
     socket: WithAddress,
-    next_timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     let send_msg = unwrap!(bincode::serialize(&HolePunchMsg::Ack, bincode::Infinite));
 
@@ -633,7 +625,7 @@ fn send_ack(
         .and_then(move |socket| {
             let try = || {
                 let socket = ctx.inc_ttl_and_syn_acks(socket)?;
-                Ok(recv_from_ack(ctx, socket, next_timeout))
+                Ok(recv_from_ack(ctx, socket))
             };
             future::result(try().map_err(HolePunchError::SetTtl)).flatten()
         })
@@ -645,39 +637,24 @@ fn send_ack(
 fn recv_from_ack(
     ctx: HolePunching,
     socket: WithAddress,
-    timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     socket
-        .with_timeout_at(timeout, &ctx.handle)
+        .with_timeout_at(ctx.msg_timeout(), &ctx.handle)
         .into_future()
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
         .and_then(move |(msg_opt, socket_timeout)| {
             let socket = socket_timeout.into_inner();
             match msg_opt {
-                None => send_ack(ctx, socket, Instant::now() + Duration::from_millis(200)),
+                None => send_ack(ctx, socket),
                 Some(recv_msg) => {
                     match bincode::deserialize(&recv_msg) {
                         Err(e) => {
                             warn!("error deserializing packet from peer: {}", e);
-                            recv_from_ack(ctx, socket, timeout)
+                            recv_from_ack(ctx, socket)
                         }
-                        Ok(HolePunchMsg::Syn) => {
-                            send_ack(ctx, socket, Instant::now() + Duration::from_millis(200))
-                        }
-                        Ok(HolePunchMsg::Ack) => {
-                            send_ack_ack_and_proceed(
-                                ctx,
-                                socket,
-                                Instant::now() + Duration::from_millis(200),
-                            )
-                        }
-                        Ok(HolePunchMsg::AckAck) => {
-                            send_final_ack_acks(
-                                ctx,
-                                socket,
-                                Instant::now() + Duration::from_millis(200),
-                            )
-                        }
+                        Ok(HolePunchMsg::Syn) => send_ack(ctx, socket),
+                        Ok(HolePunchMsg::Ack) => send_ack_ack_and_proceed(ctx, socket),
+                        Ok(HolePunchMsg::AckAck) => send_final_ack_acks(ctx, socket),
                         Ok(HolePunchMsg::Choose) => future::ok((socket, true)).into_boxed(),
                     }
                 }
@@ -690,7 +667,6 @@ fn recv_from_ack(
 fn send_ack_ack_and_proceed(
     mut ctx: HolePunching,
     socket: WithAddress,
-    next_timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     trace!(
         "sending ack-ack #{} to {}",
@@ -700,7 +676,7 @@ fn send_ack_ack_and_proceed(
     send_ack_ack(socket)
         .and_then(move |socket| {
             ctx.ack_acks_sent += 1;
-            recv_from_ack_ack(ctx, socket, next_timeout)
+            recv_from_ack_ack(ctx, socket)
         })
         .into_boxed()
 }
@@ -719,44 +695,25 @@ fn send_ack_ack(socket: WithAddress) -> BoxFuture<WithAddress, HolePunchError> {
 fn recv_from_ack_ack(
     ctx: HolePunching,
     socket: WithAddress,
-    timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     socket
-        .with_timeout_at(timeout, &ctx.handle)
+        .with_timeout_at(ctx.msg_timeout(), &ctx.handle)
         .into_future()
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
         .and_then(move |(msg_opt, socket_timeout)| {
             let socket = socket_timeout.into_inner();
             match msg_opt {
                 // TODO: broooooken
-                None => {
-                    send_ack_ack_and_proceed(
-                        ctx,
-                        socket,
-                        Instant::now() + Duration::from_millis(200),
-                    )
-                }
+                None => send_ack_ack_and_proceed(ctx, socket),
                 Some(recv_msg) => {
                     match bincode::deserialize(&recv_msg) {
                         Err(e) => {
                             warn!("error deserializing packet from peer: {}", e);
-                            recv_from_ack_ack(ctx, socket, timeout)
+                            recv_from_ack_ack(ctx, socket)
                         }
-                        Ok(HolePunchMsg::Syn) => recv_from_ack_ack(ctx, socket, timeout),
-                        Ok(HolePunchMsg::Ack) => {
-                            send_ack_ack_and_proceed(
-                                ctx,
-                                socket,
-                                Instant::now() + Duration::from_millis(200),
-                            )
-                        }
-                        Ok(HolePunchMsg::AckAck) => {
-                            send_final_ack_acks(
-                                ctx,
-                                socket,
-                                Instant::now() + Duration::from_millis(200),
-                            )
-                        }
+                        Ok(HolePunchMsg::Syn) => recv_from_ack_ack(ctx, socket),
+                        Ok(HolePunchMsg::Ack) => send_ack_ack_and_proceed(ctx, socket),
+                        Ok(HolePunchMsg::AckAck) => send_final_ack_acks(ctx, socket),
                         Ok(HolePunchMsg::Choose) => future::ok((socket, true)).into_boxed(),
                     }
                 }
@@ -769,7 +726,6 @@ fn recv_from_ack_ack(
 fn send_final_ack_acks(
     mut ctx: HolePunching,
     socket: WithAddress,
-    next_timeout: Instant,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
     if ctx.ack_acks_sent >= 5 {
         return future::ok((socket, false)).into_boxed();
@@ -781,13 +737,13 @@ fn send_final_ack_acks(
         socket.remote_addr()
     );
 
-    Timeout::new_at(next_timeout, &ctx.handle)
+    Timeout::new_at(ctx.msg_timeout(), &ctx.handle)
     .infallible()
     .and_then(move |()| {
         send_ack_ack(socket)
             .and_then(move |socket| {
                 ctx.ack_acks_sent += 1;
-                send_final_ack_acks(ctx, socket, Instant::now() + Duration::from_millis(200))
+                send_final_ack_acks(ctx, socket)
             })
     })
     .into_boxed()
@@ -821,11 +777,7 @@ fn open_connect(
                         "received packet from new address {}. starting punching",
                         with_addr.remote_addr()
                     );
-                    punchers.push(send_ack(
-                        HolePunching::new(&handle, 0),
-                        with_addr,
-                        Instant::now() + Duration::from_millis(200),
-                    ));
+                    punchers.push(send_ack(HolePunching::new(&handle, 0), with_addr));
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("shared socket has been stolen");
@@ -1002,11 +954,8 @@ mod test {
             let recv_sock = SharedUdpSocket::share(recv_sock).with_address(localhost_addr(&sock));
             let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
-            let timeout = Instant::now() + Duration::from_secs(3);
             let hole_punching_ctx = HolePunching::new(&handle, 0);
-            let _ = unwrap!(core.run(
-                send_final_ack_acks(hole_punching_ctx, sock, timeout),
-            ));
+            let _ = unwrap!(core.run(send_final_ack_acks(hole_punching_ctx, sock)));
 
             let recv_messages = recv_sock
                 .map_err(|e| panic!("Failed to read from socket: {}", e))
