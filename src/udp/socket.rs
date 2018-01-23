@@ -264,9 +264,10 @@ impl UdpSocketExt for UdpSocket {
                                     rendezvous_addrs: _their_rendezvous_addrs,
                                 } = their_msg;
 
+                                let hole_punching = HolePunching::new(&handle0, 0);
                                 let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
                                 let incoming = {
-                                    open_connect(&handle0, socket, their_open_addrs, true)
+                                    open_connect(hole_punching, socket, their_open_addrs, true)
                                         .into_boxed()
                                 };
                                 (their_pk, incoming, None, None)
@@ -372,9 +373,9 @@ impl UdpSocketExt for UdpSocket {
                                         )?;
                                         let shared = SharedUdpSocket::share(socket);
                                         let with_addr = shared.with_address(their_addr);
-                                        let puncher =
-                                            HolePunching::start(&handle2, with_addr, ttl_increment);
-                                        punchers.push(puncher);
+                                        let hole_punching =
+                                            HolePunching::new(&handle2, ttl_increment);
+                                        punchers.push(hole_punching.start(with_addr));
                                     }
 
                                     let their_open_addrs =
@@ -386,7 +387,7 @@ impl UdpSocketExt for UdpSocket {
                                     );
                                     let incoming = {
                                         open_connect(
-                                            &handle2,
+                                            HolePunching::new(&handle2, 0),
                                             listen_socket,
                                             their_open_addrs,
                                             false,
@@ -510,6 +511,7 @@ quick_error! {
 
 /// Hole punching context.
 /// Used by every async hole punching function to track current state.
+#[derive(Clone)]
 struct HolePunching {
     handle: Handle,
     ttl_increment: u32,
@@ -527,15 +529,12 @@ impl HolePunching {
         }
     }
 
-    /// Constructs hole punching context and starts procedure by sending SYN packet to given socket
+    /// Consumes hole punching context and starts procedure by sending SYN packet to given socket
     /// with remote address.
-    fn start(
-        handle: &Handle,
-        socket: WithAddress,
-        ttl_increment: u32,
-    ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-        send_syn(HolePunching::new(handle, ttl_increment), socket)
-            .with_timeout(Duration::from_secs(10), handle)
+    fn start(self, socket: WithAddress) -> BoxFuture<(WithAddress, bool), HolePunchError> {
+        let handle = self.handle.clone();
+        send_syn(self, socket)
+            .with_timeout(Duration::from_secs(10), &handle)
             .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
             .into_boxed()
     }
@@ -751,7 +750,7 @@ fn send_final_ack_acks(
 
 // Perform a connect where one of the peers has an open port.
 fn open_connect(
-    handle: &Handle,
+    hole_punching: HolePunching,
     socket: UdpSocket,
     their_addrs: HashSet<SocketAddr>,
     we_are_open: bool,
@@ -760,10 +759,9 @@ fn open_connect(
     let mut punchers = FuturesUnordered::new();
     for addr in their_addrs {
         let with_addr = shared.with_address(addr);
-        punchers.push(HolePunching::start(handle, with_addr, 0));
+        punchers.push(hole_punching.clone().start(with_addr));
     }
 
-    let handle = handle.clone();
     stream::poll_fn(move || {
         trace!(
             "open_connect polling shared socket on {:?}",
@@ -777,7 +775,7 @@ fn open_connect(
                         "received packet from new address {}. starting punching",
                         with_addr.remote_addr()
                     );
-                    punchers.push(send_ack(HolePunching::new(&handle, 0), with_addr));
+                    punchers.push(send_ack(hole_punching.clone(), with_addr));
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("shared socket has been stolen");
