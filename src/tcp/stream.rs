@@ -304,12 +304,7 @@ impl TcpStreamExt for TcpStream {
                             })
                         };
 
-                        let all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError> = {
-                            stream::futures_unordered(connectors)
-                            .select(incoming)
-                            .into_boxed()
-                        };
-
+                        let all_incoming = stream::futures_unordered(connectors).select(incoming);
                         const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
 
                         if our_pk > their_pk {
