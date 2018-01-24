@@ -231,7 +231,6 @@ impl UdpSocketExt for UdpSocket {
         C: 'static,
     {
         let handle0 = handle.clone();
-        let handle1 = handle.clone();
         let mc0 = mc.clone();
         let (our_pk, our_sk) = gen_keypair();
 
@@ -271,10 +270,14 @@ impl UdpSocketExt for UdpSocket {
                                     HolePunching::new(&handle0, 0, their_pk, our_sk);
                                 let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
                                 let incoming = {
-                                    open_connect(hole_punching, socket, their_open_addrs, true)
-                                        .into_boxed()
+                                    open_connect(
+                                        hole_punching.clone(),
+                                        socket,
+                                        their_open_addrs,
+                                        true,
+                                    ).into_boxed()
                                 };
-                                (their_pk, incoming, None, None)
+                                (hole_punching, incoming, None, None)
                             })
                         })
                     };
@@ -393,7 +396,7 @@ impl UdpSocketExt for UdpSocket {
                                     );
                                     let incoming = {
                                         open_connect(
-                                            hole_punching,
+                                            hole_punching.clone(),
                                             listen_socket,
                                             their_open_addrs,
                                             false,
@@ -401,7 +404,7 @@ impl UdpSocketExt for UdpSocket {
                                             .into_boxed()
                                     };
                                     Ok((
-                                        their_pk,
+                                        hole_punching,
                                         incoming,
                                         Some(bind_public_error),
                                         rendezvous_error_opt,
@@ -413,11 +416,11 @@ impl UdpSocketExt for UdpSocket {
                     future::result(try()).flatten().into_boxed()
                 }
             })
-            .and_then(move |(their_pk,
+            .and_then(move |(hole_punching,
                    incoming,
                    bind_public_error_opt,
                    rendezvous_error_opt)| {
-                if our_pk > their_pk {
+                if our_pk > hole_punching.their_pk {
                     trace!("we are choosing the connection");
                     incoming
                         .and_then(|(socket, chosen)| {
@@ -436,16 +439,16 @@ impl UdpSocketExt for UdpSocket {
                                 rendezvous_error_opt.map(Box::new),
                             )
                         })
-                        .and_then(move |socket| choose(&handle1, socket, 0))
+                        .and_then(move |socket| choose(hole_punching, socket, 0))
                         .into_boxed()
                 } else {
                     trace!("they are choosing the connection");
                     incoming
-                        .map(|(socket, chosen)| {
+                        .map(move |(socket, chosen)| {
                             if chosen {
                                 return future::ok(got_chosen(socket)).into_boxed();
                             }
-                            take_chosen(socket)
+                            take_chosen(hole_punching.clone(), socket)
                         })
                         .buffer_unordered(256)
                         .filter_map(|opt| opt)
@@ -838,7 +841,7 @@ fn open_connect(
 
 // choose the given socket+address to be the socket+address we return successfully with.
 fn choose<Ei, Eo>(
-    handle: &Handle,
+    ctx: HolePunching,
     socket: WithAddress,
     chooses_sent: u32,
 ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<Ei, Eo>>
@@ -858,17 +861,15 @@ where
         chooses_sent
     );
 
-    let handle = handle.clone();
-    let msg = unwrap!(bincode::serialize(&HolePunchMsg::Choose, bincode::Infinite));
-
+    let msg = ctx.encrypt_msg(&HolePunchMsg::Choose);
     socket
-        .send(Bytes::from(msg))
+        .send(msg)
         .map_err(UdpRendezvousConnectError::SocketWrite)
         .and_then(move |socket| {
-            Timeout::new(Duration::from_millis(200), &handle)
+            Timeout::new(Duration::from_millis(200), &ctx.handle)
                 .infallible()
                 .and_then(move |()| {
-                    choose(&handle, socket, chooses_sent + 1)
+                    choose(ctx, socket, chooses_sent + 1)
                 })
         })
         .into_boxed()
@@ -876,20 +877,23 @@ where
 
 // listen on the socket to if the peer sends us a HolePunchMsg::Choose to indicate that they're
 // choosing this socket+address to communicate with us.
-fn take_chosen(socket: WithAddress) -> BoxFuture<Option<(UdpSocket, SocketAddr)>, HolePunchError> {
+fn take_chosen(
+    ctx: HolePunching,
+    socket: WithAddress,
+) -> BoxFuture<Option<(UdpSocket, SocketAddr)>, HolePunchError> {
     socket
         .into_future()
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
         .and_then(|(msg_opt, socket)| match msg_opt {
             None => future::ok(None).into_boxed(),
             Some(msg) => {
-                match bincode::deserialize(&msg) {
+                match ctx.decrypt_msg(&msg) {
                     Err(e) => {
-                        warn!("error deserializing packet from peer: {}", e);
-                        take_chosen(socket)
+                        warn!("error deserializing packet from peer: {:?}", e);
+                        take_chosen(ctx, socket)
                     }
                     Ok(HolePunchMsg::Choose) => future::ok(got_chosen(socket)).into_boxed(),
-                    Ok(..) => take_chosen(socket),
+                    Ok(..) => take_chosen(ctx, socket),
                 }
             }
         })
