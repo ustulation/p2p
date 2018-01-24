@@ -866,10 +866,10 @@ where
         .map_err(UdpRendezvousConnectError::SocketWrite)
         .and_then(move |socket| {
             Timeout::new(Duration::from_millis(200), &handle)
-        .infallible()
-        .and_then(move |()| {
-            choose(&handle, socket, chooses_sent + 1)
-        })
+                .infallible()
+                .and_then(move |()| {
+                    choose(&handle, socket, chooses_sent + 1)
+                })
         })
         .into_boxed()
 }
