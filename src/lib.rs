@@ -228,6 +228,7 @@ extern crate tokio_shared_udp_socket;
 #[cfg(test)]
 #[macro_use]
 extern crate maplit;
+extern crate secure_serialisation;
 
 mod priv_prelude;
 mod prelude;
