@@ -566,6 +566,18 @@ impl HolePunching {
         secure_deserialise(msg, &self.their_pk, &self.our_sk)
     }
 
+    /// Sends hole punching message message to the given socket.
+    fn send_msg(
+        &self,
+        msg: &HolePunchMsg,
+        socket: WithAddress,
+    ) -> BoxFuture<WithAddress, HolePunchError> {
+        socket
+            .send(self.encrypt_msg(msg))
+            .map_err(HolePunchError::SendMessage)
+            .into_boxed()
+    }
+
     fn inc_ttl_and_syn_acks(&mut self, socket: WithAddress) -> io::Result<WithAddress> {
         self.syns_acks_sent += 1;
         if self.syns_acks_sent % 5 == 0 && self.ttl_increment != 0 {
@@ -587,13 +599,9 @@ fn send_syn(
     mut ctx: HolePunching,
     socket: WithAddress,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let syn_msg = ctx.encrypt_msg(&HolePunchMsg::Syn);
-
     trace!("sending syn to {}", socket.remote_addr());
 
-    socket
-        .send(syn_msg)
-        .map_err(HolePunchError::SendMessage)
+    ctx.send_msg(&HolePunchMsg::Syn, socket)
         .and_then(move |socket| {
             let try = || {
                 let socket = ctx.inc_ttl_and_syn_acks(socket)?;
@@ -641,13 +649,9 @@ fn send_ack(
     mut ctx: HolePunching,
     socket: WithAddress,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let ack_msg = ctx.encrypt_msg(&HolePunchMsg::Ack);
-
     trace!("sending ack to {}", socket.remote_addr());
 
-    socket
-        .send(ack_msg)
-        .map_err(HolePunchError::SendMessage)
+    ctx.send_msg(&HolePunchMsg::Ack, socket)
         .and_then(move |socket| {
             let try = || {
                 let socket = ctx.inc_ttl_and_syn_acks(socket)?;
@@ -699,20 +703,11 @@ fn send_ack_ack_and_proceed(
         ctx.ack_acks_sent,
         socket.remote_addr()
     );
-    send_ack_ack(&ctx, socket)
+    ctx.send_msg(&HolePunchMsg::AckAck, socket)
         .and_then(move |socket| {
             ctx.ack_acks_sent += 1;
             recv_from_ack_ack(ctx, socket)
         })
-        .into_boxed()
-}
-
-/// Only sends `AckAck` message to the given socket.
-fn send_ack_ack(ctx: &HolePunching, socket: WithAddress) -> BoxFuture<WithAddress, HolePunchError> {
-    let ack_ack_msg = ctx.encrypt_msg(&HolePunchMsg::AckAck);
-    socket
-        .send(ack_ack_msg)
-        .map_err(HolePunchError::SendMessage)
         .into_boxed()
 }
 
@@ -766,7 +761,7 @@ fn send_final_ack_acks(
     Timeout::new_at(ctx.msg_timeout(), &ctx.handle)
     .infallible()
     .and_then(move |()| {
-        send_ack_ack(&ctx, socket)
+        ctx.send_msg(&HolePunchMsg::AckAck, socket)
             .and_then(move |socket| {
                 ctx.ack_acks_sent += 1;
                 send_final_ack_acks(ctx, socket)
