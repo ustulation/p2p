@@ -6,6 +6,8 @@ use open_addr::{BindPublicError, open_addr};
 use priv_prelude::*;
 use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
 use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
+use secure_serialisation::{Error as SecureSerialiseError, deserialise as secure_deserialise,
+                           serialise as secure_serialise};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
@@ -552,6 +554,18 @@ impl HolePunching {
             .into_boxed()
     }
 
+    /// Encrypts and serializes hole punching message which is then ready to be sent accross
+    /// the network.
+    fn encrypt_msg(&self, msg: &HolePunchMsg) -> Bytes {
+        let encrypted = unwrap!(secure_serialise(msg, &self.their_pk, &self.our_sk));
+        Bytes::from(encrypted)
+    }
+
+    /// Try to decrypt raw bytes into hole punching message.
+    fn decrypt_msg(&self, msg: &Bytes) -> Result<HolePunchMsg, SecureSerialiseError> {
+        secure_deserialise(msg, &self.their_pk, &self.our_sk)
+    }
+
     fn inc_ttl_and_syn_acks(&mut self, socket: WithAddress) -> io::Result<WithAddress> {
         self.syns_acks_sent += 1;
         if self.syns_acks_sent % 5 == 0 && self.ttl_increment != 0 {
@@ -573,12 +587,12 @@ fn send_syn(
     mut ctx: HolePunching,
     socket: WithAddress,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let send_msg = unwrap!(bincode::serialize(&HolePunchMsg::Syn, bincode::Infinite));
+    let syn_msg = ctx.encrypt_msg(&HolePunchMsg::Syn);
 
     trace!("sending syn to {}", socket.remote_addr());
 
     socket
-        .send(Bytes::from(send_msg))
+        .send(syn_msg)
         .map_err(HolePunchError::SendMessage)
         .and_then(move |socket| {
             let try = || {
@@ -604,9 +618,9 @@ fn recv_from_syn(
             match msg_opt {
                 None => send_syn(ctx, socket),
                 Some(recv_msg) => {
-                    match bincode::deserialize(&recv_msg) {
+                    match ctx.decrypt_msg(&recv_msg) {
                         Err(e) => {
-                            warn!("error deserializing packet from peer: {}", e);
+                            warn!("error decrypting packet from peer: {:?}", e);
                             recv_from_syn(ctx, socket)
                         }
                         Ok(HolePunchMsg::Syn) => send_ack(ctx, socket),
@@ -627,12 +641,12 @@ fn send_ack(
     mut ctx: HolePunching,
     socket: WithAddress,
 ) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    let send_msg = unwrap!(bincode::serialize(&HolePunchMsg::Ack, bincode::Infinite));
+    let ack_msg = ctx.encrypt_msg(&HolePunchMsg::Ack);
 
     trace!("sending ack to {}", socket.remote_addr());
 
     socket
-        .send(Bytes::from(send_msg))
+        .send(ack_msg)
         .map_err(HolePunchError::SendMessage)
         .and_then(move |socket| {
             let try = || {
@@ -659,9 +673,9 @@ fn recv_from_ack(
             match msg_opt {
                 None => send_ack(ctx, socket),
                 Some(recv_msg) => {
-                    match bincode::deserialize(&recv_msg) {
+                    match ctx.decrypt_msg(&recv_msg) {
                         Err(e) => {
-                            warn!("error deserializing packet from peer: {}", e);
+                            warn!("error deserializing packet from peer: {:?}", e);
                             recv_from_ack(ctx, socket)
                         }
                         Ok(HolePunchMsg::Syn) => send_ack(ctx, socket),
@@ -685,7 +699,7 @@ fn send_ack_ack_and_proceed(
         ctx.ack_acks_sent,
         socket.remote_addr()
     );
-    send_ack_ack(socket)
+    send_ack_ack(&ctx, socket)
         .and_then(move |socket| {
             ctx.ack_acks_sent += 1;
             recv_from_ack_ack(ctx, socket)
@@ -694,10 +708,10 @@ fn send_ack_ack_and_proceed(
 }
 
 /// Only sends `AckAck` message to the given socket.
-fn send_ack_ack(socket: WithAddress) -> BoxFuture<WithAddress, HolePunchError> {
-    let msg = unwrap!(bincode::serialize(&HolePunchMsg::AckAck, bincode::Infinite));
+fn send_ack_ack(ctx: &HolePunching, socket: WithAddress) -> BoxFuture<WithAddress, HolePunchError> {
+    let ack_ack_msg = ctx.encrypt_msg(&HolePunchMsg::AckAck);
     socket
-        .send(Bytes::from(msg))
+        .send(ack_ack_msg)
         .map_err(HolePunchError::SendMessage)
         .into_boxed()
 }
@@ -718,9 +732,9 @@ fn recv_from_ack_ack(
                 // TODO: broooooken
                 None => send_ack_ack_and_proceed(ctx, socket),
                 Some(recv_msg) => {
-                    match bincode::deserialize(&recv_msg) {
+                    match ctx.decrypt_msg(&recv_msg) {
                         Err(e) => {
-                            warn!("error deserializing packet from peer: {}", e);
+                            warn!("error deserializing packet from peer: {:?}", e);
                             recv_from_ack_ack(ctx, socket)
                         }
                         Ok(HolePunchMsg::Syn) => recv_from_ack_ack(ctx, socket),
@@ -752,7 +766,7 @@ fn send_final_ack_acks(
     Timeout::new_at(ctx.msg_timeout(), &ctx.handle)
     .infallible()
     .and_then(move |()| {
-        send_ack_ack(socket)
+        send_ack_ack(&ctx, socket)
             .and_then(move |socket| {
                 ctx.ack_acks_sent += 1;
                 send_final_ack_acks(ctx, socket)
@@ -966,14 +980,14 @@ mod test {
             let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
             let (their_pk, our_sk) = gen_keypair();
-            let hole_punching_ctx = HolePunching::new(&handle, 0, their_pk, our_sk);
-            let _ = unwrap!(core.run(send_final_ack_acks(hole_punching_ctx, sock)));
+            let hole_punching = HolePunching::new(&handle, 0, their_pk, our_sk);
+            let _ = unwrap!(core.run(send_final_ack_acks(hole_punching.clone(), sock)));
 
             let recv_messages = recv_sock
                 .map_err(|e| panic!("Failed to read from socket: {}", e))
                 .map(|msg| {
-                    let msg: Result<HolePunchMsg, bool> = match bincode::deserialize(&msg) {
-                        Err(e) => panic!("Failed to deserialize message: {}", e),
+                    let msg: Result<HolePunchMsg, bool> = match hole_punching.decrypt_msg(&msg) {
+                        Err(e) => panic!("Failed to deserialize message: {:?}", e),
                         Ok(msg) => Ok(msg),
                     };
                     msg
