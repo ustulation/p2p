@@ -5,6 +5,7 @@ use futures::stream::FuturesUnordered;
 use open_addr::{BindPublicError, open_addr};
 use priv_prelude::*;
 use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
+use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
@@ -230,7 +231,7 @@ impl UdpSocketExt for UdpSocket {
         let handle0 = handle.clone();
         let handle1 = handle.clone();
         let mc0 = mc.clone();
-        let (our_pk, _sk) = crypto::box_::gen_keypair();
+        let (our_pk, our_sk) = gen_keypair();
 
         trace!("starting rendezvous connect");
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
@@ -264,7 +265,8 @@ impl UdpSocketExt for UdpSocket {
                                     rendezvous_addrs: _their_rendezvous_addrs,
                                 } = their_msg;
 
-                                let hole_punching = HolePunching::new(&handle0, 0);
+                                let hole_punching =
+                                    HolePunching::new(&handle0, 0, their_pk, our_sk);
                                 let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
                                 let incoming = {
                                     open_connect(hole_punching, socket, their_open_addrs, true)
@@ -356,6 +358,8 @@ impl UdpSocketExt for UdpSocket {
                                         open_addrs: their_open_addrs,
                                         rendezvous_addrs: their_rendezvous_addrs,
                                     } = their_msg;
+                                    let hole_punching =
+                                        HolePunching::new(&handle2, 0, their_pk, our_sk);
 
                                     trace!(
                                         "their rendezvous addresses are: {:#?}",
@@ -374,7 +378,7 @@ impl UdpSocketExt for UdpSocket {
                                         let shared = SharedUdpSocket::share(socket);
                                         let with_addr = shared.with_address(their_addr);
                                         let hole_punching =
-                                            HolePunching::new(&handle2, ttl_increment);
+                                            hole_punching.clone().with_ttl_increment(ttl_increment);
                                         punchers.push(hole_punching.start(with_addr));
                                     }
 
@@ -387,7 +391,7 @@ impl UdpSocketExt for UdpSocket {
                                     );
                                     let incoming = {
                                         open_connect(
-                                            HolePunching::new(&handle2, 0),
+                                            hole_punching,
                                             listen_socket,
                                             their_open_addrs,
                                             false,
@@ -517,16 +521,25 @@ struct HolePunching {
     ttl_increment: u32,
     syns_acks_sent: u32,
     ack_acks_sent: u32,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
 }
 
 impl HolePunching {
-    fn new(handle: &Handle, ttl_increment: u32) -> Self {
+    fn new(handle: &Handle, ttl_increment: u32, their_pk: PublicKey, our_sk: SecretKey) -> Self {
         HolePunching {
             handle: handle.clone(),
             ttl_increment,
             syns_acks_sent: 0,
             ack_acks_sent: 0,
+            their_pk,
+            our_sk,
         }
+    }
+
+    fn with_ttl_increment(mut self, ttl_increment: u32) -> Self {
+        self.ttl_increment = ttl_increment;
+        self
     }
 
     /// Consumes hole punching context and starts procedure by sending SYN packet to given socket
@@ -952,7 +965,8 @@ mod test {
             let recv_sock = SharedUdpSocket::share(recv_sock).with_address(localhost_addr(&sock));
             let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
-            let hole_punching_ctx = HolePunching::new(&handle, 0);
+            let (their_pk, our_sk) = gen_keypair();
+            let hole_punching_ctx = HolePunching::new(&handle, 0, their_pk, our_sk);
             let _ = unwrap!(core.run(send_final_ack_acks(hole_punching_ctx, sock)));
 
             let recv_messages = recv_sock
