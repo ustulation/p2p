@@ -213,7 +213,7 @@ impl TcpStreamExt for TcpStream {
 
         let handle0 = handle.clone();
         let handle1 = handle.clone();
-        let (pk, _sk) = crypto::box_::gen_keypair();
+        let (our_pk, _sk) = crypto::box_::gen_keypair();
 
         let try = || {
             trace!("starting tcp rendezvous connect");
@@ -244,7 +244,7 @@ impl TcpStreamExt for TcpStream {
                     .and_then(move |(rendezvous_addr_opt, map_error)| {
                         trace!("got rendezvous address: {:?}", rendezvous_addr_opt);
                         let msg = TcpRendezvousMsg::Init {
-                            enc_pk: pk,
+                            enc_pk: our_pk,
                             open_addrs: addrs,
                             rendezvous_addr: rendezvous_addr_opt,
                         };
@@ -312,7 +312,7 @@ impl TcpStreamExt for TcpStream {
 
                         const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
 
-                        if pk > their_pk {
+                        if our_pk > their_pk {
                             all_incoming
                             .and_then(|stream| {
                                 tokio_io::io::write_all(stream, CHOOSE)
