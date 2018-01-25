@@ -103,6 +103,7 @@ fn from_socket_inner(
 
     let f = {
         let socket = SharedUdpSocket::share(socket);
+        trace!("rendezvous server starting");
 
         socket
         .map_err(RendezvousServerError::AcceptError)
@@ -118,7 +119,13 @@ fn from_socket_inner(
         .buffer_unordered(1024)
         .log_errors(LogLevel::Info, "processing echo request")
         .until(drop_rx)
-        .for_each(|()| Ok(()))
+        .for_each(|()| {
+            Ok(())
+        })
+        .map(|x| {
+            trace!("rendezvous server exiting");
+            x
+        })
         .infallible()
     };
     handle.spawn(f);

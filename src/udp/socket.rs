@@ -1159,3 +1159,152 @@ mod test {
         unwrap!(result)
     }
 }
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod netsim_test {
+    use super::*;
+
+    use env_logger;
+    use future_utils;
+    use futures;
+    use netsim::{self, SubnetV4, node};
+    use netsim::device::NatV4Builder;
+    use tokio_core::reactor::Core;
+
+    use util;
+
+    fn udp_rendezvous_connect_between_natted_hosts(start_delay: Duration) {
+        let _ = env_logger::init();
+
+        let mut core = unwrap!(Core::new());
+        let handle = core.handle();
+
+        let res = core.run(future::lazy(|| {
+            let (ch0, ch1) = util::two_way_channel();
+            let (server_drop_tx_0, server_drop_rx_0) = drop_notify();
+            let (server_drop_tx_1, server_drop_rx_1) = drop_notify();
+            let (server_info_tx_0, server_info_rx_0) = futures::sync::oneshot::channel();
+            let (server_info_tx_1, server_info_rx_1) = futures::sync::oneshot::channel();
+            let server_node = node::endpoint_v4(move |ip| {
+                let mut core = unwrap!(Core::new());
+                let handle = core.handle();
+
+                let res = core.run(future::lazy(move || {
+                    let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+                    let server_port = server.local_addr().port();
+                    let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
+                    let server_info = PeerInfo {
+                        addr: server_addr,
+                        pub_key: server.public_key(),
+                    };
+
+                    unwrap!(server_info_tx_0.send(server_info.clone()));
+                    unwrap!(server_info_tx_1.send(server_info));
+
+                    server_drop_rx_0
+                    .and_then(|()| server_drop_rx_1)
+                    .map(|()| drop(server))
+                }));
+                unwrap!(res)
+            });
+            let node_0 = node::nat_v4(
+                NatV4Builder::default(),
+                node::endpoint_v4(move |_ip| {
+                    let mut core = unwrap!(Core::new());
+                    let handle = core.handle();
+
+                    let res = core.run(future::lazy(|| {
+                        server_info_rx_0
+                            .map_err(|e| panic!("error getting server addr: {}", e))
+                            .map(|server_info| {
+                                let p2p = P2p::default();
+                                p2p.add_udp_traversal_server(&server_info);
+                                p2p
+                            })
+                            .and_then(|p2p| {
+                                UdpSocket::rendezvous_connect(ch0, &handle, &p2p).map_err(
+                                    |e| {
+                                        panic!("rendezvous connect error: {}", e)
+                                    },
+                                )
+                            })
+                            .map(|_socket| {
+                                trace!("connected peer 0");
+                                drop(server_drop_tx_0);
+                            })
+                    }));
+                    unwrap!(res)
+                }),
+            );
+            let node_1 = node::nat_v4(
+                NatV4Builder::default(),
+                node::endpoint_v4(move |_ip| {
+                    let mut core = unwrap!(Core::new());
+                    let handle = core.handle();
+
+                    let res = core.run(future::lazy(|| {
+                        Timeout::new(start_delay, &handle)
+                        .infallible()
+                        .and_then(|()| server_info_rx_1)
+                        .map_err(|e| panic!("error getting server addr: {}", e))
+                        .map(|server_info| {
+                            let p2p = P2p::default();
+                            p2p.add_udp_traversal_server(&server_info);
+                            p2p
+                        })
+                        .and_then(|p2p| {
+                            UdpSocket::rendezvous_connect(ch1, &handle, &p2p)
+                            .map_err(|e| panic!("rendezvous connect error: {}", e))
+                        })
+                        .map(|_socket| {
+                            trace!("connected peer 1");
+                            drop(server_drop_tx_1);
+                        })
+                    }));
+                    unwrap!(res)
+                }),
+            );
+
+            let server_node = node::latency_v4(
+                Duration::from_millis(100),
+                Duration::from_millis(10),
+                node::hops_v4(2, server_node),
+            );
+            let node_0 = node::latency_v4(
+                Duration::from_millis(200),
+                Duration::from_millis(20),
+                node::hops_v4(3, node_0),
+            );
+            let node_0 = node::latency_v4(
+                Duration::from_millis(200),
+                Duration::from_millis(20),
+                node::hops_v4(3, node_0),
+            );
+
+            let network = node::router_v4((server_node, node_0, node_1));
+
+            let (join_handle, _plug) =
+                netsim::spawn::network_v4(&handle, SubnetV4::global(), network);
+
+            future_utils::thread_future(|| unwrap!(join_handle.join()))
+            .map(|((), (), ())| ())
+        }));
+        res.void_unwrap()
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_with_no_delay() {
+        udp_rendezvous_connect_between_natted_hosts(Duration::from_secs(0));
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_with_short_delay() {
+        udp_rendezvous_connect_between_natted_hosts(Duration::from_secs(5));
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_with_long_delay() {
+        udp_rendezvous_connect_between_natted_hosts(Duration::from_secs(60));
+    }
+}
