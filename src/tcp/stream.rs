@@ -1,9 +1,11 @@
 use bincode::{self, Infinite};
-
+use bytes::BufMut;
 use filter_addrs::filter_addrs;
 use priv_prelude::*;
 use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
-use rust_sodium::crypto::box_::PublicKey;
+use rust_sodium::crypto::box_::{PublicKey, SecretKey};
+use secure_serialisation::{Error as SecureSerialiseError, deserialise as secure_deserialise,
+                           serialise as secure_serialise};
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
 use tcp::msg::TcpRendezvousMsg;
@@ -150,6 +152,12 @@ quick_error! {
             display("error reading handshake on connection candidate socket: {}", e)
             cause(e)
         }
+        Decrypt(e: SecureSerialiseError) {
+            description("error decrypting data")
+            display("error decrypting data: {:?}", e)
+            // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
+            // trait.
+        }
     }
 }
 
@@ -213,7 +221,7 @@ impl TcpStreamExt for TcpStream {
         // anything other than the first message to the other peer.
 
         let handle0 = handle.clone();
-        let (our_pk, _sk) = crypto::box_::gen_keypair();
+        let (our_pk, our_sk) = crypto::box_::gen_keypair();
 
         let try = || {
             trace!("starting tcp rendezvous connect");
@@ -290,7 +298,7 @@ impl TcpStreamExt for TcpStream {
                             let all_incoming = stream::futures_unordered(connectors)
                                 .select(incoming)
                                 .into_boxed();
-                            choose_connections(all_incoming, our_pk, their_pk)
+                            choose_connections(all_incoming, our_pk, their_pk, our_sk)
                                 .first_ok()
                                 .map_err(|v| {
                                     TcpRendezvousConnectError::AllAttemptsFailed(v, map_error)
@@ -346,23 +354,31 @@ fn choose_connections(
     all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError>,
     our_pk: PublicKey,
     their_pk: PublicKey,
+    our_sk: SecretKey,
 ) -> BoxStream<TcpStream, SingleRendezvousAttemptError> {
     const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
+    let encrypted_msg = unwrap!(secure_serialise(&CHOOSE, &their_pk, &our_sk));
 
     if our_pk > their_pk {
         all_incoming
-            .and_then(|stream| {
-                tokio_io::io::write_all(stream, CHOOSE)
+            .and_then(move |stream| {
+                tokio_io::io::write_all(stream, encrypted_msg.clone())
                     .map_err(SingleRendezvousAttemptError::Write)
                     .map(|(stream, _buf)| stream)
             })
             .into_boxed()
     } else {
         all_incoming
-            .and_then(|stream| {
-                tokio_io::io::read_exact(stream, [0; 6])
+            .and_then(move |stream| {
+                let our_sk = our_sk.clone();
+                tokio_io::io::read_exact(stream, buffer_with_len(encrypted_msg.len()))
                     .map_err(SingleRendezvousAttemptError::Read)
-                    .map(|(stream, buf)| if buf == CHOOSE {
+                    .and_then(move |(stream, buf)| {
+                        secure_deserialise::<[u8; 6]>(&buf[..], &their_pk, &our_sk)
+                            .map_err(SingleRendezvousAttemptError::Decrypt)
+                            .map(|buf| (stream, buf))
+                    })
+                    .map(|(stream, buf)| if buf[..] == CHOOSE {
                         Some(stream)
                     } else {
                         None
@@ -371,6 +387,13 @@ fn choose_connections(
             .filter_map(|stream_opt| stream_opt)
             .into_boxed()
     }
+}
+
+/// Contructs empty mutable buffer with given size that is ready to receive data.
+fn buffer_with_len(len: usize) -> BytesMut {
+    let mut buf = BytesMut::with_capacity(len);
+    buf.put(vec![0; len]);
+    buf
 }
 
 pub struct TcpRendezvousConnect<C>
@@ -408,6 +431,17 @@ mod test {
     use tokio_io;
 
     use util;
+
+    mod buffer_with_len {
+        use super::*;
+
+        #[test]
+        fn it_returns_buffer_with_given_length() {
+            let buf = buffer_with_len(8);
+
+            assert_eq!(buf.len(), 8);
+        }
+    }
 
     #[test]
     fn rendezvous_over_loopback() {
