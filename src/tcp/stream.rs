@@ -212,7 +212,6 @@ impl TcpStreamExt for TcpStream {
         // anything other than the first message to the other peer.
 
         let handle0 = handle.clone();
-        let handle1 = handle.clone();
         let (our_pk, _sk) = crypto::box_::gen_keypair();
 
         let try = || {
@@ -248,26 +247,10 @@ impl TcpStreamExt for TcpStream {
                             open_addrs: addrs,
                             rendezvous_addr: rendezvous_addr_opt,
                         };
-                        let msg = unwrap!(bincode::serialize(&msg, Infinite));
-                        let msg = Bytes::from(msg);
 
                         trace!("exchanging rendezvous info with peer");
-                        channel.send(msg)
-                    .map_err(TcpRendezvousConnectError::ChannelWrite)
-                    .and_then(move |channel| {
-                        channel
-                        .map_err(TcpRendezvousConnectError::ChannelRead)
-                        .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
-                        .with_timeout(
-                            Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
-                            &handle1
-                        )
-                        .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
-                    })
-                    .and_then(|(msg, _channel)| {
-                        bincode::deserialize(&msg)
-                        .map_err(TcpRendezvousConnectError::DeserializeMsg)
-                    })
+
+                        exchange_conn_info(channel, &handle0, &msg)
                     .and_then(move |msg| {
                         let TcpRendezvousMsg::Init {
                             enc_pk: their_pk,
@@ -341,6 +324,40 @@ impl TcpStreamExt for TcpStream {
 
         TcpRendezvousConnect { inner: future::result(try()).flatten().into_boxed() }
     }
+}
+
+fn exchange_conn_info<C>(
+    channel: C,
+    handle: &Handle,
+    msg: &TcpRendezvousMsg,
+) -> BoxFuture<TcpRendezvousMsg, TcpRendezvousConnectError<C::Error, C::SinkError>>
+where
+    C: Stream<Item = Bytes>,
+    C: Sink<SinkItem = Bytes>,
+    <C as Stream>::Error: fmt::Debug,
+    <C as Sink>::SinkError: fmt::Debug,
+    C: 'static,
+{
+    let handle = handle.clone();
+    let msg = unwrap!(bincode::serialize(&msg, Infinite));
+    let msg = Bytes::from(msg);
+    channel
+        .send(msg)
+        .map_err(TcpRendezvousConnectError::ChannelWrite)
+        .and_then(move |channel| {
+            channel
+                .map_err(TcpRendezvousConnectError::ChannelRead)
+                .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
+                .with_timeout(
+                    Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
+                    &handle,
+                )
+                .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
+                .and_then(|(msg, _channel)| {
+                    bincode::deserialize(&msg).map_err(TcpRendezvousConnectError::DeserializeMsg)
+                })
+        })
+        .into_boxed()
 }
 
 pub struct TcpRendezvousConnect<C>
