@@ -3,6 +3,7 @@ use bincode::{self, Infinite};
 use filter_addrs::filter_addrs;
 use priv_prelude::*;
 use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
+use rust_sodium::crypto::box_::PublicKey;
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
 use tcp::msg::TcpRendezvousMsg;
@@ -274,7 +275,6 @@ impl TcpStreamExt for TcpStream {
                                     })
                                     .collect::<Vec<_>>()
                             };
-
                             let incoming = {
                                 listener
                                     .incoming()
@@ -287,33 +287,11 @@ impl TcpStreamExt for TcpStream {
                                         ).infallible()
                                     })
                             };
-
-                            let all_incoming =
-                                stream::futures_unordered(connectors).select(incoming);
-                            const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
-
-                            if our_pk > their_pk {
-                                all_incoming
-                                    .and_then(|stream| {
-                                        tokio_io::io::write_all(stream, CHOOSE)
-                                            .map_err(SingleRendezvousAttemptError::Write)
-                                            .map(|(stream, _buf)| stream)
-                                    })
-                                    .into_boxed()
-                            } else {
-                                all_incoming
-                                    .and_then(|stream| {
-                                        tokio_io::io::read_exact(stream, [0; 6])
-                                            .map_err(SingleRendezvousAttemptError::Read)
-                                            .map(|(stream, buf)| if buf == CHOOSE {
-                                                Some(stream)
-                                            } else {
-                                                None
-                                            })
-                                    })
-                                    .filter_map(|stream_opt| stream_opt)
-                                    .into_boxed()
-                            }.first_ok()
+                            let all_incoming = stream::futures_unordered(connectors)
+                                .select(incoming)
+                                .into_boxed();
+                            choose_connections(all_incoming, our_pk, their_pk)
+                                .first_ok()
                                 .map_err(|v| {
                                     TcpRendezvousConnectError::AllAttemptsFailed(v, map_error)
                                 })
@@ -359,6 +337,40 @@ where
                 })
         })
         .into_boxed()
+}
+
+/// Finalizes rendezvous connection with sending special message 'choose'.
+/// Only one peer sends this message while the other receives and validates it. Who is who is
+/// determined by public keys.
+fn choose_connections(
+    all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError>,
+    our_pk: PublicKey,
+    their_pk: PublicKey,
+) -> BoxStream<TcpStream, SingleRendezvousAttemptError> {
+    const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
+
+    if our_pk > their_pk {
+        all_incoming
+            .and_then(|stream| {
+                tokio_io::io::write_all(stream, CHOOSE)
+                    .map_err(SingleRendezvousAttemptError::Write)
+                    .map(|(stream, _buf)| stream)
+            })
+            .into_boxed()
+    } else {
+        all_incoming
+            .and_then(|stream| {
+                tokio_io::io::read_exact(stream, [0; 6])
+                    .map_err(SingleRendezvousAttemptError::Read)
+                    .map(|(stream, buf)| if buf == CHOOSE {
+                        Some(stream)
+                    } else {
+                        None
+                    })
+            })
+            .filter_map(|stream_opt| stream_opt)
+            .into_boxed()
+    }
 }
 
 pub struct TcpRendezvousConnect<C>
