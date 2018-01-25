@@ -250,74 +250,75 @@ impl TcpStreamExt for TcpStream {
 
                         trace!("exchanging rendezvous info with peer");
 
-                        exchange_conn_info(channel, &handle0, &msg)
-                    .and_then(move |msg| {
-                        let TcpRendezvousMsg::Init {
-                            enc_pk: their_pk,
-                            open_addrs,
-                            rendezvous_addr
-                        } = msg;
+                        exchange_conn_info(channel, &handle0, &msg).and_then(move |msg| {
+                            let TcpRendezvousMsg::Init {
+                                enc_pk: their_pk,
+                                open_addrs,
+                                rendezvous_addr,
+                            } = msg;
 
-                        // filter our subnet and loopback addresess if they can't possibly be
-                        // useful.
-                        let their_addrs = open_addrs.into_iter().collect();
-                        let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
-                        if let Some(rendezvous_addr) = rendezvous_addr {
-                            let _ = their_addrs.insert(rendezvous_addr);
-                        }
+                            // filter our subnet and loopback addresess if they can't possibly be
+                            // useful.
+                            let their_addrs = open_addrs.into_iter().collect();
+                            let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
+                            if let Some(rendezvous_addr) = rendezvous_addr {
+                                let _ = their_addrs.insert(rendezvous_addr);
+                            }
 
-                        let connectors = {
-                            their_addrs
-                            .into_iter()
-                            .map(|addr| {
-                                TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
-                                .map_err(SingleRendezvousAttemptError::Connect)
-                            })
-                            .collect::<Vec<_>>()
-                        };
+                            let connectors = {
+                                their_addrs
+                                    .into_iter()
+                                    .map(|addr| {
+                                        TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
+                                            .map_err(SingleRendezvousAttemptError::Connect)
+                                    })
+                                    .collect::<Vec<_>>()
+                            };
 
-                        let incoming = {
-                            listener
-                            .incoming()
-                            .map(|(stream, _addr)| stream)
-                            .map_err(SingleRendezvousAttemptError::Accept)
-                            .until({
-                                Timeout::new(Duration::from_secs(RENDEZVOUS_TIMEOUT_SEC), &handle0)
-                                .infallible()
-                            })
-                        };
+                            let incoming = {
+                                listener
+                                    .incoming()
+                                    .map(|(stream, _addr)| stream)
+                                    .map_err(SingleRendezvousAttemptError::Accept)
+                                    .until({
+                                        Timeout::new(
+                                            Duration::from_secs(RENDEZVOUS_TIMEOUT_SEC),
+                                            &handle0,
+                                        ).infallible()
+                                    })
+                            };
 
-                        let all_incoming = stream::futures_unordered(connectors).select(incoming);
-                        const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
+                            let all_incoming =
+                                stream::futures_unordered(connectors).select(incoming);
+                            const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
 
-                        if our_pk > their_pk {
-                            all_incoming
-                            .and_then(|stream| {
-                                tokio_io::io::write_all(stream, CHOOSE)
-                                .map_err(SingleRendezvousAttemptError::Write)
-                                .map(|(stream, _buf)| stream)
-                            })
-                            .into_boxed()
-                        } else {
-                            all_incoming
-                            .and_then(|stream| {
-                                tokio_io::io::read_exact(stream, [0; 6])
-                                .map_err(SingleRendezvousAttemptError::Read)
-                                .map(|(stream, buf)| {
-                                    if buf == CHOOSE {
-                                        Some(stream)
-                                    } else {
-                                        None
-                                    }
+                            if our_pk > their_pk {
+                                all_incoming
+                                    .and_then(|stream| {
+                                        tokio_io::io::write_all(stream, CHOOSE)
+                                            .map_err(SingleRendezvousAttemptError::Write)
+                                            .map(|(stream, _buf)| stream)
+                                    })
+                                    .into_boxed()
+                            } else {
+                                all_incoming
+                                    .and_then(|stream| {
+                                        tokio_io::io::read_exact(stream, [0; 6])
+                                            .map_err(SingleRendezvousAttemptError::Read)
+                                            .map(|(stream, buf)| if buf == CHOOSE {
+                                                Some(stream)
+                                            } else {
+                                                None
+                                            })
+                                    })
+                                    .filter_map(|stream_opt| stream_opt)
+                                    .into_boxed()
+                            }.first_ok()
+                                .map_err(|v| {
+                                    TcpRendezvousConnectError::AllAttemptsFailed(v, map_error)
                                 })
-                            })
-                            .filter_map(|stream_opt| stream_opt)
-                            .into_boxed()
-                        }
-                        .first_ok()
-                        .map_err(|v| TcpRendezvousConnectError::AllAttemptsFailed(v, map_error))
-                        .into_boxed()
-                    })
+                                .into_boxed()
+                        })
                     })
             })
         };
