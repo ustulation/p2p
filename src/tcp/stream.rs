@@ -14,6 +14,12 @@ use tokio_io;
 const RENDEZVOUS_TIMEOUT_SEC: u64 = 10;
 const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
 
+/// Final connection handshake message.
+/// One peer reads incoming stream and waits for this message, while the other sends this
+/// message indicating wish to connect.
+type ChooseConnectionMsg = [u8; 6];
+const CHOOSE: ChooseConnectionMsg = [b'c', b'h', b'o', b'o', b's', b'e'];
+
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
     #[derive(Debug)]
@@ -356,7 +362,6 @@ fn choose_connections(
     their_pk: PublicKey,
     our_sk: SecretKey,
 ) -> BoxStream<TcpStream, SingleRendezvousAttemptError> {
-    const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
     let encrypted_msg = unwrap!(secure_serialise(&CHOOSE, &their_pk, &our_sk));
 
     if our_pk > their_pk {
@@ -370,23 +375,34 @@ fn choose_connections(
     } else {
         all_incoming
             .and_then(move |stream| {
-                let our_sk = our_sk.clone();
-                tokio_io::io::read_exact(stream, buffer_with_len(encrypted_msg.len()))
-                    .map_err(SingleRendezvousAttemptError::Read)
-                    .and_then(move |(stream, buf)| {
-                        secure_deserialise::<[u8; 6]>(&buf[..], &their_pk, &our_sk)
-                            .map_err(SingleRendezvousAttemptError::Decrypt)
-                            .map(|buf| (stream, buf))
-                    })
-                    .map(|(stream, buf)| if buf[..] == CHOOSE {
-                        Some(stream)
-                    } else {
-                        None
-                    })
+                recv_choose_conn_msg(stream, encrypted_msg.len(), their_pk, our_sk.clone())
             })
             .filter_map(|stream_opt| stream_opt)
             .into_boxed()
     }
+}
+
+/// Receives incoming data stream and check's if it's connection choose message.
+/// If it is, returns the stream. Otherwise None is returned.
+fn recv_choose_conn_msg(
+    stream: TcpStream,
+    expected_msg_len: usize,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
+) -> BoxFuture<Option<TcpStream>, SingleRendezvousAttemptError> {
+    tokio_io::io::read_exact(stream, buffer_with_len(expected_msg_len))
+        .map_err(SingleRendezvousAttemptError::Read)
+        .and_then(move |(stream, buf)| {
+            secure_deserialise::<ChooseConnectionMsg>(&buf[..], &their_pk, &our_sk)
+                .map_err(SingleRendezvousAttemptError::Decrypt)
+                .map(|buf| (stream, buf))
+        })
+        .map(|(stream, buf)| if buf[..] == CHOOSE {
+            Some(stream)
+        } else {
+            None
+        })
+        .into_boxed()
 }
 
 /// Contructs empty mutable buffer with given size that is ready to receive data.
