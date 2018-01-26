@@ -347,7 +347,7 @@ mod tests {
             }
 
             #[test]
-            fn it_consumes_stun_server_and_finally_returns_lack_of_servers_error() {
+            fn it_consumes_stun_server() {
                 let mut evloop = unwrap!(Core::new());
 
                 let p2p = P2p::default();
