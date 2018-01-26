@@ -1,6 +1,7 @@
 use igd_async::{self, GetAnyAddressError};
 use mc;
 use priv_prelude::*;
+use server_set::Servers;
 use std::error::Error;
 
 /// Wrapper around rendezvous connect error and IGD error.
@@ -60,19 +61,19 @@ pub fn rendezvous_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    p2p: &P2p,
 ) -> BoxFuture<SocketAddr, RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();
-    let mc0 = mc.clone();
+    let p2p = p2p.clone();
 
     trace!("creating rendezvous addr");
     let timeout = Duration::from_secs(300);
-    igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, mc)
+    igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, &p2p)
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
-            PublicAddrsFromStun::new(handle.clone(), mc0.clone(), protocol, bind_addr, igd_error)
-                .map(move |addr| if mc0.force_use_local_port() {
+            PublicAddrsFromStun::new(handle.clone(), &p2p, protocol, bind_addr, igd_error)
+                .map(move |addr| if p2p.force_use_local_port() {
                     SocketAddr::new(addr.ip(), bind_addr.port())
                 } else {
                     addr
@@ -84,7 +85,6 @@ pub fn rendezvous_addr(
 /// Does the heavy lifting of public address determination.
 struct PublicAddrsFromStun {
     handle: Handle,
-    p2p: P2p,
     protocol: Protocol,
     bind_addr: SocketAddr,
     stun_queries: stream::FuturesOrdered<BoxFuture<SocketAddr, QueryPublicAddrError>>,
@@ -96,6 +96,7 @@ struct PublicAddrsFromStun {
     max_stun_errors: usize,
     keep_querying_stun: bool,
     more_servers_timeout: Option<Timeout>,
+    servers: Servers,
 }
 
 impl PublicAddrsFromStun {
@@ -103,14 +104,14 @@ impl PublicAddrsFromStun {
     /// This code is only meant to be used, if IGD fails. Hence, IGD error must be always passed.
     fn new(
         handle: Handle,
-        p2p: P2p,
+        p2p: &P2p,
         protocol: Protocol,
         bind_addr: SocketAddr,
         igd_error: GetAnyAddressError,
     ) -> PublicAddrsFromStun {
+        let servers = p2p.iter_servers(protocol);
         PublicAddrsFromStun {
             handle,
-            p2p,
             protocol,
             bind_addr,
             stun_queries:
@@ -123,6 +124,7 @@ impl PublicAddrsFromStun {
             max_stun_errors: 5,
             keep_querying_stun: false,
             more_servers_timeout: None,
+            servers,
         }
     }
 
@@ -131,7 +133,7 @@ impl PublicAddrsFromStun {
     fn with_defaults(handle: Handle, igd_error: GetAnyAddressError) -> PublicAddrsFromStun {
         PublicAddrsFromStun::new(
             handle,
-            P2p::default(),
+            &P2p::default(),
             Protocol::Udp,
             addr!("0.0.0.0:0"),
             igd_error,
@@ -144,9 +146,8 @@ impl PublicAddrsFromStun {
 
     /// Polls for new STUN servers. If there are some, adds new STUN queries.
     fn poll_stun_servers(&mut self) -> Poll<SocketAddr, RendezvousAddrError> {
-        let mut servers = self.p2p.iter_servers(self.protocol);
         self.keep_querying_stun = false;
-        match servers.poll().void_unwrap() {
+        match self.servers.poll().void_unwrap() {
             Async::Ready(Some(server_addr)) => {
                 trace!("got a new server to try: {}", server_addr);
                 let active_query = mc::query_public_addr(
@@ -327,7 +328,7 @@ mod tests {
                 p2p.add_udp_traversal_server(&addr!("1.2.3.4:4000"));
                 let mut public_addrs = PublicAddrsFromStun::new(
                     evloop.handle(),
-                    p2p,
+                    &p2p,
                     Protocol::Udp,
                     addr!("0.0.0.0:0"),
                     GetAnyAddressError::Disabled,
@@ -343,6 +344,33 @@ mod tests {
                 }
 
                 assert!(public_addrs.keep_querying_stun);
+            }
+
+            #[test]
+            fn it_consumes_stun_server_and_finally_returns_lack_of_servers_error() {
+                let mut evloop = unwrap!(Core::new());
+
+                let p2p = P2p::default();
+                p2p.add_udp_traversal_server(&addr!("1.2.3.4:4000"));
+                let mut public_addrs = PublicAddrsFromStun::new(
+                    evloop.handle(),
+                    &p2p,
+                    Protocol::Udp,
+                    addr!("0.0.0.0:0"),
+                    GetAnyAddressError::Disabled,
+                );
+
+                {
+                    let poll_stun = future::poll_fn(|| match public_addrs.poll_stun_servers() {
+                        Ok(Async::NotReady) => Ok(Async::Ready(())),
+                        Err(e) => Err(e),
+                        _ => panic!("Unexpected poll_stun_servers() result!"),
+                    });
+                    unwrap!(evloop.run(poll_stun));
+                }
+
+                let stun_servers = public_addrs.servers.snapshot();
+                assert!(stun_servers.is_empty());
             }
         }
 
