@@ -61,19 +61,19 @@ pub fn rendezvous_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    p2p: &P2p,
 ) -> BoxFuture<SocketAddr, RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();
-    let mc0 = mc.clone();
+    let p2p = p2p.clone();
 
     trace!("creating rendezvous addr");
     let timeout = Duration::from_secs(300);
-    igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, mc)
+    igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, &p2p)
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
-            PublicAddrsFromStun::new(handle.clone(), &mc0, protocol, bind_addr, igd_error)
-                .map(move |addr| if mc0.force_use_local_port() {
+            PublicAddrsFromStun::new(handle.clone(), &p2p, protocol, bind_addr, igd_error)
+                .map(move |addr| if p2p.force_use_local_port() {
                     SocketAddr::new(addr.ip(), bind_addr.port())
                 } else {
                     addr
