@@ -17,8 +17,7 @@ const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
 /// Final connection handshake message.
 /// One peer reads incoming stream and waits for this message, while the other sends this
 /// message indicating wish to connect.
-type ChooseConnectionMsg = [u8; 6];
-const CHOOSE: ChooseConnectionMsg = [b'c', b'h', b'o', b'o', b's', b'e'];
+const CHOOSE: &[u8] = b"choose";
 
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
@@ -405,11 +404,11 @@ fn recv_choose_conn_msg(
     tokio_io::io::read_exact(stream, buffer_with_len(expected_msg_len))
         .map_err(SingleRendezvousAttemptError::Read)
         .and_then(move |(stream, buf)| {
-            secure_deserialise::<ChooseConnectionMsg>(&buf[..], &their_pk, &our_sk)
+            secure_deserialise::<Vec<u8>>(&buf[..], &their_pk, &our_sk)
                 .map_err(SingleRendezvousAttemptError::Decrypt)
                 .map(|buf| (stream, buf))
         })
-        .map(|(stream, buf)| if buf[..] == CHOOSE {
+        .map(|(stream, buf)| if buf[..] == *CHOOSE {
             Some(stream)
         } else {
             None
