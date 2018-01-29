@@ -408,12 +408,13 @@ fn recv_choose_conn_msg(
                 .map_err(SingleRendezvousAttemptError::Decrypt)
                 .map(|buf| (stream, buf))
         })
-        .map(|(stream, buf)| if buf[..] == *CHOOSE {
-            Some(stream)
-        } else {
-            None
-        })
+        .map(|(stream, buf)| only_chosen_connection(stream, &buf[..]))
         .into_boxed()
+}
+
+/// Returns given stream, if received "choose connection" message. Otherwise `None` is returned.
+fn only_chosen_connection<T>(stream: T, buf: &[u8]) -> Option<T> {
+    if buf == CHOOSE { Some(stream) } else { None }
 }
 
 /// Contructs empty mutable buffer with given size that is ready to receive data.
@@ -467,6 +468,24 @@ mod test {
             let buf = buffer_with_len(8);
 
             assert_eq!(buf.len(), 8);
+        }
+    }
+
+    mod only_chosen_connection {
+        use super::*;
+
+        #[test]
+        fn when_received_message_is_not_choose_connection_it_returns_none() {
+            let conn = only_chosen_connection("conn1", b"some random data");
+
+            assert_eq!(conn, None);
+        }
+
+        #[test]
+        fn when_received_message_is_choose_connection_it_returns_given_connection() {
+            let conn = only_chosen_connection("conn1", CHOOSE);
+
+            assert_eq!(conn, Some("conn1"));
         }
     }
 
