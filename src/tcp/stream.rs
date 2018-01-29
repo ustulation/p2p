@@ -164,6 +164,12 @@ quick_error! {
             // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
             // trait.
         }
+        Encrypt(e: SecureSerialiseError) {
+            description("error decrypting data")
+            display("error decrypting data: {:?}", e)
+            // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
+            // trait.
+        }
     }
 }
 
@@ -362,7 +368,13 @@ fn choose_connections(
     their_pk: PublicKey,
     our_sk: SecretKey,
 ) -> BoxStream<TcpStream, SingleRendezvousAttemptError> {
-    let encrypted_msg = unwrap!(secure_serialise(&CHOOSE, &their_pk, &our_sk));
+    let encrypted_msg = match secure_serialise(&CHOOSE, &their_pk, &our_sk) {
+        Ok(msg) => msg,
+        Err(e) => {
+            return stream::iter_result(vec![Err(SingleRendezvousAttemptError::Encrypt(e))])
+                .into_boxed()
+        }
+    };
 
     if our_pk > their_pk {
         all_incoming
