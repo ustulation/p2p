@@ -4,10 +4,6 @@ environment:
   matrix:
     - RUST_TOOLCHAIN: 1.22.1
 
-branches:
-  only:
-    - master
-
 cache:
   - '%USERPROFILE%\.p2p'
   - '%APPVEYOR_BUILD_FOLDER%\target'

@@ -1,8 +1,11 @@
 use bincode::{self, Infinite};
-
+use bytes::BufMut;
 use filter_addrs::filter_addrs;
 use priv_prelude::*;
 use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
+use rust_sodium::crypto::box_::{PublicKey, SecretKey};
+use secure_serialisation::{Error as SecureSerialiseError, deserialise as secure_deserialise,
+                           serialise as secure_serialise};
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
 use tcp::msg::TcpRendezvousMsg;
@@ -10,6 +13,11 @@ use tokio_io;
 
 const RENDEZVOUS_TIMEOUT_SEC: u64 = 10;
 const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
+
+/// Final connection handshake message.
+/// One peer reads incoming stream and waits for this message, while the other sends this
+/// message indicating wish to connect.
+const CHOOSE: &[u8] = b"choose";
 
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
@@ -149,6 +157,18 @@ quick_error! {
             display("error reading handshake on connection candidate socket: {}", e)
             cause(e)
         }
+        Decrypt(e: SecureSerialiseError) {
+            description("error decrypting data")
+            display("error decrypting data: {:?}", e)
+            // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
+            // trait.
+        }
+        Encrypt(e: SecureSerialiseError) {
+            description("error decrypting data")
+            display("error decrypting data: {:?}", e)
+            // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
+            // trait.
+        }
     }
 }
 
@@ -212,8 +232,7 @@ impl TcpStreamExt for TcpStream {
         // anything other than the first message to the other peer.
 
         let handle0 = handle.clone();
-        let handle1 = handle.clone();
-        let (pk, _sk) = crypto::box_::gen_keypair();
+        let (our_pk, our_sk) = crypto::box_::gen_keypair();
 
         let try = || {
             trace!("starting tcp rendezvous connect");
@@ -244,108 +263,165 @@ impl TcpStreamExt for TcpStream {
                     .and_then(move |(rendezvous_addr_opt, map_error)| {
                         trace!("got rendezvous address: {:?}", rendezvous_addr_opt);
                         let msg = TcpRendezvousMsg::Init {
-                            enc_pk: pk,
+                            enc_pk: our_pk,
                             open_addrs: addrs,
                             rendezvous_addr: rendezvous_addr_opt,
                         };
-                        let msg = unwrap!(bincode::serialize(&msg, Infinite));
-                        let msg = Bytes::from(msg);
 
                         trace!("exchanging rendezvous info with peer");
-                        channel.send(msg)
-                    .map_err(TcpRendezvousConnectError::ChannelWrite)
-                    .and_then(move |channel| {
-                        channel
-                        .map_err(TcpRendezvousConnectError::ChannelRead)
-                        .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
-                        .with_timeout(
-                            Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
-                            &handle1
-                        )
-                        .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
-                    })
-                    .and_then(|(msg, _channel)| {
-                        bincode::deserialize(&msg)
-                        .map_err(TcpRendezvousConnectError::DeserializeMsg)
-                    })
-                    .and_then(move |msg| {
-                        let TcpRendezvousMsg::Init {
-                            enc_pk: their_pk,
-                            open_addrs,
-                            rendezvous_addr
-                        } = msg;
 
-                        // filter our subnet and loopback addresess if they can't possibly be
-                        // useful.
-                        let their_addrs = open_addrs.into_iter().collect();
-                        let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
-                        if let Some(rendezvous_addr) = rendezvous_addr {
-                            let _ = their_addrs.insert(rendezvous_addr);
-                        }
+                        exchange_conn_info(channel, &handle0, &msg).and_then(move |msg| {
+                            let TcpRendezvousMsg::Init {
+                                enc_pk: their_pk,
+                                open_addrs,
+                                rendezvous_addr,
+                            } = msg;
 
-                        let connectors = {
-                            their_addrs
-                            .into_iter()
-                            .map(|addr| {
-                                TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
-                                .map_err(SingleRendezvousAttemptError::Connect)
-                            })
-                            .collect::<Vec<_>>()
-                        };
+                            // filter our subnet and loopback addresess if they can't possibly be
+                            // useful.
+                            let their_addrs = open_addrs.into_iter().collect();
+                            let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
+                            if let Some(rendezvous_addr) = rendezvous_addr {
+                                let _ = their_addrs.insert(rendezvous_addr);
+                            }
 
-                        let incoming = {
-                            listener
-                            .incoming()
-                            .map(|(stream, _addr)| stream)
-                            .map_err(SingleRendezvousAttemptError::Accept)
-                            .until({
-                                Timeout::new(Duration::from_secs(RENDEZVOUS_TIMEOUT_SEC), &handle0)
-                                .infallible()
-                            })
-                        };
-
-                        let all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError> = {
-                            stream::futures_unordered(connectors)
-                            .select(incoming)
-                            .into_boxed()
-                        };
-
-                        const CHOOSE: [u8; 6] = [b'c', b'h', b'o', b'o', b's', b'e'];
-
-                        if pk > their_pk {
-                            all_incoming
-                            .and_then(|stream| {
-                                tokio_io::io::write_all(stream, CHOOSE)
-                                .map_err(SingleRendezvousAttemptError::Write)
-                                .map(|(stream, _buf)| stream)
-                            })
-                            .into_boxed()
-                        } else {
-                            all_incoming
-                            .and_then(|stream| {
-                                tokio_io::io::read_exact(stream, [0; 6])
-                                .map_err(SingleRendezvousAttemptError::Read)
-                                .map(|(stream, buf)| {
-                                    if buf == CHOOSE {
-                                        Some(stream)
-                                    } else {
-                                        None
-                                    }
+                            let connectors = {
+                                their_addrs
+                                    .into_iter()
+                                    .map(|addr| {
+                                        TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
+                                            .map_err(SingleRendezvousAttemptError::Connect)
+                                    })
+                                    .collect::<Vec<_>>()
+                            };
+                            let incoming = {
+                                listener
+                                    .incoming()
+                                    .map(|(stream, _addr)| stream)
+                                    .map_err(SingleRendezvousAttemptError::Accept)
+                                    .until({
+                                        Timeout::new(
+                                            Duration::from_secs(RENDEZVOUS_TIMEOUT_SEC),
+                                            &handle0,
+                                        ).infallible()
+                                    })
+                            };
+                            let all_incoming = stream::futures_unordered(connectors)
+                                .select(incoming)
+                                .into_boxed();
+                            choose_connections(all_incoming, our_pk, their_pk, our_sk)
+                                .first_ok()
+                                .map_err(|v| {
+                                    TcpRendezvousConnectError::AllAttemptsFailed(v, map_error)
                                 })
-                            })
-                            .filter_map(|stream_opt| stream_opt)
-                            .into_boxed()
-                        }
-                        .first_ok()
-                        .map_err(|v| TcpRendezvousConnectError::AllAttemptsFailed(v, map_error))
-                        .into_boxed()
-                    })
+                                .into_boxed()
+                        })
                     })
             })
         };
 
         TcpRendezvousConnect { inner: future::result(try()).flatten().into_boxed() }
     }
+}
+
+fn exchange_conn_info<C>(
+    channel: C,
+    handle: &Handle,
+    msg: &TcpRendezvousMsg,
+) -> BoxFuture<TcpRendezvousMsg, TcpRendezvousConnectError<C::Error, C::SinkError>>
+where
+    C: Stream<Item = Bytes>,
+    C: Sink<SinkItem = Bytes>,
+    <C as Stream>::Error: fmt::Debug,
+    <C as Sink>::SinkError: fmt::Debug,
+    C: 'static,
+{
+    let handle = handle.clone();
+    let msg = unwrap!(bincode::serialize(&msg, Infinite));
+    let msg = Bytes::from(msg);
+    channel
+        .send(msg)
+        .map_err(TcpRendezvousConnectError::ChannelWrite)
+        .and_then(move |channel| {
+            channel
+                .map_err(TcpRendezvousConnectError::ChannelRead)
+                .next_or_else(|| TcpRendezvousConnectError::ChannelClosed)
+                .with_timeout(
+                    Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
+                    &handle,
+                )
+                .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
+                .and_then(|(msg, _channel)| {
+                    bincode::deserialize(&msg).map_err(TcpRendezvousConnectError::DeserializeMsg)
+                })
+        })
+        .into_boxed()
+}
+
+/// Finalizes rendezvous connection with sending special message 'choose'.
+/// Only one peer sends this message while the other receives and validates it. Who is who is
+/// determined by public keys.
+fn choose_connections(
+    all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError>,
+    our_pk: PublicKey,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
+) -> BoxStream<TcpStream, SingleRendezvousAttemptError> {
+    let encrypted_msg = match secure_serialise(&CHOOSE, &their_pk, &our_sk) {
+        Ok(msg) => msg,
+        Err(e) => {
+            return stream::iter_result(vec![Err(SingleRendezvousAttemptError::Encrypt(e))])
+                .into_boxed()
+        }
+    };
+
+    if our_pk > their_pk {
+        all_incoming
+            .and_then(move |stream| {
+                tokio_io::io::write_all(stream, encrypted_msg.clone())
+                    .map_err(SingleRendezvousAttemptError::Write)
+                    .map(|(stream, _buf)| stream)
+            })
+            .into_boxed()
+    } else {
+        all_incoming
+            .and_then(move |stream| {
+                recv_choose_conn_msg(stream, encrypted_msg.len(), their_pk, our_sk.clone())
+            })
+            .filter_map(|stream_opt| stream_opt)
+            .into_boxed()
+    }
+}
+
+/// Receives incoming data stream and check's if it's connection choose message.
+/// If it is, returns the stream. Otherwise None is returned.
+fn recv_choose_conn_msg(
+    stream: TcpStream,
+    expected_msg_len: usize,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
+) -> BoxFuture<Option<TcpStream>, SingleRendezvousAttemptError> {
+    tokio_io::io::read_exact(stream, buffer_with_len(expected_msg_len))
+        .map_err(SingleRendezvousAttemptError::Read)
+        .and_then(move |(stream, buf)| {
+            secure_deserialise::<Vec<u8>>(&buf[..], &their_pk, &our_sk)
+                .map_err(SingleRendezvousAttemptError::Decrypt)
+                .map(|buf| (stream, buf))
+        })
+        .map(|(stream, buf)| only_chosen_connection(stream, &buf[..]))
+        .into_boxed()
+}
+
+/// Returns given stream, if received "choose connection" message. Otherwise `None` is returned.
+fn only_chosen_connection<T>(stream: T, buf: &[u8]) -> Option<T> {
+    if buf == CHOOSE { Some(stream) } else { None }
+}
+
+/// Contructs empty mutable buffer with given size that is ready to receive data.
+fn buffer_with_len(len: usize) -> BytesMut {
+    let mut buf = BytesMut::with_capacity(len);
+    buf.put(vec![0; len]);
+    buf
 }
 
 pub struct TcpRendezvousConnect<C>
@@ -383,6 +459,35 @@ mod test {
     use tokio_io;
 
     use util;
+
+    mod buffer_with_len {
+        use super::*;
+
+        #[test]
+        fn it_returns_buffer_with_given_length() {
+            let buf = buffer_with_len(8);
+
+            assert_eq!(buf.len(), 8);
+        }
+    }
+
+    mod only_chosen_connection {
+        use super::*;
+
+        #[test]
+        fn when_received_message_is_not_choose_connection_it_returns_none() {
+            let conn = only_chosen_connection("conn1", b"some random data");
+
+            assert_eq!(conn, None);
+        }
+
+        #[test]
+        fn when_received_message_is_choose_connection_it_returns_given_connection() {
+            let conn = only_chosen_connection("conn1", CHOOSE);
+
+            assert_eq!(conn, Some("conn1"));
+        }
+    }
 
     #[test]
     fn rendezvous_over_loopback() {
