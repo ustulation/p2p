@@ -5,6 +5,7 @@ use open_addr::BindPublicError;
 pub use priv_prelude::*;
 use tcp::listener::{self, TcpListenerExt};
 use tokio_io;
+use tokio_io::codec::length_delimited::{self, Framed};
 
 /// Sends response to rendezvous address request (`ECHO_REQ`).
 pub fn respond_with_addr(stream: TcpStream, addr: SocketAddr) -> IoFuture<TcpStream> {
@@ -83,37 +84,41 @@ fn from_listener_inner(
     handle: &Handle,
 ) -> TcpRendezvousServer {
     let (drop_tx, drop_rx) = drop_notify();
-    let f = {
+    let handle_connections = {
         let handle = handle.clone();
-
         listener
         .incoming()
-        .map(move |(stream, addr)| {
-            let buf = [0u8; 8];
-            tokio_io::io::read_exact(stream, buf)
-            .and_then(move |(stream, buf)| {
-                if buf == ECHO_REQ {
-                    respond_with_addr(stream, addr)
-                        .map(|_stream| ())
-                        .into_boxed()
-                } else {
-                    future::ok(()).into_boxed()
-                }
-            })
-            .with_timeout(Duration::from_secs(2), &handle)
-            .and_then(|opt| opt.ok_or_else(|| io::ErrorKind::TimedOut.into()))
-        })
+        .map(move |(stream, addr)| handle_connection(stream, addr, &handle))
         .buffer_unordered(1024)
         .log_errors(LogLevel::Info, "processing echo request")
         .until(drop_rx)
         .for_each(|()| Ok(()))
         .infallible()
     };
-    handle.spawn(f);
+    handle.spawn(handle_connections);
     TcpRendezvousServer {
         _drop_tx: drop_tx,
         local_addr: *bind_addr,
     }
+}
+
+fn handle_connection(stream: TcpStream, addr: SocketAddr, handle: &Handle) -> IoFuture<()> {
+    let stream: Framed<_, Bytes> = length_delimited::Builder::new().new_framed(stream);
+    stream
+        .into_future()
+        .map_err(|(err, _stream)| err)
+        .and_then(move |(req_opt, stream)| if req_opt ==
+            Some(BytesMut::from(&ECHO_REQ[..]))
+        {
+            udp_respond_with_addr(stream, addr)
+                .map(|_stream| ())
+                .into_boxed()
+        } else {
+            future::ok(()).into_boxed()
+        })
+        .with_timeout(Duration::from_secs(2), handle)
+        .and_then(|opt| opt.ok_or_else(|| io::ErrorKind::TimedOut.into()))
+        .into_boxed()
 }
 
 #[cfg(test)]

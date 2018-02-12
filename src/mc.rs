@@ -7,7 +7,7 @@ use futures::future::Loop;
 use priv_prelude::*;
 use protocol::Protocol;
 use server_set::{ServerSet, Servers};
-use tokio_io;
+use tokio_io::codec::length_delimited::{self, Framed};
 
 /// `P2p` allows you to manage how NAT traversal works.
 ///
@@ -216,15 +216,19 @@ pub fn tcp_query_public_addr(
         .with_timeout(Duration::from_secs(3), &handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ConnectTimeout))
         .and_then(|stream| {
-            tokio_io::io::write_all(stream, ECHO_REQ)
-                .map(|(stream, _buf)| stream)
-                .map_err(QueryPublicAddrError::SendRequest)
+            let stream: Framed<_, Bytes> = length_delimited::Builder::new().new_framed(stream);
+            stream.send(Bytes::from(&ECHO_REQ[..])).map_err(
+                QueryPublicAddrError::SendRequest,
+            )
         })
         .and_then(move |stream| {
-            tokio_io::io::read_to_end(stream, Vec::new())
-                .map_err(QueryPublicAddrError::ReadResponse)
-                .and_then(|(_stream, data)| {
-                    bincode::deserialize(&data).map_err(QueryPublicAddrError::Deserialize)
+            stream
+                .into_future()
+                .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
+                .and_then(move |(resp_opt, _stream)| {
+                    bincode::deserialize(&unwrap!(resp_opt)).map_err(
+                        QueryPublicAddrError::Deserialize,
+                    )
                 })
                 .with_timeout(Duration::from_secs(2), &handle)
                 .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
