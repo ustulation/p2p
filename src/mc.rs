@@ -225,10 +225,13 @@ pub fn tcp_query_public_addr(
             stream
                 .into_future()
                 .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
-                .and_then(move |(resp_opt, _stream)| {
-                    bincode::deserialize(&unwrap!(resp_opt)).map_err(
-                        QueryPublicAddrError::Deserialize,
-                    )
+                .and_then(|(resp_opt, _stream)| {
+                    resp_opt.ok_or_else(|| {
+                        QueryPublicAddrError::ReadResponse(io::ErrorKind::ConnectionReset.into())
+                    })
+                })
+                .and_then(move |resp| {
+                    bincode::deserialize(&resp).map_err(QueryPublicAddrError::Deserialize)
                 })
                 .with_timeout(Duration::from_secs(2), &handle)
                 .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
