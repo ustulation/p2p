@@ -164,42 +164,51 @@ pub fn query_public_addr(
 }
 
 quick_error! {
+    /// Error indicating failure to retrieve our public address.
     #[derive(Debug)]
     pub enum QueryPublicAddrError {
+        /// Failed to bind to socket before even starting a query.
         Bind(e: io::Error) {
             description("error binding to socket address")
             display("error binding to socket address: {}", e)
             cause(e)
         }
+        /// Connection failure.
         Connect(e: io::Error) {
             description("error connecting to echo server")
             display("error connecting to echo server: {}", e)
             cause(e)
         }
+        /// Query timed out.
         ConnectTimeout {
             description("timed out contacting server")
         }
+        /// Error sending query.
         SendRequest(e: io::Error) {
             description("error sending request to echo server")
             display("error sending request to echo server: {}", e)
             cause(e)
         }
+        /// Error receiving query.
         ReadResponse(e: io::Error) {
             description("error reading response from echo server")
             display("error reading response from echo server: {}", e)
             cause(e)
         }
+        /// Bad response format.
         Deserialize(e: bincode::Error) {
             description("error deserializing response from echo server")
             display("error deserializing response from echo server: {}", e)
             cause(e)
         }
+        /// Respone timed out.
         ResponseTimeout {
             description("timed out waiting for response from echo server")
         }
     }
 }
 
+/// Queries our public IP.
 pub fn tcp_query_public_addr(
     bind_addr: &SocketAddr,
     server_addr: &SocketAddr,
