@@ -16,7 +16,7 @@ pub use protocol::Protocol;
 pub use rand::Rng;
 
 pub use rust_sodium::crypto;
-pub use std::{fmt, io, mem};
+pub use std::{fmt, io, mem, u64};
 pub use std::collections::{HashMap, HashSet};
 pub use std::hash::Hash;
 pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

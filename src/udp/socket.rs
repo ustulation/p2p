@@ -6,13 +6,14 @@ use open_addr::{BindPublicError, open_addr};
 use priv_prelude::*;
 use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
 use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
-use secure_serialisation::{Error as SecureSerialiseError, deserialise as secure_deserialise,
-                           serialise as secure_serialise};
+use secure_serialisation::{self, deserialise as secure_deserialise, serialise as secure_serialise};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
 
 const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
+const HOLE_PUNCH_DELAY_TOLERANCE_SEC: u64 = 120;
+const HOLE_PUNCH_INITIAL_TTL: u32 = 2;
 
 /// Errors returned by `UdpSocketExt::rendezvous_connect`.
 #[derive(Debug)]
@@ -31,6 +32,8 @@ pub enum UdpRendezvousConnectError<Ei, Eo> {
     ChannelRead(Ei),
     /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
+    /// Failure to serialise a message
+    SerialiseMsg(secure_serialisation::Error),
     /// Failure to deserialize message received from rendezvous connection info exchange channel.
     DeserializeMsg(bincode::Error),
     /// Failure to send packets to the socket.
@@ -100,6 +103,7 @@ where
             SetTtl(ref e) => Some(e),
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
+            SerialiseMsg(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
             ChannelClosed |
             ChannelTimedOut |
@@ -118,6 +122,7 @@ where
             ChannelRead(..) => "error reading from rendezvous channel",
             ChannelWrite(..) => "error writing to rendezvous channel",
             ChannelTimedOut => "timedout waiting for message via rendezvous channel",
+            SerialiseMsg(..) => "error serialising a message",
             DeserializeMsg(..) => "error deserializing message from rendezvous channel",
             SocketWrite(..) => "error writing to socket",
             SetTtl(..) => "error setting ttl value on socket",
@@ -231,8 +236,11 @@ impl UdpSocketExt for UdpSocket {
         C: 'static,
     {
         let handle0 = handle.clone();
+        let handle1 = handle.clone();
         let mc0 = mc.clone();
         let (our_pk, our_sk) = gen_keypair();
+        let our_sk0 = our_sk.clone();
+        let our_sk1 = our_sk.clone();
 
         trace!("starting rendezvous connect");
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
@@ -266,18 +274,18 @@ impl UdpSocketExt for UdpSocket {
                                     rendezvous_addrs: _their_rendezvous_addrs,
                                 } = their_msg;
 
-                                let hole_punching =
-                                    HolePunching::new(&handle0, 0, their_pk, our_sk);
                                 let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
                                 let incoming = {
                                     open_connect(
-                                        hole_punching.clone(),
+                                        &handle0,
+                                        their_pk,
+                                        our_sk0,
                                         socket,
                                         their_open_addrs,
                                         true,
                                     ).into_boxed()
                                 };
-                                (hole_punching, incoming, None, None)
+                                (their_pk, incoming, None, None)
                             })
                         })
                     };
@@ -306,7 +314,6 @@ impl UdpSocketExt for UdpSocket {
                                     return future::ok(Loop::Break((sockets, None))).into_boxed();
                                 }
                                 let try = || {
-                                    let ttl_increments = 2 << sockets.len();
                                     let socket = {
                                         UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle0)
                                             .map_err(UdpRendezvousConnectError::Rebind)
@@ -316,7 +323,7 @@ impl UdpSocketExt for UdpSocket {
                                             UdpRendezvousConnectError::Rebind,
                                         )?
                                     };
-                                    socket.set_ttl(ttl_increments).map_err(
+                                    socket.set_ttl(HOLE_PUNCH_INITIAL_TTL).map_err(
                                         UdpRendezvousConnectError::SetTtl,
                                     )?;
                                     Ok({
@@ -363,8 +370,6 @@ impl UdpSocketExt for UdpSocket {
                                         open_addrs: their_open_addrs,
                                         rendezvous_addrs: their_rendezvous_addrs,
                                     } = their_msg;
-                                    let hole_punching =
-                                        HolePunching::new(&handle2, 0, their_pk, our_sk);
 
                                     trace!(
                                         "their rendezvous addresses are: {:#?}",
@@ -376,15 +381,21 @@ impl UdpSocketExt for UdpSocket {
                                         sockets.into_iter().zip(their_rendezvous_addrs).enumerate()
                                     };
                                     for (i, (socket, their_addr)) in iter {
-                                        let ttl_increment = 2 << i;
-                                        socket.set_ttl(ttl_increment).map_err(
+                                        socket.set_ttl(HOLE_PUNCH_INITIAL_TTL).map_err(
                                             UdpRendezvousConnectError::SetTtl,
                                         )?;
                                         let shared = SharedUdpSocket::share(socket);
                                         let with_addr = shared.with_address(their_addr);
-                                        let hole_punching =
-                                            hole_punching.clone().with_ttl_increment(ttl_increment);
-                                        punchers.push(hole_punching.start(with_addr));
+                                        let delay_tolerance =
+                                            Duration::from_secs(HOLE_PUNCH_DELAY_TOLERANCE_SEC);
+                                        let duration = delay_tolerance / (1 << i);
+                                        punchers.push(HolePunching::new_ttl_incrementer(
+                                            &handle2,
+                                            with_addr,
+                                            their_pk,
+                                            our_sk1.clone(),
+                                            duration,
+                                        ));
                                     }
 
                                     let their_open_addrs =
@@ -396,7 +407,9 @@ impl UdpSocketExt for UdpSocket {
                                     );
                                     let incoming = {
                                         open_connect(
-                                            hole_punching.clone(),
+                                            &handle2,
+                                            their_pk,
+                                            our_sk1,
                                             listen_socket,
                                             their_open_addrs,
                                             false,
@@ -404,7 +417,7 @@ impl UdpSocketExt for UdpSocket {
                                             .into_boxed()
                                     };
                                     Ok((
-                                        hole_punching,
+                                        their_pk,
                                         incoming,
                                         Some(bind_public_error),
                                         rendezvous_error_opt,
@@ -416,11 +429,11 @@ impl UdpSocketExt for UdpSocket {
                     future::result(try()).flatten().into_boxed()
                 }
             })
-            .and_then(move |(hole_punching,
+            .and_then(move |(their_pk,
                    incoming,
                    bind_public_error_opt,
                    rendezvous_error_opt)| {
-                if our_pk > hole_punching.their_pk {
+                if our_pk > their_pk {
                     trace!("we are choosing the connection");
                     incoming
                         .and_then(|(socket, chosen)| {
@@ -439,7 +452,7 @@ impl UdpSocketExt for UdpSocket {
                                 rendezvous_error_opt.map(Box::new),
                             )
                         })
-                        .and_then(move |socket| choose(hole_punching, socket, 0))
+                        .and_then(move |socket| choose(&handle1, their_pk, our_sk, socket, 0))
                         .into_boxed()
                 } else {
                     trace!("they are choosing the connection");
@@ -448,7 +461,7 @@ impl UdpSocketExt for UdpSocket {
                             if chosen {
                                 return future::ok(got_chosen(socket)).into_boxed();
                             }
-                            take_chosen(hole_punching.clone(), socket)
+                            take_chosen(&handle1, their_pk, our_sk.clone(), socket)
                         })
                         .buffer_unordered(256)
                         .filter_map(|opt| opt)
@@ -494,6 +507,11 @@ quick_error! {
     /// Error resulting from a single failed hole-punching attempt.
     #[derive(Debug)]
     pub enum HolePunchError {
+        SerialiseMsg(e: secure_serialisation::Error) {
+            description("error serialising message")
+            display("error serialising message: {}", e)
+            cause(e)
+        }
         SendMessage(e: io::Error) {
             description("error sending message to peer")
             display("error sending message to peer: {}", e)
@@ -504,8 +522,16 @@ quick_error! {
             display("error receiving message from peer: {}", e)
             cause(e)
         }
+        SocketStolen {
+            description("another puncher took the socket")
+        }
         UnexpectedMessage {
             description("received unexpected hole-punch message type")
+        }
+        GetTtl(e: io::Error) {
+            description("error getting ttl of socket")
+            display("error getting ttl of socket: {}", e)
+            cause(e)
         }
         SetTtl(e: io::Error) {
             description("error setting ttl on socket")
@@ -518,264 +544,264 @@ quick_error! {
     }
 }
 
-/// Hole punching context.
-/// Used by every async hole punching function to track current state.
-#[derive(Clone)]
+const MAX_TTL: u32 = 16;
+const HOLE_PUNCH_MSG_PERIOD_MS: u64 = 200;
+
 struct HolePunching {
-    handle: Handle,
-    ttl_increment: u32,
-    syns_acks_sent: u32,
-    ack_acks_sent: u32,
+    socket: Option<WithAddress>,
+    sending_msg: Option<Bytes>,
+    timeout: Timeout,
     their_pk: PublicKey,
     our_sk: SecretKey,
+    phase: HolePunchingPhase,
+}
+
+enum HolePunchingPhase {
+    Syn {
+        time_of_last_ttl_increment: Instant,
+        ttl_increment_duration: Duration,
+    },
+    Ack,
+    AckAck {
+        ack_acks_sent: u32,
+        received_ack_ack: bool,
+    },
 }
 
 impl HolePunching {
-    fn new(handle: &Handle, ttl_increment: u32, their_pk: PublicKey, our_sk: SecretKey) -> Self {
-        HolePunching {
-            handle: handle.clone(),
-            ttl_increment,
-            syns_acks_sent: 0,
-            ack_acks_sent: 0,
-            their_pk,
-            our_sk,
-        }
-    }
-
-    fn with_ttl_increment(mut self, ttl_increment: u32) -> Self {
-        self.ttl_increment = ttl_increment;
-        self
-    }
-
-    /// Consumes hole punching context and starts procedure by sending SYN packet to given socket
-    /// with remote address.
-    fn start(self, socket: WithAddress) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-        let handle = self.handle.clone();
-        send_syn(self, socket)
-            .with_timeout(Duration::from_secs(10), &handle)
-            .and_then(|opt| opt.ok_or(HolePunchError::TimedOut))
-            .into_boxed()
-    }
-
-    /// Encrypts and serializes hole punching message which is then ready to be sent accross
-    /// the network.
-    fn encrypt_msg(&self, msg: &HolePunchMsg) -> Bytes {
-        let encrypted = unwrap!(secure_serialise(msg, &self.their_pk, &self.our_sk));
-        Bytes::from(encrypted)
-    }
-
-    /// Try to decrypt raw bytes into hole punching message.
-    fn decrypt_msg(&self, msg: &Bytes) -> Result<HolePunchMsg, SecureSerialiseError> {
-        secure_deserialise(msg, &self.their_pk, &self.our_sk)
-    }
-
-    /// Sends hole punching message message to the given socket.
-    fn send_msg(
-        &self,
-        msg: &HolePunchMsg,
+    pub fn new_for_open_peer(
+        handle: &Handle,
         socket: WithAddress,
-    ) -> BoxFuture<WithAddress, HolePunchError> {
-        socket
-            .send(self.encrypt_msg(msg))
-            .map_err(HolePunchError::SendMessage)
-            .into_boxed()
-    }
-
-    fn inc_ttl_and_syn_acks(&mut self, socket: WithAddress) -> io::Result<WithAddress> {
-        self.syns_acks_sent += 1;
-        if self.syns_acks_sent % 5 == 0 && self.ttl_increment != 0 {
-            let ttl = socket.ttl()?;
-            socket.set_ttl(ttl + self.ttl_increment)?;
+        their_pk: PublicKey,
+        our_sk: SecretKey,
+    ) -> HolePunching {
+        HolePunching {
+            socket: Some(socket),
+            sending_msg: None,
+            timeout: Timeout::new(Duration::new(0, 0), handle),
+            their_pk: their_pk,
+            our_sk: our_sk,
+            phase: HolePunchingPhase::Syn {
+                time_of_last_ttl_increment: Instant::now(),
+                ttl_increment_duration: Duration::new(u64::max_value(), 0),
+            },
         }
-        Ok(socket)
     }
 
-    /// Creates timeout of 200 miliseconds from when this function is called.
-    /// Reduces boilerplate and allows to easily add some dynamic to timeouts.
-    fn msg_timeout(&self) -> Instant {
-        Instant::now() + Duration::from_millis(200)
+    pub fn new_ttl_incrementer(
+        handle: &Handle,
+        socket: WithAddress,
+        their_pk: PublicKey,
+        our_sk: SecretKey,
+        duration_to_reach_max_ttl: Duration,
+    ) -> HolePunching {
+        HolePunching {
+            socket: Some(socket),
+            sending_msg: None,
+            timeout: Timeout::new(Duration::new(0, 0), handle),
+            their_pk: their_pk,
+            our_sk: our_sk,
+            phase: HolePunchingPhase::Syn {
+                time_of_last_ttl_increment: Instant::now(),
+                ttl_increment_duration: {
+                    duration_to_reach_max_ttl / (MAX_TTL - HOLE_PUNCH_INITIAL_TTL)
+                },
+            },
+        }
     }
-}
 
-// send a HolePunchMsg::Syn to the other peer, and complete hole-punching from there.
-fn send_syn(
-    mut ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    trace!("sending syn to {}", socket.remote_addr());
-
-    ctx.send_msg(&HolePunchMsg::Syn, socket)
-        .and_then(move |socket| {
-            let try = || {
-                let socket = ctx.inc_ttl_and_syn_acks(socket)?;
-                Ok(recv_from_syn(ctx, socket))
+    fn flush(&mut self) -> Result<Async<()>, HolePunchError> {
+        loop {
+            match unwrap!(self.socket.as_mut()).poll_complete() {
+                Err(e) => return Err(HolePunchError::SendMessage(e)),
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::Ready(())) => (),
             };
-            future::result(try().map_err(HolePunchError::SetTtl)).flatten()
-        })
-        .into_boxed()
-}
 
-// we have just sent a syn packet, listen for incoming packets until it's time to send another one.
-fn recv_from_syn(
-    ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    socket
-        .with_timeout_at(ctx.msg_timeout(), &ctx.handle)
-        .into_future()
-        .map_err(|(e, _)| HolePunchError::ReadMessage(e))
-        .and_then(move |(msg_opt, socket_timeout)| {
-            let socket = socket_timeout.into_inner();
-            match msg_opt {
-                None => send_syn(ctx, socket),
-                Some(recv_msg) => {
-                    match ctx.decrypt_msg(&recv_msg) {
-                        Err(e) => {
-                            warn!("error decrypting packet from peer: {:?}", e);
-                            recv_from_syn(ctx, socket)
-                        }
-                        Ok(HolePunchMsg::Syn) => send_ack(ctx, socket),
-                        Ok(HolePunchMsg::Ack) => send_ack_ack_and_proceed(ctx, socket),
-                        Ok(HolePunchMsg::AckAck) |
-                        Ok(HolePunchMsg::Choose) => {
-                            future::err(HolePunchError::UnexpectedMessage).into_boxed()
-                        }
+            if let Some(bytes) = self.sending_msg.take() {
+                match unwrap!(self.socket.as_mut()).start_send(bytes) {
+                    Err(e) => return Err(HolePunchError::SendMessage(e)),
+                    Ok(AsyncSink::Ready) => continue,
+                    Ok(AsyncSink::NotReady(bytes)) => {
+                        self.sending_msg = Some(bytes);
+                        return Ok(Async::NotReady);
                     }
                 }
             }
-        })
-        .into_boxed()
-}
 
-// send an ack to the other peer, then complete hole-punching from there.
-fn send_ack(
-    mut ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    trace!("sending ack to {}", socket.remote_addr());
-
-    ctx.send_msg(&HolePunchMsg::Ack, socket)
-        .and_then(move |socket| {
-            let try = || {
-                let socket = ctx.inc_ttl_and_syn_acks(socket)?;
-                Ok(recv_from_ack(ctx, socket))
-            };
-            future::result(try().map_err(HolePunchError::SetTtl)).flatten()
-        })
-        .into_boxed()
-}
-
-// we have just sent an ack to the peer, listen for incoming packets until it's time to send
-// another one.
-fn recv_from_ack(
-    ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    socket
-        .with_timeout_at(ctx.msg_timeout(), &ctx.handle)
-        .into_future()
-        .map_err(|(e, _)| HolePunchError::ReadMessage(e))
-        .and_then(move |(msg_opt, socket_timeout)| {
-            let socket = socket_timeout.into_inner();
-            match msg_opt {
-                None => send_ack(ctx, socket),
-                Some(recv_msg) => {
-                    match ctx.decrypt_msg(&recv_msg) {
-                        Err(e) => {
-                            warn!("error deserializing packet from peer: {:?}", e);
-                            recv_from_ack(ctx, socket)
-                        }
-                        Ok(HolePunchMsg::Syn) => send_ack(ctx, socket),
-                        Ok(HolePunchMsg::Ack) => send_ack_ack_and_proceed(ctx, socket),
-                        Ok(HolePunchMsg::AckAck) => send_final_ack_acks(ctx, socket),
-                        Ok(HolePunchMsg::Choose) => future::ok((socket, true)).into_boxed(),
-                    }
-                }
-            }
-        })
-        .into_boxed()
-}
-
-// send an ack-ack to the remote peer, then finish hole punching.
-fn send_ack_ack_and_proceed(
-    mut ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    trace!(
-        "sending ack-ack #{} to {}",
-        ctx.ack_acks_sent,
-        socket.remote_addr()
-    );
-    ctx.send_msg(&HolePunchMsg::AckAck, socket)
-        .and_then(move |socket| {
-            ctx.ack_acks_sent += 1;
-            recv_from_ack_ack(ctx, socket)
-        })
-        .into_boxed()
-}
-
-// we have just sent an ack-ack to the remote peer, listen for incoming packets until it's time to
-// send another one.
-fn recv_from_ack_ack(
-    ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    socket
-        .with_timeout_at(ctx.msg_timeout(), &ctx.handle)
-        .into_future()
-        .map_err(|(e, _)| HolePunchError::ReadMessage(e))
-        .and_then(move |(msg_opt, socket_timeout)| {
-            let socket = socket_timeout.into_inner();
-            match msg_opt {
-                // TODO: broooooken
-                None => send_ack_ack_and_proceed(ctx, socket),
-                Some(recv_msg) => {
-                    match ctx.decrypt_msg(&recv_msg) {
-                        Err(e) => {
-                            warn!("error deserializing packet from peer: {:?}", e);
-                            recv_from_ack_ack(ctx, socket)
-                        }
-                        Ok(HolePunchMsg::Syn) => recv_from_ack_ack(ctx, socket),
-                        Ok(HolePunchMsg::Ack) => send_ack_ack_and_proceed(ctx, socket),
-                        Ok(HolePunchMsg::AckAck) => send_final_ack_acks(ctx, socket),
-                        Ok(HolePunchMsg::Choose) => future::ok((socket, true)).into_boxed(),
-                    }
-                }
-            }
-        })
-        .into_boxed()
-}
-
-// send the last few ack-acks (we send it several times just in case packets get dropped)
-fn send_final_ack_acks(
-    mut ctx: HolePunching,
-    socket: WithAddress,
-) -> BoxFuture<(WithAddress, bool), HolePunchError> {
-    if ctx.ack_acks_sent >= 5 {
-        return future::ok((socket, false)).into_boxed();
+            return Ok(Async::Ready(()));
+        }
     }
 
-    trace!(
-        "sending final ack-ack #{} to {}",
-        ctx.ack_acks_sent,
-        socket.remote_addr()
-    );
+    fn send_msg(&mut self, msg: &HolePunchMsg) -> Result<(), HolePunchError> {
+        let encrypted = secure_serialise(msg, &self.their_pk, &self.our_sk)
+            .map_err(HolePunchError::SerialiseMsg)?;
+        let bytes = Bytes::from(encrypted);
+        debug_assert!(self.sending_msg.is_none());
+        self.sending_msg = Some(bytes);
+        Ok(())
+    }
 
-    Timeout::new_at(ctx.msg_timeout(), &ctx.handle)
-    .infallible()
-    .and_then(move |()| {
-        ctx.send_msg(&HolePunchMsg::AckAck, socket)
-            .and_then(move |socket| {
-                ctx.ack_acks_sent += 1;
-                send_final_ack_acks(ctx, socket)
-            })
-    })
-    .into_boxed()
+    fn recv_msg(&mut self) -> Result<Async<HolePunchMsg>, HolePunchError> {
+        loop {
+            let bytes = match unwrap!(self.socket.as_mut()).poll() {
+                Err(e) => return Err(HolePunchError::ReadMessage(e)),
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::Ready(None)) => return Err(HolePunchError::SocketStolen),
+                Ok(Async::Ready(Some(bytes))) => bytes,
+            };
+            match secure_deserialise(&bytes, &self.their_pk, &self.our_sk) {
+                Ok(msg) => return Ok(Async::Ready(msg)),
+                Err(e) => {
+                    warn!(
+                        "unreceived unrecognisable data on hole punching socket: {}",
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    fn send_next_message(&mut self) -> Result<Async<WithAddress>, HolePunchError> {
+        let hole_punch_period = Duration::from_millis(HOLE_PUNCH_MSG_PERIOD_MS);
+        self.timeout.reset(Instant::now() + hole_punch_period);
+        let msg = match self.phase {
+            HolePunchingPhase::Syn {
+                ref mut time_of_last_ttl_increment,
+                ttl_increment_duration,
+            } => {
+                let now = Instant::now();
+                while now - *time_of_last_ttl_increment > ttl_increment_duration {
+                    let ttl = {
+                        unwrap!(self.socket.as_mut()).ttl().map_err(
+                            HolePunchError::GetTtl,
+                        )
+                    }?;
+                    if ttl < MAX_TTL {
+                        unwrap!(self.socket.as_mut()).set_ttl(ttl + 1).map_err(
+                            HolePunchError::SetTtl,
+                        )?;
+                    }
+                    *time_of_last_ttl_increment += ttl_increment_duration;
+                }
+                HolePunchMsg::Syn
+            }
+            HolePunchingPhase::Ack => HolePunchMsg::Ack,
+            HolePunchingPhase::AckAck {
+                ref mut ack_acks_sent,
+                received_ack_ack,
+            } => {
+                if *ack_acks_sent >= 5 && received_ack_ack {
+                    return Ok(Async::Ready(unwrap!(self.socket.take())));
+                }
+                *ack_acks_sent += 1;
+                HolePunchMsg::AckAck
+            }
+        };
+        self.send_msg(&msg)?;
+        Ok(Async::NotReady)
+    }
+
+    fn process_msg(&mut self, msg: &HolePunchMsg) -> Result<Async<WithAddress>, HolePunchError> {
+        match *msg {
+            HolePunchMsg::Syn => {
+                match self.phase {
+                    HolePunchingPhase::Syn { .. } => {
+                        self.phase = HolePunchingPhase::Ack;
+                        unwrap!(self.socket.as_mut()).set_ttl(MAX_TTL).map_err(
+                            HolePunchError::SetTtl,
+                        )?;
+                        self.timeout.reset(Instant::now());
+                    }
+                    HolePunchingPhase::Ack => {
+                        self.timeout.reset(Instant::now());
+                    }
+                    HolePunchingPhase::AckAck { .. } => (),
+                }
+            }
+            HolePunchMsg::Ack => {
+                match self.phase {
+                    HolePunchingPhase::Syn { .. } |
+                    HolePunchingPhase::Ack => {
+                        self.phase = HolePunchingPhase::AckAck {
+                            ack_acks_sent: 0,
+                            received_ack_ack: false,
+                        };
+                        self.timeout.reset(Instant::now());
+                    }
+                    HolePunchingPhase::AckAck { .. } => {
+                        self.timeout.reset(Instant::now());
+                    }
+                }
+            }
+            HolePunchMsg::AckAck => {
+                match self.phase {
+                    HolePunchingPhase::Syn { .. } => {
+                        return Err(HolePunchError::UnexpectedMessage);
+                    }
+                    HolePunchingPhase::Ack => {
+                        self.phase = HolePunchingPhase::AckAck {
+                            ack_acks_sent: 0,
+                            received_ack_ack: true,
+                        };
+                        self.timeout.reset(Instant::now());
+                    }
+                    HolePunchingPhase::AckAck { ref mut received_ack_ack, .. } => {
+                        *received_ack_ack = true;
+                    }
+                }
+            }
+            HolePunchMsg::Choose => {
+                match self.phase {
+                    HolePunchingPhase::Syn { .. } => {
+                        return Err(HolePunchError::UnexpectedMessage);
+                    }
+                    HolePunchingPhase::Ack |
+                    HolePunchingPhase::AckAck { .. } => {
+                        return Ok(Async::Ready(unwrap!(self.socket.take())))
+                    }
+                }
+            }
+        }
+        Ok(Async::NotReady)
+    }
+}
+
+impl Future for HolePunching {
+    type Item = (WithAddress, bool);
+    type Error = HolePunchError;
+
+    fn poll(&mut self) -> Result<Async<(WithAddress, bool)>, HolePunchError> {
+        loop {
+            match self.flush()? {
+                Async::NotReady => return Ok(Async::NotReady),
+                Async::Ready(()) => (),
+            };
+
+            if let Async::Ready(()) = self.timeout.poll().void_unwrap() {
+                match self.send_next_message()? {
+                    Async::Ready(socket) => return Ok(Async::Ready((socket, false))),
+                    Async::NotReady => continue,
+                }
+            }
+
+            match self.recv_msg()? {
+                Async::NotReady => return Ok(Async::NotReady),
+                Async::Ready(msg) => {
+                    if let Async::Ready(socket) = self.process_msg(&msg)? {
+                        return Ok(Async::Ready((socket, true)));
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Perform a connect where one of the peers has an open port.
 fn open_connect(
-    hole_punching: HolePunching,
+    handle: &Handle,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
     socket: UdpSocket,
     their_addrs: HashSet<SocketAddr>,
     we_are_open: bool,
@@ -784,9 +810,15 @@ fn open_connect(
     let mut punchers = FuturesUnordered::new();
     for addr in their_addrs {
         let with_addr = shared.with_address(addr);
-        punchers.push(hole_punching.clone().start(with_addr));
+        punchers.push(HolePunching::new_for_open_peer(
+            handle,
+            with_addr,
+            their_pk,
+            our_sk.clone(),
+        ));
     }
 
+    let handle = handle.clone();
     stream::poll_fn(move || {
         trace!(
             "open_connect polling shared socket on {:?}",
@@ -800,7 +832,12 @@ fn open_connect(
                         "received packet from new address {}. starting punching",
                         with_addr.remote_addr()
                     );
-                    punchers.push(send_ack(hole_punching.clone(), with_addr));
+                    punchers.push(HolePunching::new_for_open_peer(
+                        &handle,
+                        with_addr,
+                        their_pk,
+                        our_sk.clone(),
+                    ));
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("shared socket has been stolen");
@@ -841,7 +878,9 @@ fn open_connect(
 
 // choose the given socket+address to be the socket+address we return successfully with.
 fn choose<Ei, Eo>(
-    ctx: HolePunching,
+    handle: &Handle,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
     socket: WithAddress,
     chooses_sent: u32,
 ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<Ei, Eo>>
@@ -861,15 +900,21 @@ where
         chooses_sent
     );
 
-    let msg = ctx.encrypt_msg(&HolePunchMsg::Choose);
+    let handle = handle.clone();
+    let encrypted = match secure_serialise(&HolePunchMsg::Choose, &their_pk, &our_sk) {
+        Ok(encrypted) => encrypted,
+        Err(e) => return future::err(UdpRendezvousConnectError::SerialiseMsg(e)).into_boxed(),
+    };
+
+    let msg = Bytes::from(encrypted);
     socket
         .send(msg)
         .map_err(UdpRendezvousConnectError::SocketWrite)
         .and_then(move |socket| {
-            Timeout::new(Duration::from_millis(200), &ctx.handle)
+            Timeout::new(Duration::from_millis(200), &handle)
                 .infallible()
                 .and_then(move |()| {
-                    choose(ctx, socket, chooses_sent + 1)
+                    choose(&handle, their_pk, our_sk, socket, chooses_sent + 1)
                 })
         })
         .into_boxed()
@@ -878,22 +923,25 @@ where
 // listen on the socket to if the peer sends us a HolePunchMsg::Choose to indicate that they're
 // choosing this socket+address to communicate with us.
 fn take_chosen(
-    ctx: HolePunching,
+    handle: &Handle,
+    their_pk: PublicKey,
+    our_sk: SecretKey,
     socket: WithAddress,
 ) -> BoxFuture<Option<(UdpSocket, SocketAddr)>, HolePunchError> {
+    let handle = handle.clone();
     socket
         .into_future()
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
-        .and_then(|(msg_opt, socket)| match msg_opt {
+        .and_then(move |(msg_opt, socket)| match msg_opt {
             None => future::ok(None).into_boxed(),
             Some(msg) => {
-                match ctx.decrypt_msg(&msg) {
+                match secure_deserialise(&msg, &their_pk, &our_sk) {
                     Err(e) => {
                         warn!("error deserializing packet from peer: {:?}", e);
-                        take_chosen(ctx, socket)
+                        take_chosen(&handle, their_pk, our_sk, socket)
                     }
                     Ok(HolePunchMsg::Choose) => future::ok(got_chosen(socket)).into_boxed(),
-                    Ok(..) => take_chosen(ctx, socket),
+                    Ok(..) => take_chosen(&handle, their_pk, our_sk, socket),
                 }
             }
         })
@@ -941,7 +989,7 @@ where
         .into_boxed()
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 enum HolePunchMsg {
     Syn,
     Ack,
@@ -958,49 +1006,113 @@ mod test {
 
     use util;
 
-    mod send_final_ack_acks {
-        use super::*;
+    #[test]
+    fn hole_puncher_sends_5_ack_ack_messages() {
+        let _ = env_logger::init();
 
-        fn localhost_addr(sock: &UdpSocket) -> SocketAddr {
-            let addr = unwrap!(sock.local_addr());
-            SocketAddr::new(ip!("127.0.0.1"), addr.port())
-        }
+        let mut core = unwrap!(Core::new());
+        let handle = core.handle();
 
-        #[test]
-        fn it_sends_5_ack_ack_messages() {
-            let mut core = unwrap!(Core::new());
-            let handle = core.handle();
+        let recv_sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+        let sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
 
-            let recv_sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
-            let sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+        let recv_sock_addr = unwrap!(recv_sock.local_addr()).unspecified_to_localhost();
+        let sock_addr = unwrap!(sock.local_addr()).unspecified_to_localhost();
+        let recv_sock = SharedUdpSocket::share(recv_sock).with_address(sock_addr);
+        let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
-            let recv_sock_addr = localhost_addr(&recv_sock);
-            let recv_sock = SharedUdpSocket::share(recv_sock).with_address(localhost_addr(&sock));
-            let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
+        let (sock_pk, sock_sk) = gen_keypair();
+        let (recv_sock_pk, recv_sock_sk) = gen_keypair();
+        let hole_punching = HolePunching::new_for_open_peer(&handle, sock, recv_sock_pk, sock_sk);
 
-            let (their_pk, our_sk) = gen_keypair();
-            let hole_punching = HolePunching::new(&handle, 0, their_pk, our_sk);
-            let _ = unwrap!(core.run(send_final_ack_acks(hole_punching.clone(), sock)));
+        let recv_side = {
+            recv_sock
+                .into_future()
+                .map_err(|(e, _)| panic!("recv error: {}", e))
+                .and_then({
+                    let recv_sock_sk = recv_sock_sk.clone();
+                    move |(msg_opt, recv_sock)| {
+                        let msg = unwrap!(msg_opt);
+                        let msg = unwrap!(secure_deserialise(&msg, &sock_pk, &recv_sock_sk));
+                        match msg {
+                            HolePunchMsg::Syn => (),
+                            _ => panic!("unexpected msg {:?}", msg),
+                        };
 
-            let recv_messages = recv_sock
-                .map_err(|e| panic!("Failed to read from socket: {}", e))
-                .map(|msg| {
-                    let msg: Result<HolePunchMsg, bool> = match hole_punching.decrypt_msg(&msg) {
-                        Err(e) => panic!("Failed to deserialize message: {:?}", e),
-                        Ok(msg) => Ok(msg),
-                    };
-                    msg
+                        let msg = unwrap!(secure_serialise(
+                            &HolePunchMsg::Ack,
+                            &sock_pk,
+                            &recv_sock_sk,
+                        ));
+                        let msg = Bytes::from(msg);
+                        recv_sock.send(msg).map_err(|e| panic!("send error: {}", e))
+                    }
                 })
-                .take(5)
-                .collect();
-            let msgs = unwrap!(core.run(recv_messages));
+                .and_then(|recv_sock| {
+                    trace!("sent ack");
+                    recv_sock.into_future().map_err(
+                        |(e, _)| panic!("recv error: {}", e),
+                    )
+                })
+                .and_then({
+                    let recv_sock_sk = recv_sock_sk.clone();
+                    move |(msg_opt, recv_sock)| {
+                        let msg = unwrap!(msg_opt);
+                        let msg = unwrap!(secure_deserialise(&msg, &sock_pk, &recv_sock_sk));
+                        match msg {
+                            HolePunchMsg::AckAck => (),
+                            _ => panic!("unexpected msg {:?}", msg),
+                        };
 
-            let all_ack_ack = msgs.iter().all(|m| match *m {
-                Ok(HolePunchMsg::AckAck) => true,
-                _ => false,
-            });
-            assert!(all_ack_ack);
-        }
+                        let msg = unwrap!(secure_serialise(
+                            &HolePunchMsg::AckAck,
+                            &sock_pk,
+                            &recv_sock_sk,
+                        ));
+                        let msg = Bytes::from(msg);
+                        recv_sock.send(msg).map_err(|e| panic!("send error: {}", e))
+                    }
+                })
+                .and_then(|recv_sock| {
+                    trace!("sent ack-ack");
+                    recv_sock.take(5).collect().map_err(
+                        |e| panic!("recv error: {}", e),
+                    )
+                })
+                .map({
+                    let recv_sock_sk = recv_sock_sk.clone();
+                    move |collected| {
+                        trace!("read until end of stream: {:#?}", collected);
+                        assert_eq!(collected.len(), 5);
+                        for msg in &collected[..4] {
+                            let msg = unwrap!(secure_deserialise(msg, &sock_pk, &recv_sock_sk));
+                            match msg {
+                                HolePunchMsg::AckAck => (),
+                                _ => panic!("unexpected msg {:?}", msg),
+                            };
+                        }
+                        assert_eq!(&collected[4], &b"the end"[..]);
+                    }
+                })
+        };
+
+        let send_side = {
+            hole_punching
+                .map_err(|e| panic!("hole punching error: {}", e))
+                .and_then(|(sock, received_choose)| {
+                    assert!(!received_choose);
+                    sock.send(Bytes::from(&b"the end"[..]))
+                })
+                .map(|_sock| ())
+        };
+
+        let res = core.run({
+            recv_side
+            .join(send_side)
+            .map(|((), ())| ())
+        });
+
+        unwrap!(res)
     }
 
     #[test]

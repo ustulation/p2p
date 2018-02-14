@@ -12,6 +12,9 @@ pub trait IpAddrExt {
     /// If the IP address is an unspecified address (eg. `0.0.0.0`), then it is expanded into a
     /// vector with a seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<IpAddr>>;
+
+    /// If this is the unspecified address then map it to the localhost address.
+    fn unspecified_to_localhost(&self) -> IpAddr;
 }
 
 impl IpAddrExt for IpAddr {
@@ -49,6 +52,13 @@ impl IpAddrExt for IpAddr {
         };
         Ok(ret)
     }
+
+    fn unspecified_to_localhost(&self) -> IpAddr {
+        match *self {
+            IpAddr::V4(ref ip) => IpAddr::V4(ip.unspecified_to_localhost()),
+            IpAddr::V6(ref ip) => IpAddr::V6(ip.unspecified_to_localhost()),
+        }
+    }
 }
 
 /// Some helpful additional methods for `Ipv4Addr`.
@@ -59,6 +69,9 @@ pub trait Ipv4AddrExt {
     /// If the IP address is the unspecified address `0.0.0.0`, then it is expanded into a vector
     /// with a seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv4Addr>>;
+
+    /// Convert the unspecified address 0.0.0.0 to 127.0.0.1
+    fn unspecified_to_localhost(&self) -> Ipv4Addr;
 }
 
 /// Some helpful additional methods for `Ipv6Addr`.
@@ -69,6 +82,9 @@ pub trait Ipv6AddrExt {
     /// If the IP address is the unspecified address `::`, then it is expanded into a vector with a
     /// seperate IP address for each network interface.
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv6Addr>>;
+
+    /// Convert the unspecified address :: to ::1
+    fn unspecified_to_localhost(&self) -> Ipv6Addr;
 }
 
 impl Ipv4AddrExt for Ipv4Addr {
@@ -91,6 +107,14 @@ impl Ipv4AddrExt for Ipv4Addr {
         }
         Ok(ret)
     }
+
+    fn unspecified_to_localhost(&self) -> Ipv4Addr {
+        if self.is_unspecified() {
+            ipv4!("127.0.0.1")
+        } else {
+            *self
+        }
+    }
 }
 
 impl Ipv6AddrExt for Ipv6Addr {
@@ -112,5 +136,13 @@ impl Ipv6AddrExt for Ipv6Addr {
             }
         }
         Ok(ret)
+    }
+
+    fn unspecified_to_localhost(&self) -> Ipv6Addr {
+        if self.is_unspecified() {
+            ipv6!("::1")
+        } else {
+            *self
+        }
     }
 }
