@@ -245,6 +245,7 @@ mod igd_async;
 mod open_addr;
 mod rendezvous_addr;
 mod filter_addrs;
+mod peer;
 
 pub use prelude::*;
 
