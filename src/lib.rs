@@ -250,5 +250,4 @@ pub use prelude::*;
 
 /// Message sent to rendezvous server.
 /// This message asks to respond with our own IP address.
-// NOTE: other libraries (`Crust`) rely on this message to be exactly 8 bytes size.
 pub const ECHO_REQ: [u8; 8] = [b'E', b'C', b'H', b'O', b'A', b'D', b'D', b'R'];
