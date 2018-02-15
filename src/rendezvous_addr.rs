@@ -148,12 +148,12 @@ impl PublicAddrsFromStun {
     fn poll_stun_servers(&mut self) -> Poll<SocketAddr, RendezvousAddrError> {
         self.keep_querying_stun = false;
         match self.servers.poll().void_unwrap() {
-            Async::Ready(Some(server_addr)) => {
-                trace!("got a new server to try: {}", server_addr);
+            Async::Ready(Some(server_info)) => {
+                trace!("got a new server to try: {}", server_info);
                 let active_query = mc::query_public_addr(
                     self.protocol,
                     &self.bind_addr,
-                    &server_addr,
+                    &server_info,
                     &self.handle,
                 );
                 self.add_stun_query(active_query);
@@ -325,7 +325,7 @@ mod tests {
                 let mut evloop = unwrap!(Core::new());
 
                 let p2p = P2p::default();
-                p2p.add_udp_traversal_server(&addr!("1.2.3.4:4000"));
+                p2p.add_udp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 let mut public_addrs = PublicAddrsFromStun::new(
                     evloop.handle(),
                     &p2p,
@@ -351,7 +351,7 @@ mod tests {
                 let mut evloop = unwrap!(Core::new());
 
                 let p2p = P2p::default();
-                p2p.add_udp_traversal_server(&addr!("1.2.3.4:4000"));
+                p2p.add_udp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 let mut public_addrs = PublicAddrsFromStun::new(
                     evloop.handle(),
                     &p2p,

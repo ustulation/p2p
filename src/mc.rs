@@ -92,13 +92,13 @@ impl P2p {
 
     /// Tell about a `TcpTraversalServer` than can be used to help use perform rendezvous
     /// connects and hole punching.
-    pub fn add_tcp_traversal_server(&self, addr: &SocketAddr) {
+    pub fn add_tcp_traversal_server(&self, addr: &PeerInfo) {
         self.add_server(Protocol::Tcp, addr);
     }
 
     /// Tells the library to forget a `TcpTraversalServer` previously added with
     /// `add_tcp_traversal_server`.
-    pub fn remove_tcp_traversal_server(&self, addr: &SocketAddr) {
+    pub fn remove_tcp_traversal_server(&self, addr: &PeerInfo) {
         self.remove_server(Protocol::Tcp, addr);
     }
 
@@ -109,13 +109,13 @@ impl P2p {
 
     /// Tell about a `UdpTraversalServer` than can be used to help use perform rendezvous
     /// connects and hole punching.
-    pub fn add_udp_traversal_server(&self, addr: &SocketAddr) {
+    pub fn add_udp_traversal_server(&self, addr: &PeerInfo) {
         self.add_server(Protocol::Udp, addr);
     }
 
     /// Tells the library to forget a `UdpTraversalServer` previously added with
     /// `add_udp_traversal_server`.
-    pub fn remove_udp_traversal_server(&self, addr: &SocketAddr) {
+    pub fn remove_udp_traversal_server(&self, addr: &PeerInfo) {
         self.remove_server(Protocol::Udp, addr);
     }
 
@@ -131,12 +131,12 @@ impl P2p {
         inner.server_set(protocol).iter_servers()
     }
 
-    fn add_server(&self, protocol: Protocol, addr: &SocketAddr) {
+    fn add_server(&self, protocol: Protocol, addr: &PeerInfo) {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).add_server(addr);
     }
 
-    fn remove_server(&self, protocol: Protocol, addr: &SocketAddr) {
+    fn remove_server(&self, protocol: Protocol, addr: &PeerInfo) {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).remove_server(addr);
     }
@@ -154,12 +154,12 @@ impl P2pInner {
 pub fn query_public_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
-    server_addr: &SocketAddr,
+    server_info: &PeerInfo,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     match protocol {
-        Protocol::Tcp => tcp_query_public_addr(bind_addr, server_addr, handle),
-        Protocol::Udp => udp_query_public_addr(bind_addr, server_addr, handle),
+        Protocol::Tcp => tcp_query_public_addr(bind_addr, server_info, handle),
+        Protocol::Udp => udp_query_public_addr(bind_addr, server_info, handle),
     }
 }
 
@@ -211,11 +211,11 @@ quick_error! {
 /// Queries our public IP.
 pub fn tcp_query_public_addr(
     bind_addr: &SocketAddr,
-    server_addr: &SocketAddr,
+    server_info: &PeerInfo,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let bind_addr = *bind_addr;
-    let server_addr = *server_addr;
+    let server_addr = server_info.addr;
     let handle = handle.clone();
     TcpStream::connect_reusable(&bind_addr, &server_addr, &handle)
         .map_err(|err| match err {
@@ -250,12 +250,12 @@ pub fn tcp_query_public_addr(
 
 pub fn udp_query_public_addr(
     bind_addr: &SocketAddr,
-    server_addr: &SocketAddr,
+    server_info: &PeerInfo,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let try = || {
         let bind_addr = *bind_addr;
-        let server_addr = *server_addr;
+        let server_addr = server_info.addr;
         let handle = handle.clone();
         let socket = {
             UdpSocket::bind_connect_reusable(&bind_addr, &server_addr, &handle)
@@ -330,10 +330,10 @@ mod tests {
             fn it_returns_current_tcp_traversal_servers() {
                 let p2p = P2p::default();
 
-                p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
-                p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
+                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
+                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
-                let addrs = p2p.tcp_traversal_servers().snapshot();
+                let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
                 assert!(addrs.contains(&addr!("1.2.3.4:4000")));
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));
             }
@@ -345,12 +345,13 @@ mod tests {
             #[test]
             fn it_removes_given_server_from_the_list_if_it_exists() {
                 let p2p = P2p::default();
-                p2p.add_tcp_traversal_server(&addr!("1.2.3.4:4000"));
-                p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
+                let peer_info = peer_addr!("1.2.3.4:4000");
+                p2p.add_tcp_traversal_server(&peer_info);
+                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
-                p2p.remove_tcp_traversal_server(&addr!("1.2.3.4:4000"));
+                p2p.remove_tcp_traversal_server(&peer_info);
 
-                let addrs = p2p.tcp_traversal_servers().snapshot();
+                let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));
                 assert!(!addrs.contains(&addr!("1.2.3.4:4000")));
             }
@@ -358,11 +359,11 @@ mod tests {
             #[test]
             fn it_does_nothing_if_give_address_is_not_in_the_list() {
                 let p2p = P2p::default();
-                p2p.add_tcp_traversal_server(&addr!("1.2.3.5:5000"));
+                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
-                p2p.remove_tcp_traversal_server(&addr!("1.2.3.4:4000"));
+                p2p.remove_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
 
-                let addrs = p2p.tcp_traversal_servers().snapshot();
+                let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));
             }
         }

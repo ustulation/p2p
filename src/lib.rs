@@ -238,6 +238,7 @@ mod ip_addr;
 mod socket_addr;
 mod tcp;
 mod udp;
+#[macro_use]
 mod util;
 mod server_set;
 mod mc;

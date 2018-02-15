@@ -31,7 +31,7 @@ extern crate env_logger;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
-use p2p::TcpStreamExt;
+use p2p::{PeerInfo, TcpStreamExt};
 use std::{env, fmt};
 use std::net::{Shutdown, SocketAddr};
 use tokio_core::net::TcpStream;
@@ -109,7 +109,7 @@ fn main() {
     }
 
     if let Some(server) = args.flag_traversal_server {
-        mc.add_tcp_traversal_server(&server);
+        mc.add_tcp_traversal_server(&PeerInfo::with_rand_key(server));
     }
 
     let relay_addr = args.flag_relay;
