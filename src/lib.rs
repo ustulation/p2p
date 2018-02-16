@@ -235,13 +235,14 @@ extern crate maidsafe_utilities;
 mod priv_prelude;
 mod prelude;
 
+#[macro_use]
+mod util;
+
 mod protocol;
 mod ip_addr;
 mod socket_addr;
 mod tcp;
 mod udp;
-#[macro_use]
-mod util;
 mod server_set;
 mod mc;
 mod igd_async;

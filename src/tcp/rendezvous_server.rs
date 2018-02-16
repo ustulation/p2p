@@ -1,25 +1,30 @@
 use ECHO_REQ;
-use bincode::{self, Infinite};
-use future_utils::IoFuture;
 use open_addr::BindPublicError;
-pub use priv_prelude::*;
+use priv_prelude::*;
+use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
 use tcp::listener::{self, TcpListenerExt};
 use tokio_io::codec::length_delimited::{self, Framed};
 
 /// Sends response to echo address request (`ECHO_REQ`).
-pub fn respond_with_addr<S>(sink: S, addr: SocketAddr) -> IoFuture<S>
+pub fn respond_with_addr<S>(
+    sink: S,
+    addr: SocketAddr,
+    crypto_ctx: &CryptoContext,
+) -> BoxFuture<S, ClientError>
 where
     S: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
 {
-    let encoded = unwrap!(bincode::serialize(&addr, Infinite));
-    let bytes = BytesMut::from(encoded);
-    sink.send(bytes).into_boxed()
+    let encrypted = try_bfut!(crypto_ctx.encrypt(&addr).map_err(ClientError::Encrypt));
+    sink.send(encrypted)
+        .map_err(ClientError::SendError)
+        .into_boxed()
 }
 
 /// A TCP rendezvous server. Other peers can use this when performing rendezvous connects and
 /// hole-punching.
 pub struct TcpRendezvousServer {
     local_addr: SocketAddr,
+    our_pk: PublicKey,
     _drop_tx: DropNotify,
 }
 
@@ -77,6 +82,12 @@ impl TcpRendezvousServer {
         let addrs = self.local_addr.expand_local_unspecified()?;
         Ok(addrs)
     }
+
+    /// Returns server public key.
+    /// Server expects incoming messages to be encrypted with this public key.
+    pub fn public_key(&self) -> PublicKey {
+        self.our_pk
+    }
 }
 
 fn from_listener_inner(
@@ -85,11 +96,13 @@ fn from_listener_inner(
     handle: &Handle,
 ) -> TcpRendezvousServer {
     let (drop_tx, drop_rx) = drop_notify();
+    let (our_pk, our_sk) = gen_keypair();
     let handle_connections = {
         let handle = handle.clone();
         listener
         .incoming()
-        .map(move |(stream, addr)| handle_connection(stream, addr, &handle))
+        .map_err(ClientError::AcceptError)
+        .map(move |(stream, addr)| handle_connection(stream, addr, &handle, our_pk, our_sk.clone()))
         .buffer_unordered(1024)
         .log_errors(LogLevel::Info, "processing echo request")
         .until(drop_rx)
@@ -100,31 +113,86 @@ fn from_listener_inner(
     TcpRendezvousServer {
         _drop_tx: drop_tx,
         local_addr: *bind_addr,
+        our_pk,
     }
 }
 
-fn handle_connection(stream: TcpStream, addr: SocketAddr, handle: &Handle) -> IoFuture<()> {
+quick_error! {
+    /// Errors related to client connection handling.
+    #[derive(Debug)]
+    pub enum ClientError {
+        AcceptError(e: io::Error) {
+            description("Error accepting client connection")
+            display("Error accepting client connection: {}", e)
+            cause(e)
+        }
+        ReadError(e: io::Error) {
+            description("Error reading client message")
+            display("Error reading client message: {}", e)
+            cause(e)
+        }
+        SendError(e: io::Error) {
+            description("Error sending message to client")
+            display("Error sennding message to client: {}", e)
+            cause(e)
+        }
+        Timeout {
+            description("Connection timedout")
+        }
+        ConnectionClosed {
+            description("Connection was closed prematurely")
+        }
+        Encrypt(e: CryptoError) {
+            description("Error encrypting message")
+            display("Error encrypting message: {}", e)
+            cause(e)
+        }
+        Decrypt(e: CryptoError) {
+            description("Error decrypting message")
+            display("Error decrypting message: {}", e)
+            cause(e)
+        }
+    }
+}
+
+fn handle_connection(
+    stream: TcpStream,
+    addr: SocketAddr,
+    handle: &Handle,
+    our_pk: PublicKey,
+    our_sk: SecretKey,
+) -> BoxFuture<(), ClientError> {
     let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
+    let crypto_ctx = CryptoContext::anonymous_decrypt(our_pk, our_sk.clone());
     stream
         .into_future()
-        .map_err(|(err, _stream)| err)
-        .and_then(move |(req_opt, stream)| if req_opt ==
-            Some(BytesMut::from(&ECHO_REQ[..]))
-        {
-            respond_with_addr(stream, addr)
-                .map(|_stream| ())
-                .into_boxed()
-        } else {
-            future::ok(()).into_boxed()
+        .map_err(|(err, _stream)| ClientError::ReadError(err))
+        .and_then(|(req_opt, stream)| {
+            req_opt.map(|req| (req, stream)).ok_or(
+                ClientError::ConnectionClosed,
+            )
+        })
+        .and_then(move |(req, stream)| {
+            let req: EncryptedRequest =
+                try_bfut!(crypto_ctx.decrypt(&req).map_err(ClientError::Decrypt));
+            if req.body[..] == ECHO_REQ {
+                let crypto_ctx = CryptoContext::authenticated(req.our_pk, our_sk);
+                respond_with_addr(stream, addr, &crypto_ctx)
+                    .map(|_stream| ())
+                    .into_boxed()
+            } else {
+                future::ok(()).into_boxed()
+            }
         })
         .with_timeout(Duration::from_secs(2), handle)
-        .and_then(|opt| opt.ok_or_else(|| io::ErrorKind::TimedOut.into()))
+        .and_then(|opt| opt.ok_or(ClientError::Timeout))
         .into_boxed()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bincode;
     use tokio_core::reactor::Core;
 
     mod respond_with_addr {
@@ -141,7 +209,8 @@ mod tests {
                 .incoming()
                 .for_each(|(stream, addr)| {
                     let stream = length_delimited::Builder::new().new_framed(stream);
-                    respond_with_addr(stream, addr).then(|_| Ok(()))
+                    let crypto_ctx = CryptoContext::null();
+                    respond_with_addr(stream, addr, &crypto_ctx).then(|_| Ok(()))
                 })
                 .then(|_| Ok(()));
             handle.spawn(handle_conns);
