@@ -4,15 +4,16 @@ use future_utils::IoFuture;
 use open_addr::BindPublicError;
 pub use priv_prelude::*;
 use tcp::listener::{self, TcpListenerExt};
-use tokio_io;
 use tokio_io::codec::length_delimited::{self, Framed};
 
-/// Sends response to rendezvous address request (`ECHO_REQ`).
-pub fn respond_with_addr(stream: TcpStream, addr: SocketAddr) -> IoFuture<TcpStream> {
+/// Sends response to echo address request (`ECHO_REQ`).
+pub fn respond_with_addr<S>(sink: S, addr: SocketAddr) -> IoFuture<S>
+where
+    S: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
+{
     let encoded = unwrap!(bincode::serialize(&addr, Infinite));
-    tokio_io::io::write_all(stream, encoded)
-        .map(|(stream, _encoded)| stream)
-        .into_boxed()
+    let bytes = BytesMut::from(encoded);
+    sink.send(bytes).into_boxed()
 }
 
 /// A TCP rendezvous server. Other peers can use this when performing rendezvous connects and
@@ -103,14 +104,14 @@ fn from_listener_inner(
 }
 
 fn handle_connection(stream: TcpStream, addr: SocketAddr, handle: &Handle) -> IoFuture<()> {
-    let stream: Framed<_, Bytes> = length_delimited::Builder::new().new_framed(stream);
+    let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
     stream
         .into_future()
         .map_err(|(err, _stream)| err)
         .and_then(move |(req_opt, stream)| if req_opt ==
             Some(BytesMut::from(&ECHO_REQ[..]))
         {
-            udp_respond_with_addr(stream, addr)
+            respond_with_addr(stream, addr)
                 .map(|_stream| ())
                 .into_boxed()
         } else {
@@ -128,7 +129,6 @@ mod tests {
 
     mod respond_with_addr {
         use super::*;
-        use futures::IntoFuture;
 
         #[test]
         fn it_sends_serialized_client_address() {
@@ -140,6 +140,7 @@ mod tests {
             let handle_conns = listener
                 .incoming()
                 .for_each(|(stream, addr)| {
+                    let stream = length_delimited::Builder::new().new_framed(stream);
                     respond_with_addr(stream, addr).then(|_| Ok(()))
                 })
                 .then(|_| Ok(()));
@@ -147,14 +148,11 @@ mod tests {
 
             let conn = unwrap!(event_loop.run(TcpStream::connect(&listener_addr, &handle)));
             let actual_addr = unwrap!(conn.local_addr());
+            let conn: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(conn);
 
-            let buf = unwrap!(
-                event_loop.run(
-                    tokio_io::io::read_to_end(conn, Vec::new())
-                        .into_future()
-                        .and_then(|(_stream, buf)| Ok(buf)),
-                )
-            );
+            let buf = unwrap!(event_loop.run(conn.into_future().map(|(resp_opt, _conn)| {
+                unwrap!(resp_opt)
+            })));
             let received_addr: SocketAddr = unwrap!(bincode::deserialize(&buf));
 
             assert_eq!(received_addr, actual_addr);
