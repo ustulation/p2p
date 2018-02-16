@@ -1,11 +1,11 @@
 //! Port mapping context utilities.
 
 use ECHO_REQ;
-use bincode;
 
 use futures::future::Loop;
 use priv_prelude::*;
 use protocol::Protocol;
+use rust_sodium::crypto::box_::{PublicKey, gen_keypair};
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
 
@@ -151,15 +151,47 @@ impl P2pInner {
     }
 }
 
+/// Request that has sender's public key and arbitrary body.
+/// This request is SHOULD be anonymously encrypted and it allows receiver to switch to
+/// authenticated encryption.
+#[derive(Serialize, Deserialize)]
+pub struct EncryptedRequest {
+    /// Sender's public key. Response should be encrypted with it.
+    pub our_pk: PublicKey,
+    /// Arbitrary request body.
+    pub body: Vec<u8>,
+}
+
+impl EncryptedRequest {
+    fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
+        Self { our_pk, body }
+    }
+}
+
 pub fn query_public_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
+    let (our_pk, our_sk) = gen_keypair(); // TODO(povilas): pass this from upper layers. MAID-2532
+    let request = EncryptedRequest::new(our_pk, ECHO_REQ.to_vec());
+    // First message is encrypted anonymously.
+    let crypto_ctx = CryptoContext::anonymous_encrypt(server_info.pub_key);
+    let encrypted_req = match crypto_ctx.encrypt(&request) {
+        Ok(data) => data,
+        Err(e) => return future::err(QueryPublicAddrError::Encrypt(e)).into_boxed(),
+    };
+
+    // Response comes encrypted and authenticated.
+    let crypto_ctx = CryptoContext::authenticated(server_info.pub_key, our_sk);
     match protocol {
-        Protocol::Tcp => tcp_query_public_addr(bind_addr, server_info, handle),
-        Protocol::Udp => udp_query_public_addr(bind_addr, server_info, handle),
+        Protocol::Tcp => {
+            tcp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
+        }
+        Protocol::Udp => {
+            udp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
+        }
     }
 }
 
@@ -195,15 +227,21 @@ quick_error! {
             display("error reading response from echo server: {}", e)
             cause(e)
         }
-        /// Bad response format.
-        Deserialize(e: bincode::Error) {
-            description("error deserializing response from echo server")
-            display("error deserializing response from echo server: {}", e)
-            cause(e)
-        }
         /// Respone timed out.
         ResponseTimeout {
             description("timed out waiting for response from echo server")
+        }
+        /// Failure to encrypt request.
+        Encrypt(e: CryptoError) {
+            description("Error encrypting message")
+            display("Error encrypting message: {}", e)
+            cause(e)
+        }
+        /// Failure to decrypt request.
+        Decrypt(e: CryptoError) {
+            description("Error decrypting message")
+            display("Error decrypting message: {}", e)
+            cause(e)
         }
     }
 }
@@ -213,11 +251,15 @@ pub fn tcp_query_public_addr(
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
+    crypto_ctx: CryptoContext,
+    encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let bind_addr = *bind_addr;
     let server_addr = server_info.addr;
     let handle = handle.clone();
+
     TcpStream::connect_reusable(&bind_addr, &server_addr, &handle)
+        // TODO(povilas): use QueryPublicAddrError::from(ConnectReusableError)
         .map_err(|err| match err {
             ConnectReusableError::Connect(e) => QueryPublicAddrError::Connect(e),
             ConnectReusableError::Bind(e) => QueryPublicAddrError::Bind(e),
@@ -225,18 +267,19 @@ pub fn tcp_query_public_addr(
         .with_timeout(Duration::from_secs(3), &handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ConnectTimeout))
         .map(|stream| length_delimited::Builder::new().new_framed(stream))
-        .and_then(|stream| {
-            stream.send(BytesMut::from(&ECHO_REQ[..])).map_err(
+        .and_then(move |stream| {
+            stream.send(encrypted_req).map_err(
                 QueryPublicAddrError::SendRequest,
             )
         })
-        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream))
+        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream, crypto_ctx))
         .into_boxed()
 }
 
 fn tcp_recv_echo_addr(
     handle: &Handle,
     stream: Framed<TcpStream>,
+    crypto_ctx: CryptoContext,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     stream
         .into_future()
@@ -247,7 +290,9 @@ fn tcp_recv_echo_addr(
             })
         })
         .and_then(move |resp| {
-            bincode::deserialize(&resp).map_err(QueryPublicAddrError::Deserialize)
+            crypto_ctx.decrypt(&resp).map_err(
+                QueryPublicAddrError::Decrypt,
+            )
         })
         .with_timeout(Duration::from_secs(2), handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
@@ -258,6 +303,8 @@ pub fn udp_query_public_addr(
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
+    crypto_ctx: CryptoContext,
+    encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let try = || {
         let bind_addr = *bind_addr;
@@ -270,11 +317,11 @@ pub fn udp_query_public_addr(
 
         Ok({
             socket
-                .send_dgram(ECHO_REQ, server_addr)
+                .send_dgram(encrypted_req, server_addr)
                 .map(|(socket, _buf)| socket)
                 .map_err(QueryPublicAddrError::SendRequest)
                 .and_then(move |socket| {
-                    udp_recv_echo_addr(&handle, socket, server_addr)
+                    udp_recv_echo_addr(&handle, socket, server_addr, crypto_ctx)
                 })
         })
     };
@@ -285,16 +332,18 @@ fn udp_recv_echo_addr(
     handle: &Handle,
     socket: UdpSocket,
     server_addr: SocketAddr,
+    crypto_ctx: CryptoContext,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     future::loop_fn(socket, move |socket| {
+        let crypto_ctx = crypto_ctx.clone();
         socket
             .recv_dgram(vec![0u8; 256])
             .map_err(QueryPublicAddrError::ReadResponse)
             .and_then(move |(socket, data, len, addr)| if addr == server_addr {
-                let data = {
-                    trace!("server responded with: {:?}", &data[..len]);
-                    bincode::deserialize(&data[..len]).map_err(QueryPublicAddrError::Deserialize)
-                }?;
+                trace!("server responded with: {:?}", &data[..len]);
+                let data = crypto_ctx.decrypt(&data[..len]).map_err(
+                    QueryPublicAddrError::Decrypt,
+                )?;
                 Ok(Loop::Break(data))
             } else {
                 Ok(Loop::Continue(socket))
