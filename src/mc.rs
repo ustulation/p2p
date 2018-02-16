@@ -224,27 +224,33 @@ pub fn tcp_query_public_addr(
         })
         .with_timeout(Duration::from_secs(3), &handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ConnectTimeout))
+        .map(|stream| length_delimited::Builder::new().new_framed(stream))
         .and_then(|stream| {
-            let stream: Framed<_, Bytes> = length_delimited::Builder::new().new_framed(stream);
-            stream.send(Bytes::from(&ECHO_REQ[..])).map_err(
+            stream.send(BytesMut::from(&ECHO_REQ[..])).map_err(
                 QueryPublicAddrError::SendRequest,
             )
         })
-        .and_then(move |stream| {
-            stream
-                .into_future()
-                .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
-                .and_then(|(resp_opt, _stream)| {
-                    resp_opt.ok_or_else(|| {
-                        QueryPublicAddrError::ReadResponse(io::ErrorKind::ConnectionReset.into())
-                    })
-                })
-                .and_then(move |resp| {
-                    bincode::deserialize(&resp).map_err(QueryPublicAddrError::Deserialize)
-                })
-                .with_timeout(Duration::from_secs(2), &handle)
-                .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
+        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream))
+        .into_boxed()
+}
+
+fn tcp_recv_echo_addr(
+    handle: &Handle,
+    stream: Framed<TcpStream>,
+) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
+    stream
+        .into_future()
+        .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
+        .and_then(|(resp_opt, _stream)| {
+            resp_opt.ok_or_else(|| {
+                QueryPublicAddrError::ReadResponse(io::ErrorKind::ConnectionReset.into())
+            })
         })
+        .and_then(move |resp| {
+            bincode::deserialize(&resp).map_err(QueryPublicAddrError::Deserialize)
+        })
+        .with_timeout(Duration::from_secs(2), handle)
+        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
         .into_boxed()
 }
 
@@ -268,27 +274,34 @@ pub fn udp_query_public_addr(
                 .map(|(socket, _buf)| socket)
                 .map_err(QueryPublicAddrError::SendRequest)
                 .and_then(move |socket| {
-                    future::loop_fn(socket, move |socket| {
-                        socket
-                            .recv_dgram(vec![0u8; 256])
-                            .map_err(QueryPublicAddrError::ReadResponse)
-                            .and_then(move |(socket, data, len, addr)| if addr == server_addr {
-                                let data = {
-                                    trace!("server responded with: {:?}", &data[..len]);
-                                    bincode::deserialize(&data[..len]).map_err(
-                                        QueryPublicAddrError::Deserialize,
-                                    )
-                                }?;
-                                Ok(Loop::Break(data))
-                            } else {
-                                Ok(Loop::Continue(socket))
-                            })
-                    }).with_timeout(Duration::from_secs(2), &handle)
-                        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
+                    udp_recv_echo_addr(&handle, socket, server_addr)
                 })
         })
     };
     future::result(try()).flatten().into_boxed()
+}
+
+fn udp_recv_echo_addr(
+    handle: &Handle,
+    socket: UdpSocket,
+    server_addr: SocketAddr,
+) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
+    future::loop_fn(socket, move |socket| {
+        socket
+            .recv_dgram(vec![0u8; 256])
+            .map_err(QueryPublicAddrError::ReadResponse)
+            .and_then(move |(socket, data, len, addr)| if addr == server_addr {
+                let data = {
+                    trace!("server responded with: {:?}", &data[..len]);
+                    bincode::deserialize(&data[..len]).map_err(QueryPublicAddrError::Deserialize)
+                }?;
+                Ok(Loop::Break(data))
+            } else {
+                Ok(Loop::Continue(socket))
+            })
+    }).with_timeout(Duration::from_secs(2), handle)
+        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
+        .into_boxed()
 }
 
 #[cfg(test)]
