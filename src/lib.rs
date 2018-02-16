@@ -216,6 +216,7 @@ extern crate bincode;
 extern crate future_utils;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde;
 #[cfg(test)]
 extern crate env_logger;
 extern crate void;
@@ -229,6 +230,7 @@ extern crate tokio_shared_udp_socket;
 #[macro_use]
 extern crate maplit;
 extern crate secure_serialisation;
+extern crate maidsafe_utilities;
 
 mod priv_prelude;
 mod prelude;
@@ -247,6 +249,7 @@ mod open_addr;
 mod rendezvous_addr;
 mod filter_addrs;
 mod peer;
+mod crypto;
 
 pub use prelude::*;
 

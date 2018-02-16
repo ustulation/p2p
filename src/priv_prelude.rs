@@ -1,6 +1,5 @@
-
-
 pub use bytes::{Bytes, BytesMut};
+pub use crypto::{CryptoContext, CryptoError};
 pub use future_utils::{BoxFuture, BoxStream, FutureExt, StreamExt};
 pub use future_utils::{DropNotice, DropNotify, drop_notify};
 pub use future_utils::Timeout;
