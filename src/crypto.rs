@@ -28,27 +28,33 @@ quick_error! {
     /// Encryption related errors.
     #[derive(Debug)]
     pub enum CryptoError {
+        /// Failure to serialize structure into bytes.
         Serialize(e: SerialisationError) {
             description("Error serializing message")
             display("Error serializing message: {}", e)
             cause(e)
         }
+        /// Failure to deserialize bytes into structure.
         Deserialize(e: SerialisationError) {
             description("Error deserializing message")
             display("Error deserializing message: {}", e)
             cause(e)
         }
+        /// Encryption failure.
         Encrypt(e: SecureSerialiseError) {
             description("Error encrypting message")
             display("Error encrypting message: {:?}", e)
         }
+        /// Failure to decrypt bytes.
         Decrypt(e: SecureSerialiseError) {
             description("Error decrypting message")
             display("Error decrypting message: {:?}", e)
         }
+        /// Encrypt operation is forbidden withing current state.
         EncryptForbidden {
             description("Encrypt operation is not allowed within this crypto context")
         }
+        /// Decrypt operation is forbidden withing current state.
         DecryptForbidden {
             description("Decrypt operation is not allowed within this crypto context")
         }
@@ -59,19 +65,31 @@ quick_error! {
 /// Allows "null" encryption where data is only serialized. See: null object pattern.
 #[derive(Clone, Debug)]
 pub enum CryptoContext {
+    /// No encryption.
     Null,
+    /// Encryption + authentication
     Authenticated {
+        /// Their public key.
         their_pk: PublicKey,
+        /// Our secret key.
         our_sk: SecretKey,
     },
+    /// No message authentication. Only decrypt operation is allowed.
     AnonymousDecrypt {
+        /// Our private key.
         our_pk: PublicKey,
+        /// Our secret key.
         our_sk: SecretKey,
     },
-    AnonymousEncrypt { their_pk: PublicKey },
+    /// No message authentication. Only encrypt operation is allowed.
+    AnonymousEncrypt {
+        /// Their public key.
+        their_pk: PublicKey,
+    },
 }
 
 impl CryptoContext {
+    /// Construct crypto context that encrypts and authenticate messages.
     pub fn authenticated(their_pk: PublicKey, our_sk: SecretKey) -> Self {
         CryptoContext::Authenticated { their_pk, our_sk }
     }
@@ -92,6 +110,7 @@ impl CryptoContext {
         CryptoContext::AnonymousEncrypt { their_pk }
     }
 
+    /// Serialize given structure and encrypt it.
     pub fn encrypt<T: Serialize>(&self, msg: &T) -> Result<BytesMut, CryptoError> {
         match *self {
             CryptoContext::Null => {
@@ -116,6 +135,7 @@ impl CryptoContext {
         }
     }
 
+    /// Decrypt given buffer and deserialize into structure.
     pub fn decrypt<T>(&self, msg: &[u8]) -> Result<T, CryptoError>
     where
         T: Serialize + DeserializeOwned,
