@@ -168,6 +168,7 @@ impl EncryptedRequest {
     }
 }
 
+/// Sends request to echo address server and returns our public address on success.
 pub fn query_public_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,

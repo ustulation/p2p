@@ -1,5 +1,4 @@
 use igd_async::{self, GetAnyAddressError};
-use mc;
 use priv_prelude::*;
 use server_set::Servers;
 use std::error::Error;
@@ -150,12 +149,8 @@ impl PublicAddrsFromStun {
         match self.servers.poll().void_unwrap() {
             Async::Ready(Some(server_info)) => {
                 trace!("got a new server to try: {}", server_info);
-                let active_query = mc::query_public_addr(
-                    self.protocol,
-                    &self.bind_addr,
-                    &server_info,
-                    &self.handle,
-                );
+                let active_query =
+                    query_public_addr(self.protocol, &self.bind_addr, &server_info, &self.handle);
                 self.add_stun_query(active_query);
                 self.more_servers_timeout = None;
                 self.keep_querying_stun = true;

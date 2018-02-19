@@ -1,5 +1,4 @@
 use igd_async::{self, GetAnyAddressError};
-use mc;
 use priv_prelude::*;
 use server_set::Servers;
 use std::error::Error;
@@ -188,7 +187,7 @@ impl Future for OpenAddr {
             match self.traversal_servers.poll().void_unwrap() {
                 Async::Ready(Some(server_info)) => {
                     trace!("new server to query: {}", server_info);
-                    let active_query = mc::query_public_addr(
+                    let active_query = query_public_addr(
                         self.protocol,
                         &self.bind_addr,
                         &server_info,
