@@ -19,7 +19,6 @@ impl PeerInfo {
     }
 
     /// Constructs peer info with random generated public key.
-    /// This is temporary method until peer public keys are implemented in all necessary places.
     pub fn with_rand_key(addr: SocketAddr) -> Self {
         let (pub_key, _) = gen_keypair();
         Self::new(addr, pub_key)
