@@ -216,6 +216,7 @@ extern crate bincode;
 extern crate future_utils;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde;
 #[cfg(test)]
 extern crate env_logger;
 extern crate void;
@@ -229,26 +230,30 @@ extern crate tokio_shared_udp_socket;
 #[macro_use]
 extern crate maplit;
 extern crate secure_serialisation;
+extern crate maidsafe_utilities;
 
 mod priv_prelude;
 mod prelude;
+
+#[macro_use]
+mod util;
 
 mod protocol;
 mod ip_addr;
 mod socket_addr;
 mod tcp;
 mod udp;
-mod util;
 mod server_set;
 mod mc;
 mod igd_async;
 mod open_addr;
 mod rendezvous_addr;
 mod filter_addrs;
+mod peer;
+mod crypto;
 
 pub use prelude::*;
 
 /// Message sent to rendezvous server.
 /// This message asks to respond with our own IP address.
-// NOTE: other libraries (`Crust`) rely on this message to be exactly 8 bytes size.
 pub const ECHO_REQ: [u8; 8] = [b'E', b'C', b'H', b'O', b'A', b'D', b'D', b'R'];

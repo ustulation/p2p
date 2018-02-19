@@ -26,13 +26,16 @@ extern crate void;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
+extern crate serde_json;
 extern crate docopt;
 extern crate env_logger;
+extern crate rust_sodium;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream, future};
 use futures::future::Loop;
-use p2p::UdpSocketExt;
+use p2p::{PeerInfo, UdpSocketExt};
+use rust_sodium::crypto::box_::PublicKey;
 use std::{env, fmt};
 use std::net::SocketAddr;
 use tokio_core::net::{TcpStream, UdpSocket};
@@ -74,14 +77,15 @@ impl<S: Sink> Sink for DummyDebug<S> {
 }
 
 const USAGE: &str = "
-tcp_rendezvous_connect
+udp_rendezvous_connect
 
 Usage:
-    tcp_rendezvous_connect --relay=<address> \
+    udp_rendezvous_connect --relay=<address> \
                            [--disable-igd] \
                            [--traversal-server=<address>] \
+                           [--traversal-server-key=<public_key>] \
                            <message>
-    tcp_rendezvous_connect (-h | --help)
+    udp_rendezvous_connect (-h | --help)
 ";
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +93,7 @@ struct Args {
     flag_relay: SocketAddr,
     flag_disable_igd: bool,
     flag_traversal_server: Option<SocketAddr>,
+    flag_traversal_server_key: Option<String>,
     arg_message: String,
 }
 
@@ -109,8 +114,15 @@ fn main() {
         mc.disable_igd();
     }
 
-    if let Some(server) = args.flag_traversal_server {
-        mc.add_udp_traversal_server(&server);
+    if let Some(server_addr) = args.flag_traversal_server {
+        let server_pub_key =
+            unwrap!(
+            args.flag_traversal_server_key,
+            "If echo address server is specified, it's public key must be given too.",
+        );
+        let server_pub_key: PublicKey = unwrap!(serde_json::from_str(&server_pub_key));
+        let server_info = PeerInfo::new(server_addr, server_pub_key);
+        mc.add_udp_traversal_server(&server_info);
     }
 
     let relay_addr = args.flag_relay;

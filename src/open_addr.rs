@@ -186,12 +186,12 @@ impl Future for OpenAddr {
 
             trace!("polling for new servers");
             match self.traversal_servers.poll().void_unwrap() {
-                Async::Ready(Some(server_addr)) => {
-                    trace!("new server to query: {}", server_addr);
+                Async::Ready(Some(server_info)) => {
+                    trace!("new server to query: {}", server_info);
                     let active_query = mc::query_public_addr(
                         self.protocol,
                         &self.bind_addr,
-                        &server_addr,
+                        &server_info,
                         &self.handle,
                     );
                     self.active_queries.push(active_query);
