@@ -10,13 +10,15 @@ pub fn respond_with_addr<S>(
     sink: S,
     addr: SocketAddr,
     crypto_ctx: &CryptoContext,
-) -> BoxFuture<S, ClientError>
+) -> BoxFuture<S, RendezvousServerError>
 where
     S: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
 {
-    let encrypted = try_bfut!(crypto_ctx.encrypt(&addr).map_err(ClientError::Encrypt));
+    let encrypted = try_bfut!(crypto_ctx.encrypt(&addr).map_err(
+        RendezvousServerError::Encrypt,
+    ));
     sink.send(encrypted)
-        .map_err(ClientError::SendError)
+        .map_err(RendezvousServerError::SendError)
         .into_boxed()
 }
 
@@ -101,7 +103,7 @@ fn from_listener_inner(
         let handle = handle.clone();
         listener
         .incoming()
-        .map_err(ClientError::AcceptError)
+        .map_err(RendezvousServerError::AcceptError)
         .map(move |(stream, addr)| handle_connection(stream, addr, &handle, our_pk, our_sk.clone()))
         .buffer_unordered(1024)
         .log_errors(LogLevel::Info, "processing echo request")
@@ -118,35 +120,42 @@ fn from_listener_inner(
 }
 
 quick_error! {
-    /// Errors related to client connection handling.
+    /// Errors related to rendezvous server client connection handling.
     #[derive(Debug)]
-    pub enum ClientError {
+    pub enum RendezvousServerError {
+        /// Failure to accept incomin client connection.
         AcceptError(e: io::Error) {
             description("Error accepting client connection")
             display("Error accepting client connection: {}", e)
             cause(e)
         }
+        /// Failure to read data from client socket.
         ReadError(e: io::Error) {
             description("Error reading client message")
             display("Error reading client message: {}", e)
             cause(e)
         }
+        /// Failure to write data to client socket.
         SendError(e: io::Error) {
             description("Error sending message to client")
             display("Error sennding message to client: {}", e)
             cause(e)
         }
+        /// Client connection related operation timedout.
         Timeout {
             description("Connection timedout")
         }
+        /// Client connection was closed.
         ConnectionClosed {
             description("Connection was closed prematurely")
         }
+        /// Failure to encrypt data.
         Encrypt(e: CryptoError) {
             description("Error encrypting message")
             display("Error encrypting message: {}", e)
             cause(e)
         }
+        /// Failure to decrypt data.
         Decrypt(e: CryptoError) {
             description("Error decrypting message")
             display("Error decrypting message: {}", e)
@@ -161,20 +170,21 @@ fn handle_connection(
     handle: &Handle,
     our_pk: PublicKey,
     our_sk: SecretKey,
-) -> BoxFuture<(), ClientError> {
+) -> BoxFuture<(), RendezvousServerError> {
     let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
     let crypto_ctx = CryptoContext::anonymous_decrypt(our_pk, our_sk.clone());
     stream
         .into_future()
-        .map_err(|(err, _stream)| ClientError::ReadError(err))
+        .map_err(|(err, _stream)| RendezvousServerError::ReadError(err))
         .and_then(|(req_opt, stream)| {
             req_opt.map(|req| (req, stream)).ok_or(
-                ClientError::ConnectionClosed,
+                RendezvousServerError::ConnectionClosed,
             )
         })
         .and_then(move |(req, stream)| {
-            let req: EncryptedRequest =
-                try_bfut!(crypto_ctx.decrypt(&req).map_err(ClientError::Decrypt));
+            let req: EncryptedRequest = try_bfut!(crypto_ctx.decrypt(&req).map_err(
+                RendezvousServerError::Decrypt,
+            ));
             if req.body[..] == ECHO_REQ {
                 let crypto_ctx = CryptoContext::authenticated(req.our_pk, our_sk);
                 respond_with_addr(stream, addr, &crypto_ctx)
@@ -185,7 +195,7 @@ fn handle_connection(
             }
         })
         .with_timeout(Duration::from_secs(2), handle)
-        .and_then(|opt| opt.ok_or(ClientError::Timeout))
+        .and_then(|opt| opt.ok_or(RendezvousServerError::Timeout))
         .into_boxed()
 }
 
