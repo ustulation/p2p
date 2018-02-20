@@ -163,7 +163,8 @@ pub struct EncryptedRequest {
 }
 
 impl EncryptedRequest {
-    fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
+    /// Create new request.
+    pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
         Self { our_pk, body }
     }
 }
