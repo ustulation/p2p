@@ -14,18 +14,18 @@ pub fn respond_with_addr<S>(
     sink: S,
     addr: SocketAddr,
     crypto_ctx: &CryptoContext,
-) -> BoxFuture<S, ClientError>
+) -> BoxFuture<S, RendezvousServerError>
 where
     S: Sink<SinkItem = Bytes, SinkError = io::Error> + 'static,
 {
     let encrypted = try_bfut!(
         crypto_ctx
             .encrypt(&addr)
-            .map_err(ClientError::Encrypt)
+            .map_err(RendezvousServerError::Encrypt)
             .map(|data| data.freeze())
     );
     sink.send(encrypted)
-        .map_err(ClientError::SendError)
+        .map_err(RendezvousServerError::SendError)
         .into_boxed()
 }
 
@@ -90,41 +90,6 @@ impl UdpRendezvousServer {
     }
 }
 
-quick_error! {
-    /// Errors related to client connection handling.
-    #[derive(Debug)]
-    pub enum ClientError {
-        AcceptError(e: io::Error) {
-            description("Error accepting client connection")
-            display("Error accepting client connection: {}", e)
-            cause(e)
-        }
-        ReadError(e: io::Error) {
-            description("Error reading client message")
-            display("Error reading client message: {}", e)
-            cause(e)
-        }
-        SendError(e: io::Error) {
-            description("Error sending message to client")
-            display("Error sennding message to client: {}", e)
-            cause(e)
-        }
-        Timeout {
-            description("Connection timedout")
-        }
-        Encrypt(e: CryptoError) {
-            description("Error encrypting message")
-            display("Error encrypting message: {}", e)
-            cause(e)
-        }
-        Decrypt(e: CryptoError) {
-            description("Error decrypting message")
-            display("Error decrypting message: {}", e)
-            cause(e)
-        }
-    }
-}
-
 /// Main UDP rendezvous server logic.
 ///
 /// Spawns async task that reacts to rendezvous requests.
@@ -140,12 +105,12 @@ fn from_socket_inner(
         let socket = SharedUdpSocket::share(socket);
 
         socket
-        .map_err(ClientError::AcceptError)
+        .map_err(RendezvousServerError::AcceptError)
         .map(move |with_addr| {
             let our_sk = our_sk.clone();
             with_addr
             .into_future()
-            .map_err(|(e, _with_addr)| ClientError::ReadError(e))
+            .map_err(|(e, _with_addr)| RendezvousServerError::ReadError(e))
             .and_then(move |(msg_opt, with_addr)| {
                 on_addr_echo_request(msg_opt, with_addr, our_pk, our_sk)
             })
@@ -172,11 +137,12 @@ fn on_addr_echo_request(
     with_addr: WithAddress,
     our_pk: PublicKey,
     our_sk: SecretKey,
-) -> BoxFuture<(), ClientError> {
+) -> BoxFuture<(), RendezvousServerError> {
     if let Some(msg) = msg_opt {
         let crypto_ctx = CryptoContext::anonymous_decrypt(our_pk, our_sk.clone());
-        let req: EncryptedRequest =
-            try_bfut!(crypto_ctx.decrypt(&msg).map_err(ClientError::Decrypt));
+        let req: EncryptedRequest = try_bfut!(crypto_ctx.decrypt(&msg).map_err(
+            RendezvousServerError::Decrypt,
+        ));
 
         if req.body[..] == ECHO_REQ[..] {
             let addr = with_addr.remote_addr();

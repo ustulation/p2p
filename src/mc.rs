@@ -98,7 +98,7 @@ impl P2p {
 
     /// Tells the library to forget a `TcpTraversalServer` previously added with
     /// `add_tcp_traversal_server`.
-    pub fn remove_tcp_traversal_server(&self, addr: &PeerInfo) {
+    pub fn remove_tcp_traversal_server(&self, addr: SocketAddr) {
         self.remove_server(Protocol::Tcp, addr);
     }
 
@@ -115,7 +115,7 @@ impl P2p {
 
     /// Tells the library to forget a `UdpTraversalServer` previously added with
     /// `add_udp_traversal_server`.
-    pub fn remove_udp_traversal_server(&self, addr: &PeerInfo) {
+    pub fn remove_udp_traversal_server(&self, addr: SocketAddr) {
         self.remove_server(Protocol::Udp, addr);
     }
 
@@ -136,7 +136,7 @@ impl P2p {
         inner.server_set(protocol).add_server(addr);
     }
 
-    fn remove_server(&self, protocol: Protocol, addr: &PeerInfo) {
+    fn remove_server(&self, protocol: Protocol, addr: SocketAddr) {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).remove_server(addr);
     }
@@ -163,11 +163,13 @@ pub struct EncryptedRequest {
 }
 
 impl EncryptedRequest {
-    fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
+    /// Create new request.
+    pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
         Self { our_pk, body }
     }
 }
 
+/// Sends request to echo address server and returns our public address on success.
 pub fn query_public_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
@@ -407,11 +409,10 @@ mod tests {
             #[test]
             fn it_removes_given_server_from_the_list_if_it_exists() {
                 let p2p = P2p::default();
-                let peer_info = peer_addr!("1.2.3.4:4000");
-                p2p.add_tcp_traversal_server(&peer_info);
+                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
-                p2p.remove_tcp_traversal_server(&peer_info);
+                p2p.remove_tcp_traversal_server(addr!("1.2.3.4:4000"));
 
                 let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));
@@ -423,7 +424,7 @@ mod tests {
                 let p2p = P2p::default();
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
-                p2p.remove_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
+                p2p.remove_tcp_traversal_server(addr!("1.2.3.4:4000"));
 
                 let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));

@@ -2,27 +2,33 @@ use future_utils::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use priv_prelude::*;
 use rand;
 
+/// Server list change event.
+enum ListChange {
+    Remove(SocketAddr),
+    Add(PeerInfo),
+}
+
 #[derive(Default, Clone)]
 pub struct ServerSet {
-    servers: HashSet<PeerInfo>,
-    iterators: Vec<UnboundedSender<(PeerInfo, bool)>>,
+    servers: HashMap<SocketAddr, PeerInfo>,
+    iterators: Vec<UnboundedSender<ListChange>>,
 }
 
 impl ServerSet {
-    pub fn add_server(&mut self, addr: &PeerInfo) {
+    pub fn add_server(&mut self, peer: &PeerInfo) {
         self.iterators.retain(|sender| {
-            sender.unbounded_send((addr.clone(), true)).is_ok()
+            sender.unbounded_send(ListChange::Add(peer.clone())).is_ok()
         });
 
-        let _ = self.servers.insert(addr.clone());
+        let _ = self.servers.insert(peer.addr, peer.clone());
     }
 
-    pub fn remove_server(&mut self, addr: &PeerInfo) {
-        self.iterators.retain(|sender| {
-            sender.unbounded_send((addr.clone(), false)).is_ok()
+    pub fn remove_server(&mut self, addr: SocketAddr) {
+        self.iterators.retain(move |sender| {
+            sender.unbounded_send(ListChange::Remove(addr)).is_ok()
         });
 
-        let _ = self.servers.remove(addr);
+        let _ = self.servers.remove(&addr);
     }
 
     pub fn iter_servers(&mut self) -> Servers {
@@ -37,20 +43,22 @@ impl ServerSet {
     }
 }
 
+/// A list of servers that observes for modifications: updates itself when someone notifies about
+/// new servers added or removed.
 pub struct Servers {
-    servers: HashSet<PeerInfo>,
-    modifications: UnboundedReceiver<(PeerInfo, bool)>,
+    servers: HashMap<SocketAddr, PeerInfo>,
+    modifications: UnboundedReceiver<ListChange>,
 }
 
 impl Servers {
     /// Returns a snapshot of current server list.
     pub fn snapshot(&self) -> HashSet<PeerInfo> {
-        self.servers.clone()
+        self.servers.values().cloned().collect()
     }
 
     /// Returns a snapshot of current server list addresses only.
     pub fn addrs_snapshot(&self) -> HashSet<SocketAddr> {
-        self.servers.iter().cloned().map(|info| info.addr).collect()
+        self.servers.keys().cloned().collect()
     }
 }
 
@@ -59,12 +67,11 @@ impl Stream for Servers {
     type Error = Void;
 
     fn poll(&mut self) -> Result<Async<Option<PeerInfo>>, Void> {
-        while let Async::Ready(Some((server, add))) = self.modifications.poll().void_unwrap() {
-            if add {
-                let _ = self.servers.insert(server);
-            } else {
-                let _ = self.servers.remove(&server);
-            }
+        while let Async::Ready(Some(event)) = self.modifications.poll().void_unwrap() {
+            let _ = match event {
+                ListChange::Add(peer) => self.servers.insert(peer.addr, peer),
+                ListChange::Remove(addr) => self.servers.remove(&addr),
+            };
         }
 
         let server = match self.servers.remove_random(&mut rand::thread_rng()) {
