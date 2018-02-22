@@ -25,5 +25,5 @@ pub use tokio_core::net::{TcpListener, TcpStream, UdpSocket};
 
 pub use tokio_core::reactor::Handle;
 
-pub use util::HashSetExt;
+pub use util::{HashMapExt, HashSetExt};
 pub use void::{ResultVoidExt, Void};
