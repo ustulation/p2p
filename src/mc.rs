@@ -167,6 +167,13 @@ impl EncryptedRequest {
     pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
         Self { our_pk, body }
     }
+
+    /// Constructs request with random public key.
+    /// Useful for testing.
+    pub fn with_rand_key(body: Vec<u8>) -> Self {
+        let (our_pk, _our_sk) = gen_keypair();
+        Self::new(our_pk, body)
+    }
 }
 
 /// Sends request to echo address server and returns our public address on success.

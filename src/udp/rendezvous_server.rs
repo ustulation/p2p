@@ -179,4 +179,74 @@ mod test {
             unwrap!(fut.wait())
         }
     }
+
+    mod rendezvous_server {
+        use super::*;
+        use maidsafe_utilities::serialisation::serialise;
+        use mc::udp_query_public_addr;
+
+        #[test]
+        fn when_unencrypted_request_is_sent_no_response_is_sent_back_to_client() {
+            let mut evloop = unwrap!(Core::new());
+            let handle = evloop.handle();
+            let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+            let server_addr = server.local_addr().unspecified_to_localhost();
+            let server_info = PeerInfo::with_rand_key(server_addr);
+            let request = EncryptedRequest::with_rand_key(ECHO_REQ.to_vec());
+            let unencrypted_request = BytesMut::from(unwrap!(serialise(&request)));
+
+            let query = udp_query_public_addr(
+                &addr!("0.0.0.0:0"),
+                &server_info,
+                &handle,
+                CryptoContext::null(),
+                unencrypted_request,
+            );
+
+            let res = evloop.run(query);
+            let timeout = match res {
+                Err(e) => {
+                    match e {
+                        QueryPublicAddrError::ResponseTimeout => true,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            assert!(timeout);
+        }
+
+        #[test]
+        fn it_sends_encrypted_responses() {
+            let mut evloop = unwrap!(Core::new());
+            let handle = evloop.handle();
+            let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+            let server_addr = server.local_addr().unspecified_to_localhost();
+            let server_info = PeerInfo::new(server_addr, server.public_key());
+
+            let request = EncryptedRequest::with_rand_key(ECHO_REQ.to_vec());
+            let crypto_ctx = CryptoContext::anonymous_encrypt(server.public_key());
+            let encrypted_request = unwrap!(crypto_ctx.encrypt(&request));
+
+            let query = udp_query_public_addr(
+                &addr!("0.0.0.0:0"),
+                &server_info,
+                &handle,
+                CryptoContext::null(),
+                encrypted_request,
+            );
+
+            let res = evloop.run(query);
+            let decrypt_error = match res {
+                Err(e) => {
+                    match e {
+                        QueryPublicAddrError::Decrypt(_e) => true,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            assert!(decrypt_error);
+        }
+    }
 }
