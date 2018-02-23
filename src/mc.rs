@@ -154,7 +154,7 @@ impl P2pInner {
 /// Request that has sender's public key and arbitrary body.
 /// This request is SHOULD be anonymously encrypted and it allows receiver to switch to
 /// authenticated encryption.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct EncryptedRequest {
     /// Sender's public key. Response should be encrypted with it.
     pub our_pk: PublicKey,
