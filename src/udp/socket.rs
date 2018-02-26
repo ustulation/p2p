@@ -246,50 +246,43 @@ impl UdpSocketExt for UdpSocket {
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
             .then(move |res| match res {
                 Ok((socket, public_addr)) => {
-                    let try = || {
-                        let mut our_addrs = {
-                            socket.expanded_local_addrs().map_err(
-                                UdpRendezvousConnectError::IfAddrs,
-                            )?
-                        };
-                        our_addrs.push(public_addr);
-                        trace!(
-                            "public bind successful, our open addresses are: {:#?}",
-                            our_addrs
-                        );
-                        let our_addrs = our_addrs.into_iter().collect::<HashSet<_>>();
-                        let msg = UdpRendezvousMsg::Init {
-                            enc_pk: our_pk,
-                            open_addrs: our_addrs.clone(),
-                            rendezvous_addrs: Vec::new(),
-                        };
-
-                        trace!("exchanging rendezvous info with peer");
-                        Ok({
-                            exchange_msgs(&handle0, channel, &msg).map(move |their_msg| {
-                                trace!("received rendezvous info");
-                                let UdpRendezvousMsg::Init {
-                                    enc_pk: their_pk,
-                                    open_addrs: their_open_addrs,
-                                    rendezvous_addrs: _their_rendezvous_addrs,
-                                } = their_msg;
-
-                                let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
-                                let incoming = {
-                                    open_connect(
-                                        &handle0,
-                                        their_pk,
-                                        our_sk0,
-                                        socket,
-                                        their_open_addrs,
-                                        true,
-                                    ).into_boxed()
-                                };
-                                (their_pk, incoming, None, None)
-                            })
-                        })
+                    let mut our_addrs = try_bfut!(socket.expanded_local_addrs().map_err(
+                        UdpRendezvousConnectError::IfAddrs,
+                    ));
+                    our_addrs.push(public_addr);
+                    trace!(
+                        "public bind successful, our open addresses are: {:#?}",
+                        our_addrs
+                    );
+                    let our_addrs = our_addrs.into_iter().collect::<HashSet<_>>();
+                    let msg = UdpRendezvousMsg::Init {
+                        enc_pk: our_pk,
+                        open_addrs: our_addrs.clone(),
+                        rendezvous_addrs: Vec::new(),
                     };
-                    future::result(try()).flatten().into_boxed()
+
+                    trace!("exchanging rendezvous info with peer");
+                    exchange_msgs(&handle0, channel, &msg)
+                        .map(move |their_msg| {
+                            trace!("received rendezvous info");
+                            let UdpRendezvousMsg::Init {
+                                enc_pk: their_pk,
+                                open_addrs: their_open_addrs,
+                                rendezvous_addrs: _their_rendezvous_addrs,
+                            } = their_msg;
+
+                            let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
+                            let incoming = open_connect(
+                                &handle0,
+                                their_pk,
+                                our_sk0,
+                                socket,
+                                their_open_addrs,
+                                true,
+                            );
+                            (their_pk, incoming, None, None)
+                        })
+                        .into_boxed()
                 }
                 Err(bind_public_error) => {
                     trace!("public bind failed: {}", bind_public_error);
