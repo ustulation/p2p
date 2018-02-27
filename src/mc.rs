@@ -319,10 +319,9 @@ pub fn udp_query_public_addr(
         let bind_addr = *bind_addr;
         let server_addr = server_info.addr;
         let handle = handle.clone();
-        let socket = {
-            UdpSocket::bind_connect_reusable(&bind_addr, &server_addr, &handle)
-                .map_err(QueryPublicAddrError::Bind)
-        }?;
+        let socket = UdpSocket::bind_reusable(&bind_addr, &handle).map_err(
+            QueryPublicAddrError::Bind,
+        )?;
 
         Ok({
             socket
