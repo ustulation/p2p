@@ -315,25 +315,20 @@ pub fn udp_query_public_addr(
     crypto_ctx: CryptoContext,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let try = || {
-        let bind_addr = *bind_addr;
-        let server_addr = server_info.addr;
-        let handle = handle.clone();
-        let socket = UdpSocket::bind_reusable(&bind_addr, &handle).map_err(
-            QueryPublicAddrError::Bind,
-        )?;
+    let server_addr = server_info.addr;
+    let handle = handle.clone();
+    let socket = try_bfut!(UdpSocket::bind_reusable(bind_addr, &handle).map_err(
+        QueryPublicAddrError::Bind,
+    ));
 
-        Ok({
-            socket
-                .send_dgram(encrypted_req, server_addr)
-                .map(|(socket, _buf)| socket)
-                .map_err(QueryPublicAddrError::SendRequest)
-                .and_then(move |socket| {
-                    udp_recv_echo_addr(&handle, socket, server_addr, crypto_ctx)
-                })
+    socket
+        .send_dgram(encrypted_req, server_addr)
+        .map(|(socket, _buf)| socket)
+        .map_err(QueryPublicAddrError::SendRequest)
+        .and_then(move |socket| {
+            udp_recv_echo_addr(&handle, socket, server_addr, crypto_ctx)
         })
-    };
-    future::result(try()).flatten().into_boxed()
+        .into_boxed()
 }
 
 fn udp_recv_echo_addr(
