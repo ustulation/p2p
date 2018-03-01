@@ -154,7 +154,7 @@ impl P2pInner {
 /// Request that has sender's public key and arbitrary body.
 /// This request is SHOULD be anonymously encrypted and it allows receiver to switch to
 /// authenticated encryption.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct EncryptedRequest {
     /// Sender's public key. Response should be encrypted with it.
     pub our_pk: PublicKey,
@@ -166,6 +166,13 @@ impl EncryptedRequest {
     /// Create new request.
     pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
         Self { our_pk, body }
+    }
+
+    /// Constructs request with random public key.
+    /// Useful for testing.
+    pub fn with_rand_key(body: Vec<u8>) -> Self {
+        let (our_pk, _our_sk) = gen_keypair();
+        Self::new(our_pk, body)
     }
 }
 
@@ -308,26 +315,20 @@ pub fn udp_query_public_addr(
     crypto_ctx: CryptoContext,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let try = || {
-        let bind_addr = *bind_addr;
-        let server_addr = server_info.addr;
-        let handle = handle.clone();
-        let socket = {
-            UdpSocket::bind_connect_reusable(&bind_addr, &server_addr, &handle)
-                .map_err(QueryPublicAddrError::Bind)
-        }?;
+    let server_addr = server_info.addr;
+    let handle = handle.clone();
+    let socket = try_bfut!(UdpSocket::bind_reusable(bind_addr, &handle).map_err(
+        QueryPublicAddrError::Bind,
+    ));
 
-        Ok({
-            socket
-                .send_dgram(encrypted_req, server_addr)
-                .map(|(socket, _buf)| socket)
-                .map_err(QueryPublicAddrError::SendRequest)
-                .and_then(move |socket| {
-                    udp_recv_echo_addr(&handle, socket, server_addr, crypto_ctx)
-                })
+    socket
+        .send_dgram(encrypted_req, server_addr)
+        .map(|(socket, _buf)| socket)
+        .map_err(QueryPublicAddrError::SendRequest)
+        .and_then(move |socket| {
+            udp_recv_echo_addr(&handle, socket, server_addr, crypto_ctx)
         })
-    };
-    future::result(try()).flatten().into_boxed()
+        .into_boxed()
 }
 
 fn udp_recv_echo_addr(
@@ -358,6 +359,8 @@ fn udp_recv_echo_addr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use maidsafe_utilities::serialisation::deserialise;
+    use tokio_core::reactor::Core;
 
     mod p2p {
         use super::*;
@@ -429,6 +432,75 @@ mod tests {
                 let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
                 assert!(addrs.contains(&addr!("1.2.3.5:5000")));
             }
+        }
+    }
+
+    mod query_public_addr {
+        use super::*;
+        use bytes::buf::FromBuf;
+
+        #[test]
+        fn when_protocol_is_tcp_it_sends_encrypted_echo_address_request() {
+            let mut evloop = unwrap!(Core::new());
+            let handle = evloop.handle();
+            let listener = unwrap!(TcpListener::bind(&addr!("0.0.0.0:0"), &handle));
+            let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
+            let incoming = listener.incoming();
+
+            let server_info = PeerInfo::with_rand_key(server_addr);
+            let query =
+                query_public_addr(Protocol::Tcp, &addr!("0.0.0.0:0"), &server_info, &handle)
+                    .then(|_| Ok(()));
+
+            let make_query = incoming.into_future()
+                .map_err(|e| panic!(e))
+                .map(|(client_opt, _incoming)| {
+                    unwrap!(client_opt, "Failed to receive client connection")
+                })
+                .map(|(client_stream, _addr)| {
+                    length_delimited::Builder::new().new_framed(client_stream)
+                })
+                .and_then(|client_stream: Framed<TcpStream>| {
+                    client_stream.into_future()
+                        .map(|(request_opt, _stream)| {
+                            unwrap!(request_opt, "Failed to receive data from client connection")
+                        })
+                        .and_then(|request| {
+                            Ok(request)
+                        })
+                })
+                // When server is running, let's make a query.
+                .join(query)
+                .map(|(request, _response)| request);
+
+            let request = unwrap!(evloop.run(make_query));
+            let request: Result<EncryptedRequest, _> = deserialise(&request);
+            assert!(request.is_err());
+        }
+
+        #[test]
+        fn when_protocol_is_udp_it_sends_encrypted_echo_address_request() {
+            let mut evloop = unwrap!(Core::new());
+            let handle = evloop.handle();
+
+            let listener = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+            let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
+
+            let server_info = PeerInfo::with_rand_key(server_addr);
+            let query =
+                query_public_addr(Protocol::Udp, &addr!("0.0.0.0:0"), &server_info, &handle)
+                    .then(|_| Ok(()));
+
+            let make_query = listener.recv_dgram(vec![0u8; 256])
+                .map_err(|e| panic!(e))
+                .map(move |(_socket, data, len, _addr)| BytesMut::from_buf(&data[..len]))
+                // When server is running, let's make a query.
+                .join(query)
+                .map(|(request, _response)| request);
+
+            let request = unwrap!(evloop.run(make_query));
+            let request: Result<EncryptedRequest, _> = deserialise(&request);
+            assert!(request.is_err());
         }
     }
 }
