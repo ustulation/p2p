@@ -233,6 +233,7 @@ extern crate secure_serialisation;
 extern crate maidsafe_utilities;
 #[cfg(test)]
 #[cfg(target_os = "linux")]
+#[cfg(feature = "netsim")]
 extern crate netsim;
 
 mod priv_prelude;

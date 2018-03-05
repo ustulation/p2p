@@ -1162,6 +1162,7 @@ mod test {
 
 #[cfg(test)]
 #[cfg(target_os = "linux")]
+#[cfg(feature = "netsim")]
 mod netsim_test {
     use super::*;
 
