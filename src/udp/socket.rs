@@ -1169,8 +1169,9 @@ mod netsim_test {
     use env_logger;
     use future_utils;
     use futures;
-    use netsim::{self, SubnetV4, node};
+    use netsim::{self, SubnetV4};
     use netsim::device::NatV4Builder;
+    use netsim::node::{self, Ipv4Node};
     use tokio_core::reactor::Core;
 
     use util;
@@ -1267,21 +1268,19 @@ mod netsim_test {
                 }),
             );
 
-            let server_node = node::latency_v4(
-                Duration::from_millis(100),
-                Duration::from_millis(10),
-                node::hops_v4(2, server_node),
-            );
-            let node_0 = node::latency_v4(
-                Duration::from_millis(200),
-                Duration::from_millis(20),
-                node::hops_v4(3, node_0),
-            );
-            let node_0 = node::latency_v4(
-                Duration::from_millis(200),
-                Duration::from_millis(20),
-                node::hops_v4(3, node_0),
-            );
+            let server_node = server_node
+                .latency(Duration::from_millis(100), Duration::from_millis(10))
+                .hops(2);
+
+            let node_0 = node_0
+                .latency(Duration::from_millis(200), Duration::from_millis(20))
+                .hops(4)
+                .packet_loss(0.1, Duration::from_millis(20));
+
+            let node_1 = node_1
+                .latency(Duration::from_millis(200), Duration::from_millis(20))
+                .hops(4)
+                .packet_loss(0.1, Duration::from_millis(20));
 
             let network = node::router_v4((server_node, node_0, node_1));
 
