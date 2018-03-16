@@ -1167,7 +1167,6 @@ mod netsim_test {
     use super::*;
 
     use env_logger;
-    use future_utils;
     use futures;
     use netsim::{self, SubnetV4};
     use netsim::device::NatV4Builder;
@@ -1284,11 +1283,14 @@ mod netsim_test {
 
             let network = node::router_v4((server_node, node_0, node_1));
 
-            let (join_handle, _plug) =
+            let (spawn_complete, _plug) =
                 netsim::spawn::network_v4(&handle, SubnetV4::global(), network);
 
-            future_utils::thread_future(|| unwrap!(join_handle.join()))
+            spawn_complete
+            .resume_unwind()
             .map(|((), (), ())| ())
+            .with_timeout(start_delay + Duration::from_secs(5), &handle)
+            .map(|opt| unwrap!(opt, "test timed out!"))
         }));
         res.void_unwrap()
     }

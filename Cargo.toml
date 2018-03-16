@@ -12,7 +12,7 @@ bincode = "~0.9.2"
 bytes = "~0.4.5"
 docopt = "~0.8.1"
 env_logger = "~0.4.3"
-future-utils = "~0.8.0"
+future-utils = "~0.9.0"
 futures = "~0.1.18"
 get_if_addrs = "~0.4"
 igd = "~0.6"
@@ -37,7 +37,7 @@ void = "~1.0"
 serde_json = "~1.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-netsim = { version = "~0.1.4", optional = true }
+netsim = { version = "~0.1.5", optional = true }
 
 [features]
 default = ["netsim"]
