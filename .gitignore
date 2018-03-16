@@ -32,3 +32,7 @@ build-tests/
 packages/
 .DS_Store
 *.bootstrap.cache
+
+# Direnv
+.direnv.master
+.envrc
