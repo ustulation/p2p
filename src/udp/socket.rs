@@ -169,6 +169,11 @@ pub trait UdpSocketExt {
         <C as Stream>::Error: fmt::Debug,
         <C as Sink>::SinkError: fmt::Debug,
         C: 'static;
+
+    /// Send a datagram to the address previously bound via connect().
+    fn send_dgram_connected<T>(self, buf: T) -> BoxFuture<(UdpSocket, T), io::Error>
+    where
+        T: AsRef<[u8]> + 'static;
 }
 
 fn bind_reusable(addr: &SocketAddr) -> io::Result<::std::net::UdpSocket> {
@@ -438,6 +443,34 @@ impl UdpSocketExt for UdpSocket {
                 }
             })
             .into_boxed()
+    }
+
+    /// Send a datagram to the address previously bound via connect().
+    fn send_dgram_connected<T>(self, buf: T) -> BoxFuture<(UdpSocket, T), io::Error>
+    where
+        T: AsRef<[u8]> + 'static,
+    {
+        let mut stuff_opt = Some((self, buf));
+        future::poll_fn(move || {
+            let (this, buf) = unwrap!(stuff_opt.take());
+            match this.send(buf.as_ref()) {
+                Ok(n) => {
+                    if n < buf.as_ref().len() {
+                        Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "failed to write entire message to dgram",
+                        ))
+                    } else {
+                        Ok(Async::Ready((this, buf)))
+                    }
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    stuff_opt = Some((this, buf));
+                    Ok(Async::NotReady)
+                }
+                Err(e) => Err(e),
+            }
+        }).into_boxed()
     }
 }
 
@@ -1016,6 +1049,53 @@ mod test {
     use tokio_core::reactor::Core;
 
     use util;
+
+    #[test]
+    fn send_dgram_connected_works() {
+        const DGRAM_LEN: usize = 1024;
+        let _ = env_logger::init();
+
+        let mut core = unwrap!(Core::new());
+        let handle = core.handle();
+
+        let recv_sock = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+        let recv_sock_addr = unwrap!(recv_sock.local_addr()).unspecified_to_localhost();
+
+        let sock = unwrap!(UdpSocket::bind_connect_reusable(
+            &addr!("0.0.0.0:0"),
+            &recv_sock_addr,
+            &handle,
+        ));
+        let sock_addr = unwrap!(sock.local_addr()).unspecified_to_localhost();
+
+        let send_future = {
+            let v = util::random_vec(DGRAM_LEN);
+            sock.send_dgram_connected(v).map(|(_sock, v)| v).map_err(
+                |e| {
+                    panic!("error sending: {}", e)
+                },
+            )
+        };
+
+        let recv_future = {
+            let v = util::zeroed_vec(DGRAM_LEN);
+            recv_sock
+                .recv_dgram(v)
+                .map(|(_recv_sock, v, len, addr)| {
+                    assert_eq!(len, DGRAM_LEN);
+                    assert_eq!(addr, sock_addr);
+                    v
+                })
+                .map_err(|e| panic!("error receiving: {}", e))
+        };
+
+        let res = core.run({
+            send_future.join(recv_future).map(|(v_send, v_recv)| {
+                assert_eq!(v_send, v_recv);
+            })
+        });
+        res.void_unwrap()
+    }
 
     #[test]
     fn hole_puncher_sends_5_ack_ack_messages() {

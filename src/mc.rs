@@ -317,12 +317,13 @@ pub fn udp_query_public_addr(
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let server_addr = server_info.addr;
     let handle = handle.clone();
-    let socket = try_bfut!(UdpSocket::bind_reusable(bind_addr, &handle).map_err(
-        QueryPublicAddrError::Bind,
-    ));
+    let socket = try_bfut!(
+        UdpSocket::bind_connect_reusable(bind_addr, &server_addr, &handle)
+            .map_err(QueryPublicAddrError::Bind)
+    );
 
     socket
-        .send_dgram(encrypted_req, server_addr)
+        .send_dgram_connected(encrypted_req)
         .map(|(socket, _buf)| socket)
         .map_err(QueryPublicAddrError::SendRequest)
         .and_then(move |socket| {
@@ -349,6 +350,7 @@ fn udp_recv_echo_addr(
                 )?;
                 Ok(Loop::Break(data))
             } else {
+                warn!("unexpected data arrived on query socket");
                 Ok(Loop::Continue(socket))
             })
     }).with_timeout(Duration::from_secs(2), handle)
