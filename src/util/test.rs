@@ -1,5 +1,6 @@
 use future_utils::mpsc::{SendError, UnboundedReceiver, UnboundedSender, unbounded};
 use priv_prelude::*;
+use rand;
 
 #[derive(Debug)]
 pub struct TwoWayChannel<T> {
@@ -47,4 +48,20 @@ macro_rules! peer_addr {
             PeerInfo::with_rand_key(addr!($addr))
         }
     };
+}
+
+#[allow(unsafe_code)]
+pub fn random_vec(size: usize) -> Vec<u8> {
+    let mut ret = Vec::with_capacity(size);
+    unsafe { ret.set_len(size) };
+    rand::thread_rng().fill_bytes(&mut ret[..]);
+    ret
+}
+
+pub fn zeroed_vec(size: usize) -> Vec<u8> {
+    let mut ret = Vec::with_capacity(size);
+    for _ in 0..size {
+        ret.push(0)
+    }
+    ret
 }
