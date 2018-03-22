@@ -108,6 +108,8 @@ fn from_socket_inner(
         socket
         .map_err(RendezvousServerError::AcceptError)
         .map(move |with_addr| {
+            trace!("rendezvous server started conversation with {}", with_addr.remote_addr());
+
             let our_sk = our_sk.clone();
             with_addr
             .into_future()
@@ -145,14 +147,17 @@ fn on_addr_echo_request(
     our_pk: PublicKey,
     our_sk: SecretKey,
 ) -> BoxFuture<(), RendezvousServerError> {
+    let addr = with_addr.remote_addr();
     if let Some(msg) = msg_opt {
+        trace!("udp rendezvous server received message from {}", addr);
         let crypto_ctx = CryptoContext::anonymous_decrypt(our_pk, our_sk.clone());
         let req: EncryptedRequest = try_bfut!(crypto_ctx.decrypt(&msg).map_err(
             RendezvousServerError::Decrypt,
         ));
+        trace!("udp rendezvous server decrypted message from {}", addr);
 
         if req.body[..] == ECHO_REQ[..] {
-            let addr = with_addr.remote_addr();
+            trace!("udp rendezvous server received echo request from {}", addr);
             let crypto_ctx = CryptoContext::authenticated(req.our_pk, our_sk);
             return respond_with_addr(with_addr, addr, &crypto_ctx)
                 .map(|_with_addr| ())

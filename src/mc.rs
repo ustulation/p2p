@@ -2,7 +2,6 @@
 
 use ECHO_REQ;
 
-use futures::future::Loop;
 use priv_prelude::*;
 use protocol::Protocol;
 use rust_sodium::crypto::box_::{PublicKey, gen_keypair};
@@ -316,44 +315,54 @@ pub fn udp_query_public_addr(
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let server_addr = server_info.addr;
-    let handle = handle.clone();
     let socket = try_bfut!(
-        UdpSocket::bind_connect_reusable(bind_addr, &server_addr, &handle)
+        UdpSocket::bind_connect_reusable(bind_addr, &server_addr, handle)
             .map_err(QueryPublicAddrError::Bind)
     );
 
-    socket
-        .send_dgram_connected(encrypted_req)
-        .map(|(socket, _buf)| socket)
-        .map_err(QueryPublicAddrError::SendRequest)
-        .and_then(move |socket| {
-            udp_recv_echo_addr(&handle, socket, server_addr, crypto_ctx)
-        })
-        .into_boxed()
-}
+    let mut timeout = Timeout::new(Duration::new(0, 0), handle);
+    future::poll_fn(move || {
+        while let Async::Ready(()) = timeout.poll().void_unwrap() {
+            match socket.send(&encrypted_req[..]) {
+                Ok(n) => {
+                    let len = encrypted_req.len();
+                    if len != n {
+                        let e = io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("failed to send complete request. \
+                                    Sent {} bytes of {}", len, n),
+                        );
+                        return Err(QueryPublicAddrError::SendRequest(e));
+                    }
+                    timeout.reset(Instant::now() + Duration::from_millis(500));
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    break;
+                }
+                Err(e) => return Err(QueryPublicAddrError::SendRequest(e)),
+            }
+        }
 
-fn udp_recv_echo_addr(
-    handle: &Handle,
-    socket: UdpSocket,
-    server_addr: SocketAddr,
-    crypto_ctx: CryptoContext,
-) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    future::loop_fn(socket, move |socket| {
-        let crypto_ctx = crypto_ctx.clone();
-        socket
-            .recv_dgram(vec![0u8; 256])
-            .map_err(QueryPublicAddrError::ReadResponse)
-            .and_then(move |(socket, data, len, addr)| if addr == server_addr {
-                trace!("server responded with: {:?}", &data[..len]);
-                let data = crypto_ctx.decrypt(&data[..len]).map_err(
-                    QueryPublicAddrError::Decrypt,
-                )?;
-                Ok(Loop::Break(data))
-            } else {
-                warn!("unexpected data arrived on query socket");
-                Ok(Loop::Continue(socket))
-            })
-    }).with_timeout(Duration::from_secs(2), handle)
+        loop {
+            let mut buffer = [0u8; 256];
+            match socket.recv_from(&mut buffer) {
+                Ok((len, recv_addr)) => {
+                    if recv_addr != server_addr {
+                        continue;
+                    }
+                    trace!("server responded with: {:?}", &buffer[..len]);
+                    let external_addr = crypto_ctx.decrypt(&buffer[..len]).map_err(
+                        QueryPublicAddrError::Decrypt,
+                    )?;
+                    return Ok(Async::Ready(external_addr));
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    break Ok(Async::NotReady);
+                }
+                Err(e) => return Err(QueryPublicAddrError::ReadResponse(e)),
+            }
+        }
+    }).with_timeout(Duration::from_secs(3), handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
         .into_boxed()
 }
