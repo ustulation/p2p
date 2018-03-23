@@ -1380,7 +1380,7 @@ mod netsim_test {
             spawn_complete
             .resume_unwind()
             .map(|((), (), ())| ())
-            .with_timeout(start_delay + Duration::from_secs(5), &handle)
+            .with_timeout(start_delay + Duration::from_secs(20), &handle)
             .map(|opt| unwrap!(opt, "test timed out!"))
         }));
         res.void_unwrap()
