@@ -1,5 +1,5 @@
 use priv_prelude::*;
-use rust_sodium::crypto::box_::{PublicKey, gen_keypair};
+use rust_sodium::crypto::box_::{gen_keypair, PublicKey};
 
 /// Information necessary to connect to peer.
 // NOTE: this structure is very similar to the one in Crust. Except the one in Crust stores

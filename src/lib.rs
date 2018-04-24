@@ -186,55 +186,54 @@
 //!
 //! [0]: https://en.wikipedia.org/wiki/Internet_Gateway_Device_Protocol
 
-#![forbid(exceeding_bitshifts, mutable_transmutes, no_mangle_const_items,
-          unknown_crate_types, warnings)]
-#![deny(deprecated, improper_ctypes, missing_docs,
-        non_shorthand_field_patterns, overflowing_literals, plugin_as_library,
-        private_no_mangle_fns, private_no_mangle_statics, stable_features,
-        unconditional_recursion, unknown_lints, unsafe_code, unused, unused_allocation,
-        unused_attributes, unused_comparisons, unused_features, unused_parens, while_true)]
+#![forbid(exceeding_bitshifts, mutable_transmutes, no_mangle_const_items, unknown_crate_types,
+          warnings)]
+#![deny(deprecated, improper_ctypes, missing_docs, non_shorthand_field_patterns,
+        overflowing_literals, plugin_as_library, private_no_mangle_fns, private_no_mangle_statics,
+        stable_features, unconditional_recursion, unknown_lints, unsafe_code, unused,
+        unused_allocation, unused_attributes, unused_comparisons, unused_features, unused_parens,
+        while_true)]
 #![warn(trivial_casts, trivial_numeric_casts, unused_extern_crates, unused_import_braces,
         unused_qualifications, unused_results)]
 #![allow(box_pointers, missing_copy_implementations, missing_debug_implementations,
          variant_size_differences)]
+#![recursion_limit = "100"]
 
-#![recursion_limit="100"]
-
-extern crate tokio_io;
-extern crate tokio_core;
-extern crate futures;
-extern crate get_if_addrs;
-#[macro_use]
-extern crate unwrap;
-extern crate rand;
-extern crate bytes;
-extern crate net2;
-#[macro_use]
-extern crate net_literals;
-extern crate rust_sodium;
 extern crate bincode;
-extern crate future_utils;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
+extern crate bytes;
 #[cfg(test)]
 extern crate env_logger;
-extern crate void;
+extern crate future_utils;
+extern crate futures;
+extern crate get_if_addrs;
+extern crate igd;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate quick_error;
-extern crate igd;
-extern crate tokio_shared_udp_socket;
+extern crate maidsafe_utilities;
 #[cfg(test)]
 #[macro_use]
 extern crate maplit;
-extern crate secure_serialisation;
-extern crate maidsafe_utilities;
+extern crate net2;
+#[macro_use]
+extern crate net_literals;
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 #[cfg(feature = "netsim")]
 extern crate netsim;
+#[macro_use]
+extern crate quick_error;
+extern crate rand;
+extern crate rust_sodium;
+extern crate secure_serialisation;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate tokio_core;
+extern crate tokio_io;
+extern crate tokio_shared_udp_socket;
+#[macro_use]
+extern crate unwrap;
+extern crate void;
 
 mod priv_prelude;
 mod prelude;

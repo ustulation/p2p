@@ -1,7 +1,7 @@
 use ECHO_REQ;
 use open_addr::BindPublicError;
 use priv_prelude::*;
-use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
+use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
 use tcp::listener::{self, TcpListenerExt};
 use tokio_io::codec::length_delimited::{self, Framed};
 
@@ -14,9 +14,11 @@ pub fn respond_with_addr<S>(
 where
     S: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
 {
-    let encrypted = try_bfut!(crypto_ctx.encrypt(&addr).map_err(
-        RendezvousServerError::Encrypt,
-    ));
+    let encrypted = try_bfut!(
+        crypto_ctx
+            .encrypt(&addr,)
+            .map_err(RendezvousServerError::Encrypt,)
+    );
     sink.send(encrypted)
         .map_err(RendezvousServerError::SendError)
         .into_boxed()
@@ -102,14 +104,16 @@ fn from_listener_inner(
     let handle_connections = {
         let handle = handle.clone();
         listener
-        .incoming()
-        .map_err(RendezvousServerError::AcceptError)
-        .map(move |(stream, addr)| handle_connection(stream, addr, &handle, our_pk, our_sk.clone()))
-        .buffer_unordered(1024)
-        .log_errors(LogLevel::Info, "processing echo request")
-        .until(drop_rx)
-        .for_each(|()| Ok(()))
-        .infallible()
+            .incoming()
+            .map_err(RendezvousServerError::AcceptError)
+            .map(move |(stream, addr)| {
+                handle_connection(stream, addr, &handle, our_pk, our_sk.clone())
+            })
+            .buffer_unordered(1024)
+            .log_errors(LogLevel::Info, "processing echo request")
+            .until(drop_rx)
+            .for_each(|()| Ok(()))
+            .infallible()
     };
     handle.spawn(handle_connections);
     TcpRendezvousServer {
@@ -177,14 +181,16 @@ fn handle_connection(
         .into_future()
         .map_err(|(err, _stream)| RendezvousServerError::ReadError(err))
         .and_then(|(req_opt, stream)| {
-            req_opt.map(|req| (req, stream)).ok_or(
-                RendezvousServerError::ConnectionClosed,
-            )
+            req_opt
+                .map(|req| (req, stream))
+                .ok_or(RendezvousServerError::ConnectionClosed)
         })
         .and_then(move |(req, stream)| {
-            let req: EncryptedRequest = try_bfut!(crypto_ctx.decrypt(&req).map_err(
-                RendezvousServerError::Decrypt,
-            ));
+            let req: EncryptedRequest = try_bfut!(
+                crypto_ctx
+                    .decrypt(&req,)
+                    .map_err(RendezvousServerError::Decrypt,)
+            );
             if req.body[..] == ECHO_REQ {
                 let crypto_ctx = CryptoContext::authenticated(req.our_pk, our_sk);
                 respond_with_addr(stream, addr, &crypto_ctx)
@@ -229,9 +235,12 @@ mod tests {
             let actual_addr = unwrap!(conn.local_addr());
             let conn: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(conn);
 
-            let buf = unwrap!(event_loop.run(conn.into_future().map(|(resp_opt, _conn)| {
-                unwrap!(resp_opt)
-            })));
+            let buf = unwrap!(
+                event_loop.run(
+                    conn.into_future()
+                        .map(|(resp_opt, _conn)| unwrap!(resp_opt))
+                )
+            );
             let received_addr: SocketAddr = unwrap!(bincode::deserialize(&buf));
 
             assert_eq!(received_addr, actual_addr);
@@ -297,12 +306,10 @@ mod tests {
 
             let res = evloop.run(query);
             let decrypt_error = match res {
-                Err(e) => {
-                    match e {
-                        QueryPublicAddrError::Decrypt(_) => true,
-                        _ => false,
-                    }
-                }
+                Err(e) => match e {
+                    QueryPublicAddrError::Decrypt(_) => true,
+                    _ => false,
+                },
                 _ => false,
             };
             assert!(decrypt_error);
