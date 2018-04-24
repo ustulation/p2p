@@ -1,4 +1,4 @@
-use future_utils::mpsc::{SendError, UnboundedReceiver, UnboundedSender, unbounded};
+use future_utils::mpsc::{unbounded, SendError, UnboundedReceiver, UnboundedSender};
 use priv_prelude::*;
 use rand;
 

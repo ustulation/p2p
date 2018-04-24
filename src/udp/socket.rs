@@ -2,10 +2,10 @@ use bincode;
 use filter_addrs::filter_addrs;
 use futures::future::Loop;
 use futures::stream::FuturesUnordered;
-use open_addr::{BindPublicError, open_addr};
+use open_addr::{open_addr, BindPublicError};
 use priv_prelude::*;
-use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
-use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
+use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
+use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
 use secure_serialisation::{self, deserialise as secure_deserialise, serialise as secure_serialise};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
@@ -44,7 +44,7 @@ pub enum UdpRendezvousConnectError<Ei, Eo> {
     AllAttemptsFailed(
         Vec<HolePunchError>,
         Option<Box<BindPublicError>>,
-        Option<Box<RendezvousAddrError>>
+        Option<Box<RendezvousAddrError>>,
     ),
 }
 
@@ -55,9 +55,11 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.description())?;
-        if let UdpRendezvousConnectError::AllAttemptsFailed(ref v,
-                                                            ref bind_public,
-                                                            ref rendezvous) = *self
+        if let UdpRendezvousConnectError::AllAttemptsFailed(
+            ref v,
+            ref bind_public,
+            ref rendezvous,
+        ) = *self
         {
             if let Some(ref bind_public) = *bind_public {
                 write!(
@@ -79,7 +81,6 @@ where
             for (i, error) in v.iter().enumerate() {
                 write!(f, ". [{} of {}] {}", i, num_errors, error)?;
             }
-
         } else if let Some(error) = self.cause() {
             write!(f, ". {}", error)?;
         }
@@ -96,18 +97,14 @@ where
         use self::UdpRendezvousConnectError::*;
 
         match *self {
-            Bind(ref e) |
-            Rebind(ref e) |
-            IfAddrs(ref e) |
-            SocketWrite(ref e) |
-            SetTtl(ref e) => Some(e),
+            Bind(ref e) | Rebind(ref e) | IfAddrs(ref e) | SocketWrite(ref e) | SetTtl(ref e) => {
+                Some(e)
+            }
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
             SerialiseMsg(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
-            ChannelClosed |
-            ChannelTimedOut |
-            AllAttemptsFailed(..) => None,
+            ChannelClosed | ChannelTimedOut | AllAttemptsFailed(..) => None,
         }
     }
 
@@ -251,9 +248,11 @@ impl UdpSocketExt for UdpSocket {
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
             .then(move |res| match res {
                 Ok((socket, public_addr)) => {
-                    let mut our_addrs = try_bfut!(socket.expanded_local_addrs().map_err(
-                        UdpRendezvousConnectError::IfAddrs,
-                    ));
+                    let mut our_addrs = try_bfut!(
+                        socket
+                            .expanded_local_addrs()
+                            .map_err(UdpRendezvousConnectError::IfAddrs,)
+                    );
                     our_addrs.push(public_addr);
                     trace!(
                         "public bind successful, our open addresses are: {:#?}",
@@ -269,12 +268,16 @@ impl UdpSocketExt for UdpSocket {
                     trace!("exchanging rendezvous info with peer");
                     exchange_msgs(&handle0, channel, &msg)
                         .map(move |their_msg| {
-                            trace!("received rendezvous info");
                             let UdpRendezvousMsg::Init {
                                 enc_pk: their_pk,
                                 open_addrs: their_open_addrs,
-                                rendezvous_addrs: _their_rendezvous_addrs,
+                                rendezvous_addrs: their_rendezvous_addrs,
                             } = their_msg;
+                            trace!(
+                                "their rendezvous addresses are: {:#?}",
+                                their_rendezvous_addrs
+                            );
+                            trace!("their open addresses are: {:#?}", their_open_addrs);
 
                             let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
                             let incoming = open_connect(
@@ -298,9 +301,9 @@ impl UdpSocketExt for UdpSocket {
                                 .map_err(UdpRendezvousConnectError::Bind)?
                         };
                         let our_addrs = {
-                            listen_socket.expanded_local_addrs().map_err(
-                                UdpRendezvousConnectError::IfAddrs,
-                            )?
+                            listen_socket
+                                .expanded_local_addrs()
+                                .map_err(UdpRendezvousConnectError::IfAddrs)?
                         };
                         let our_addrs = our_addrs.into_iter().collect::<HashSet<_>>();
 
@@ -308,9 +311,8 @@ impl UdpSocketExt for UdpSocket {
                             let handle2 = handle0.clone();
                             hole_punching_sockets(&handle0, &mc0).and_then(
                                 move |(sockets, rendezvous_error_opt)| {
-                                    let (sockets, rendezvous_addrs) = {
-                                        sockets.into_iter().unzip::<_, _, Vec<_>, _>()
-                                    };
+                                    let (sockets, rendezvous_addrs) =
+                                        { sockets.into_iter().unzip::<_, _, Vec<_>, _>() };
                                     trace!("our rendezvous addresses are: {:#?}", rendezvous_addrs);
                                     trace!("our open addresses are: {:#?}", our_addrs);
                                     let msg = UdpRendezvousMsg::Init {
@@ -343,9 +345,9 @@ impl UdpSocketExt for UdpSocket {
                                                     .enumerate()
                                             };
                                             for (i, (socket, their_addr)) in iter {
-                                                socket.set_ttl(HOLE_PUNCH_INITIAL_TTL).map_err(
-                                                    UdpRendezvousConnectError::SetTtl,
-                                                )?;
+                                                socket
+                                                    .set_ttl(HOLE_PUNCH_INITIAL_TTL)
+                                                    .map_err(UdpRendezvousConnectError::SetTtl)?;
                                                 let shared = SharedUdpSocket::share(socket);
                                                 let with_addr = shared.with_address(their_addr);
                                                 let delay_tolerance = Duration::from_secs(
@@ -394,54 +396,53 @@ impl UdpSocketExt for UdpSocket {
                     future::result(try()).flatten().into_boxed()
                 }
             })
-            .and_then(move |(their_pk,
-                   incoming,
-                   bind_public_error_opt,
-                   rendezvous_error_opt)| {
-                if our_pk > their_pk {
-                    trace!("we are choosing the connection");
-                    incoming
-                        .and_then(|(socket, chosen)| {
-                            if chosen {
-                                return Err(HolePunchError::UnexpectedMessage);
-                            }
-                            trace!("successful connection found!");
-                            Ok(socket)
-                        })
-                        .first_ok()
-                        .map_err(|v| {
-                            trace!("all attempts failed (us)");
-                            UdpRendezvousConnectError::AllAttemptsFailed(
-                                v,
-                                bind_public_error_opt.map(Box::new),
-                                rendezvous_error_opt.map(Box::new),
-                            )
-                        })
-                        .and_then(move |socket| choose(&handle1, their_pk, our_sk, socket, 0))
-                        .into_boxed()
-                } else {
-                    trace!("they are choosing the connection");
-                    incoming
-                        .map(move |(socket, chosen)| {
-                            if chosen {
-                                return future::ok(got_chosen(socket)).into_boxed();
-                            }
-                            take_chosen(&handle1, their_pk, our_sk.clone(), socket)
-                        })
-                        .buffer_unordered(256)
-                        .filter_map(|opt| opt)
-                        .first_ok()
-                        .map_err(|v| {
-                            trace!("all attempts failed (them)");
-                            UdpRendezvousConnectError::AllAttemptsFailed(
-                                v,
-                                bind_public_error_opt.map(Box::new),
-                                rendezvous_error_opt.map(Box::new),
-                            )
-                        })
-                        .into_boxed()
-                }
-            })
+            .and_then(
+                move |(their_pk, incoming, bind_public_error_opt, rendezvous_error_opt)| {
+                    if our_pk > their_pk {
+                        trace!("we are choosing the connection");
+                        incoming
+                            .and_then(|(socket, chosen)| {
+                                if chosen {
+                                    return Err(HolePunchError::UnexpectedMessage);
+                                }
+                                trace!("successful connection found!");
+                                Ok(socket)
+                            })
+                            .first_ok()
+                            .map_err(|v| {
+                                trace!("all attempts failed (us)");
+                                UdpRendezvousConnectError::AllAttemptsFailed(
+                                    v,
+                                    bind_public_error_opt.map(Box::new),
+                                    rendezvous_error_opt.map(Box::new),
+                                )
+                            })
+                            .and_then(move |socket| choose(&handle1, their_pk, our_sk, socket, 0))
+                            .into_boxed()
+                    } else {
+                        trace!("they are choosing the connection");
+                        incoming
+                            .map(move |(socket, chosen)| {
+                                if chosen {
+                                    return future::ok(got_chosen(socket)).into_boxed();
+                                }
+                                take_chosen(&handle1, their_pk, our_sk.clone(), socket)
+                            })
+                            .buffer_unordered(256)
+                            .filter_map(|opt| opt)
+                            .first_ok()
+                            .map_err(|v| {
+                                trace!("all attempts failed (them)");
+                                UdpRendezvousConnectError::AllAttemptsFailed(
+                                    v,
+                                    bind_public_error_opt.map(Box::new),
+                                    rendezvous_error_opt.map(Box::new),
+                                )
+                            })
+                            .into_boxed()
+                    }
+                },
+            )
             .into_boxed()
     }
 
@@ -498,27 +499,27 @@ where
         let try = || {
             let socket = UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle)
                 .map_err(UdpRendezvousConnectError::Rebind)?;
-            let bind_addr = socket.local_addr().map_err(
-                UdpRendezvousConnectError::Rebind,
-            )?;
-            socket.set_ttl(HOLE_PUNCH_INITIAL_TTL).map_err(
-                UdpRendezvousConnectError::SetTtl,
-            )?;
+            let bind_addr = socket
+                .local_addr()
+                .map_err(UdpRendezvousConnectError::Rebind)?;
+            socket
+                .set_ttl(HOLE_PUNCH_INITIAL_TTL)
+                .map_err(UdpRendezvousConnectError::SetTtl)?;
 
             Ok({
-                rendezvous_addr(Protocol::Udp, &bind_addr, &handle, &p2p)
-                    .then(move |res| match res {
-                        Ok(addr) => {
-                            sockets.push((socket, addr));
-                            trace!("generated {} rendezvous sockets", sockets.len());
-                            Ok(Loop::Continue(sockets))
-                        }
-                        Err(err) => {
-                            trace!("error generating rendezvous socket: {}", err);
-                            trace!("stopping after generating {} sockets", sockets.len());
-                            Ok(Loop::Break((sockets, Some(err))))
-                        }
-                    })
+                rendezvous_addr(Protocol::Udp, &bind_addr, &handle, &p2p).then(move |res| match res
+                {
+                    Ok(addr) => {
+                        sockets.push((socket, addr));
+                        trace!("generated {} rendezvous sockets", sockets.len());
+                        Ok(Loop::Continue(sockets))
+                    }
+                    Err(err) => {
+                        trace!("error generating rendezvous socket: {}", err);
+                        trace!("stopping after generating {} sockets", sockets.len());
+                        Ok(Loop::Break((sockets, Some(err))))
+                    }
+                })
             })
         };
         future::result(try()).flatten().into_boxed()
@@ -532,12 +533,8 @@ pub fn bind_public_with_addr(
 ) -> BoxFuture<(UdpSocket, SocketAddr, SocketAddr), BindPublicError> {
     let handle = handle.clone();
     let try = || {
-        let socket = {
-            UdpSocket::bind_reusable(addr, &handle).map_err(BindPublicError::Bind)
-        }?;
-        let bind_addr = {
-            socket.local_addr().map_err(BindPublicError::Bind)
-        }?;
+        let socket = { UdpSocket::bind_reusable(addr, &handle).map_err(BindPublicError::Bind) }?;
+        let bind_addr = { socket.local_addr().map_err(BindPublicError::Bind) }?;
         Ok({
             open_addr(Protocol::Udp, &bind_addr, &handle, mc)
                 .map_err(BindPublicError::OpenAddr)
@@ -717,14 +714,14 @@ impl HolePunching {
                 let now = Instant::now();
                 while now - *time_of_last_ttl_increment > ttl_increment_duration {
                     let ttl = {
-                        unwrap!(self.socket.as_mut()).ttl().map_err(
-                            HolePunchError::GetTtl,
-                        )
+                        unwrap!(self.socket.as_mut())
+                            .ttl()
+                            .map_err(HolePunchError::GetTtl)
                     }?;
                     if ttl < MAX_TTL {
-                        unwrap!(self.socket.as_mut()).set_ttl(ttl + 1).map_err(
-                            HolePunchError::SetTtl,
-                        )?;
+                        unwrap!(self.socket.as_mut())
+                            .set_ttl(ttl + 1)
+                            .map_err(HolePunchError::SetTtl)?;
                     }
                     *time_of_last_ttl_increment += ttl_increment_duration;
                 }
@@ -748,64 +745,57 @@ impl HolePunching {
 
     fn process_msg(&mut self, msg: &HolePunchMsg) -> Result<Async<WithAddress>, HolePunchError> {
         match *msg {
-            HolePunchMsg::Syn => {
-                match self.phase {
-                    HolePunchingPhase::Syn { .. } => {
-                        self.phase = HolePunchingPhase::Ack;
-                        unwrap!(self.socket.as_mut()).set_ttl(MAX_TTL).map_err(
-                            HolePunchError::SetTtl,
-                        )?;
-                        self.timeout.reset(Instant::now());
-                    }
-                    HolePunchingPhase::Ack => {
-                        self.timeout.reset(Instant::now());
-                    }
-                    HolePunchingPhase::AckAck { .. } => (),
+            HolePunchMsg::Syn => match self.phase {
+                HolePunchingPhase::Syn { .. } => {
+                    self.phase = HolePunchingPhase::Ack;
+                    unwrap!(self.socket.as_mut())
+                        .set_ttl(MAX_TTL)
+                        .map_err(HolePunchError::SetTtl)?;
+                    self.timeout.reset(Instant::now());
                 }
-            }
-            HolePunchMsg::Ack => {
-                match self.phase {
-                    HolePunchingPhase::Syn { .. } |
-                    HolePunchingPhase::Ack => {
-                        self.phase = HolePunchingPhase::AckAck {
-                            ack_acks_sent: 0,
-                            received_ack_ack: false,
-                        };
-                        self.timeout.reset(Instant::now());
-                    }
-                    HolePunchingPhase::AckAck { .. } => {
-                        self.timeout.reset(Instant::now());
-                    }
+                HolePunchingPhase::Ack => {
+                    self.timeout.reset(Instant::now());
                 }
-            }
-            HolePunchMsg::AckAck => {
-                match self.phase {
-                    HolePunchingPhase::Syn { .. } => {
-                        return Err(HolePunchError::UnexpectedMessage);
-                    }
-                    HolePunchingPhase::Ack => {
-                        self.phase = HolePunchingPhase::AckAck {
-                            ack_acks_sent: 0,
-                            received_ack_ack: true,
-                        };
-                        self.timeout.reset(Instant::now());
-                    }
-                    HolePunchingPhase::AckAck { ref mut received_ack_ack, .. } => {
-                        *received_ack_ack = true;
-                    }
+                HolePunchingPhase::AckAck { .. } => (),
+            },
+            HolePunchMsg::Ack => match self.phase {
+                HolePunchingPhase::Syn { .. } | HolePunchingPhase::Ack => {
+                    self.phase = HolePunchingPhase::AckAck {
+                        ack_acks_sent: 0,
+                        received_ack_ack: false,
+                    };
+                    self.timeout.reset(Instant::now());
                 }
-            }
-            HolePunchMsg::Choose => {
-                match self.phase {
-                    HolePunchingPhase::Syn { .. } => {
-                        return Err(HolePunchError::UnexpectedMessage);
-                    }
-                    HolePunchingPhase::Ack |
-                    HolePunchingPhase::AckAck { .. } => {
-                        return Ok(Async::Ready(unwrap!(self.socket.take())))
-                    }
+                HolePunchingPhase::AckAck { .. } => {
+                    self.timeout.reset(Instant::now());
                 }
-            }
+            },
+            HolePunchMsg::AckAck => match self.phase {
+                HolePunchingPhase::Syn { .. } => {
+                    return Err(HolePunchError::UnexpectedMessage);
+                }
+                HolePunchingPhase::Ack => {
+                    self.phase = HolePunchingPhase::AckAck {
+                        ack_acks_sent: 0,
+                        received_ack_ack: true,
+                    };
+                    self.timeout.reset(Instant::now());
+                }
+                HolePunchingPhase::AckAck {
+                    ref mut received_ack_ack,
+                    ..
+                } => {
+                    *received_ack_ack = true;
+                }
+            },
+            HolePunchMsg::Choose => match self.phase {
+                HolePunchingPhase::Syn { .. } => {
+                    return Err(HolePunchError::UnexpectedMessage);
+                }
+                HolePunchingPhase::Ack | HolePunchingPhase::AckAck { .. } => {
+                    return Ok(Async::Ready(unwrap!(self.socket.take())))
+                }
+            },
         }
         Ok(Async::NotReady)
     }
@@ -957,9 +947,7 @@ where
         .and_then(move |socket| {
             Timeout::new(Duration::from_millis(200), &handle)
                 .infallible()
-                .and_then(move |()| {
-                    choose(&handle, their_pk, our_sk, socket, chooses_sent + 1)
-                })
+                .and_then(move |()| choose(&handle, their_pk, our_sk, socket, chooses_sent + 1))
         })
         .into_boxed()
 }
@@ -978,16 +966,14 @@ fn take_chosen(
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
         .and_then(move |(msg_opt, socket)| match msg_opt {
             None => future::ok(None).into_boxed(),
-            Some(msg) => {
-                match secure_deserialise(&msg, &their_pk, &our_sk) {
-                    Err(e) => {
-                        warn!("error deserializing packet from peer: {:?}", e);
-                        take_chosen(&handle, their_pk, our_sk, socket)
-                    }
-                    Ok(HolePunchMsg::Choose) => future::ok(got_chosen(socket)).into_boxed(),
-                    Ok(..) => take_chosen(&handle, their_pk, our_sk, socket),
+            Some(msg) => match secure_deserialise(&msg, &their_pk, &our_sk) {
+                Err(e) => {
+                    warn!("error deserializing packet from peer: {:?}", e);
+                    take_chosen(&handle, their_pk, our_sk, socket)
                 }
-            }
+                Ok(HolePunchMsg::Choose) => future::ok(got_chosen(socket)).into_boxed(),
+                Ok(..) => take_chosen(&handle, their_pk, our_sk, socket),
+            },
         })
         .into_boxed()
 }
@@ -1044,10 +1030,8 @@ enum HolePunchMsg {
 #[cfg(test)]
 mod test {
     use super::*;
-
     use env_logger;
     use tokio_core::reactor::Core;
-
     use util;
 
     #[test]
@@ -1070,11 +1054,9 @@ mod test {
 
         let send_future = {
             let v = util::random_vec(DGRAM_LEN);
-            sock.send_dgram_connected(v).map(|(_sock, v)| v).map_err(
-                |e| {
-                    panic!("error sending: {}", e)
-                },
-            )
+            sock.send_dgram_connected(v)
+                .map(|(_sock, v)| v)
+                .map_err(|e| panic!("error sending: {}", e))
         };
 
         let recv_future = {
@@ -1141,9 +1123,9 @@ mod test {
                 })
                 .and_then(|recv_sock| {
                     trace!("sent ack");
-                    recv_sock.into_future().map_err(
-                        |(e, _)| panic!("recv error: {}", e),
-                    )
+                    recv_sock
+                        .into_future()
+                        .map_err(|(e, _)| panic!("recv error: {}", e))
                 })
                 .and_then({
                     let recv_sock_sk = recv_sock_sk.clone();
@@ -1166,9 +1148,10 @@ mod test {
                 })
                 .and_then(|recv_sock| {
                     trace!("sent ack-ack");
-                    recv_sock.take(5).collect().map_err(
-                        |e| panic!("recv error: {}", e),
-                    )
+                    recv_sock
+                        .take(5)
+                        .collect()
+                        .map_err(|e| panic!("recv error: {}", e))
                 })
                 .map({
                     let recv_sock_sk = recv_sock_sk.clone();
@@ -1197,11 +1180,7 @@ mod test {
                 .map(|_sock| ())
         };
 
-        let res = core.run({
-            recv_side
-            .join(send_side)
-            .map(|((), ())| ())
-        });
+        let res = core.run({ recv_side.join(send_side).map(|((), ())| ()) });
 
         unwrap!(res)
     }
@@ -1231,18 +1210,16 @@ mod test {
             };
             let f1 = {
                 UdpSocket::rendezvous_connect(ch1, &handle, &mc1)
-                .map_err(|e| panic!("connect failed: {:?}", e))
-                .and_then(|(socket, addr)| {
-                    trace!("rendezvous connect successful! connected to {}", addr);
-                    let socket = SharedUdpSocket::share(socket).with_address(addr);
-                    socket
-                    .filter_map(|data| {
-                        if data == b"hello"[..] { Some(()) } else { None }
+                    .map_err(|e| panic!("connect failed: {:?}", e))
+                    .and_then(|(socket, addr)| {
+                        trace!("rendezvous connect successful! connected to {}", addr);
+                        let socket = SharedUdpSocket::share(socket).with_address(addr);
+                        socket
+                            .filter_map(|data| if data == b"hello"[..] { Some(()) } else { None })
+                            .next_or_else(|| panic!("Didn't receive a message"))
                     })
-                    .next_or_else(|| panic!("Didn't receive a message"))
-                })
-                .map_err(|e| panic!("reading failed: {:?}", e))
-                .map(|((), _socket)| ())
+                    .map_err(|e| panic!("reading failed: {:?}", e))
+                    .map(|((), _socket)| ())
             };
 
             f0.join(f1).map(|((), ())| ())
@@ -1256,17 +1233,20 @@ mod test {
 #[cfg(feature = "netsim")]
 mod netsim_test {
     use super::*;
-
     use env_logger;
     use futures;
     use netsim::{self, SubnetV4};
     use netsim::device::NatV4Builder;
     use netsim::node::{self, Ipv4Node};
     use tokio_core::reactor::Core;
-
     use util;
 
-    fn udp_rendezvous_connect_between_natted_hosts(start_delay: Duration) {
+    fn udp_rendezvous_connect_between_natted_hosts(
+        num_servers: usize,
+        nat_0: NatV4Builder,
+        nat_1: NatV4Builder,
+        start_delay: Duration,
+    ) {
         let _ = env_logger::init();
 
         let mut core = unwrap!(Core::new());
@@ -1274,93 +1254,109 @@ mod netsim_test {
 
         let res = core.run(future::lazy(|| {
             let (ch0, ch1) = util::two_way_channel();
-            let (server_drop_tx_0, server_drop_rx_0) = drop_notify();
-            let (server_drop_tx_1, server_drop_rx_1) = drop_notify();
-            let (server_info_tx_0, server_info_rx_0) = futures::sync::oneshot::channel();
-            let (server_info_tx_1, server_info_rx_1) = futures::sync::oneshot::channel();
-            let server_node = node::endpoint_v4(move |ip| {
-                let mut core = unwrap!(Core::new());
-                let handle = core.handle();
 
-                let res = core.run(future::lazy(move || {
-                    let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
-                    let server_port = server.local_addr().port();
-                    let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
-                    let server_info = PeerInfo {
-                        addr: server_addr,
-                        pub_key: server.public_key(),
-                    };
+            let mut server_drop_txs_0 = Vec::new();
+            let mut server_drop_txs_1 = Vec::new();
+            let (server_info_tx_0, server_info_rx_0) = futures::sync::mpsc::unbounded();
+            let (server_info_tx_1, server_info_rx_1) = futures::sync::mpsc::unbounded();
+            let mut server_nodes = Vec::new();
+            for _ in 0..num_servers {
+                let (server_drop_tx_0, server_drop_rx_0) = drop_notify();
+                let (server_drop_tx_1, server_drop_rx_1) = drop_notify();
+                server_drop_txs_0.push(server_drop_tx_0);
+                server_drop_txs_1.push(server_drop_tx_1);
 
-                    unwrap!(server_info_tx_0.send(server_info.clone()));
-                    unwrap!(server_info_tx_1.send(server_info));
+                let server_info_tx_0 = server_info_tx_0.clone();
+                let server_info_tx_1 = server_info_tx_1.clone();
 
-                    server_drop_rx_0
-                    .and_then(|()| server_drop_rx_1)
-                    .map(|()| drop(server))
-                }));
-                unwrap!(res)
-            });
+                let server_node = node::endpoint_v4(move |ip| {
+                    let mut core = unwrap!(Core::new());
+                    let handle = core.handle();
+
+                    let res = core.run(future::lazy(move || {
+                        let server =
+                            unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+                        let server_port = server.local_addr().port();
+                        let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
+                        let server_info = PeerInfo {
+                            addr: server_addr,
+                            pub_key: server.public_key(),
+                        };
+
+                        unwrap!(server_info_tx_0.unbounded_send(server_info.clone()));
+                        unwrap!(server_info_tx_1.unbounded_send(server_info));
+
+                        server_drop_rx_0
+                            .and_then(|()| server_drop_rx_1)
+                            .map(|()| drop(server))
+                    }));
+                    unwrap!(res)
+                });
+                let server_node = server_node
+                    .latency(Duration::from_millis(100), Duration::from_millis(10))
+                    .hops(2);
+                server_nodes.push(server_node);
+            }
+
             let node_0 = node::nat_v4(
-                NatV4Builder::default(),
+                nat_0,
                 node::endpoint_v4(move |_ip| {
                     let mut core = unwrap!(Core::new());
                     let handle = core.handle();
 
                     let res = core.run(future::lazy(|| {
                         server_info_rx_0
-                            .map_err(|e| panic!("error getting server addr: {}", e))
-                            .map(|server_info| {
+                            .collect()
+                            .map_err(|()| panic!("error getting server addr"))
+                            .map(|server_infos| {
                                 let p2p = P2p::default();
-                                p2p.add_udp_traversal_server(&server_info);
+                                for server_info in server_infos {
+                                    p2p.add_udp_traversal_server(&server_info);
+                                }
                                 p2p
                             })
                             .and_then(|p2p| {
-                                UdpSocket::rendezvous_connect(ch0, &handle, &p2p).map_err(
-                                    |e| {
-                                        panic!("rendezvous connect error: {}", e)
-                                    },
-                                )
+                                UdpSocket::rendezvous_connect(ch0, &handle, &p2p)
+                                    .map_err(|e| panic!("rendezvous connect error: {}", e))
                             })
                             .map(|_socket| {
                                 trace!("connected peer 0");
-                                drop(server_drop_tx_0);
+                                drop(server_drop_txs_0);
                             })
                     }));
                     unwrap!(res)
                 }),
             );
             let node_1 = node::nat_v4(
-                NatV4Builder::default(),
+                nat_1,
                 node::endpoint_v4(move |_ip| {
                     let mut core = unwrap!(Core::new());
                     let handle = core.handle();
 
                     let res = core.run(future::lazy(|| {
                         Timeout::new(start_delay, &handle)
-                        .infallible()
-                        .and_then(|()| server_info_rx_1)
-                        .map_err(|e| panic!("error getting server addr: {}", e))
-                        .map(|server_info| {
-                            let p2p = P2p::default();
-                            p2p.add_udp_traversal_server(&server_info);
-                            p2p
-                        })
-                        .and_then(|p2p| {
-                            UdpSocket::rendezvous_connect(ch1, &handle, &p2p)
-                            .map_err(|e| panic!("rendezvous connect error: {}", e))
-                        })
-                        .map(|_socket| {
-                            trace!("connected peer 1");
-                            drop(server_drop_tx_1);
-                        })
+                            .infallible()
+                            .and_then(|()| server_info_rx_1.collect())
+                            .map_err(|()| panic!("error getting server addr"))
+                            .map(|server_infos| {
+                                let p2p = P2p::default();
+                                for server_info in server_infos {
+                                    p2p.add_udp_traversal_server(&server_info);
+                                }
+                                p2p
+                            })
+                            .and_then(|p2p| {
+                                UdpSocket::rendezvous_connect(ch1, &handle, &p2p)
+                                    .map_err(|e| panic!("rendezvous connect error: {}", e))
+                            })
+                            .map(|_socket| {
+                                trace!("connected peer 1");
+                                drop(server_drop_txs_1);
+                            })
                     }));
                     unwrap!(res)
                 }),
             );
-
-            let server_node = server_node
-                .latency(Duration::from_millis(100), Duration::from_millis(10))
-                .hops(2);
 
             let node_0 = node_0
                 .latency(Duration::from_millis(200), Duration::from_millis(20))
@@ -1372,32 +1368,114 @@ mod netsim_test {
                 .hops(4)
                 .packet_loss(0.1, Duration::from_millis(20));
 
-            let network = node::router_v4((server_node, node_0, node_1));
+            let servers = node::router_v4(server_nodes);
+            let network = node::router_v4((servers, node_0, node_1));
 
             let (spawn_complete, _plug) =
                 netsim::spawn::network_v4(&handle, SubnetV4::global(), network);
 
             spawn_complete
-            .resume_unwind()
-            .map(|((), (), ())| ())
-            .with_timeout(start_delay + Duration::from_secs(20), &handle)
-            .map(|opt| unwrap!(opt, "test timed out!"))
+                .resume_unwind()
+                .map(|(_v, (), ())| ())
+                .with_timeout(start_delay + Duration::from_secs(20), &handle)
+                .map(|opt| unwrap!(opt, "test timed out!"))
         }));
         res.void_unwrap()
     }
 
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_with_no_delay() {
-        udp_rendezvous_connect_between_natted_hosts(Duration::from_secs(0));
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Duration::from_secs(0),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_no_delay() {
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            NatV4Builder::default().blacklist_unrecognized_addrs(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .randomize_port_allocation()
+                .symmetric(),
+            Duration::from_secs(0),
+        );
+    }
+
+    #[ignore] // currently fails :(
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_both_symmetric_with_no_delay() {
+        udp_rendezvous_connect_between_natted_hosts(
+            3,
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .symmetric(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .symmetric(),
+            Duration::from_secs(0),
+        );
     }
 
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_with_short_delay() {
-        udp_rendezvous_connect_between_natted_hosts(Duration::from_secs(5));
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Duration::from_secs(5),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_short_delay() {
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            NatV4Builder::default().blacklist_unrecognized_addrs(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .randomize_port_allocation()
+                .symmetric(),
+            Duration::from_secs(5),
+        );
     }
 
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_with_long_delay() {
-        udp_rendezvous_connect_between_natted_hosts(Duration::from_secs(60));
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Duration::from_secs(60),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_long_delay() {
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            NatV4Builder::default().blacklist_unrecognized_addrs(),
+            NatV4Builder::default()
+                .blacklist_unrecognized_addrs()
+                .randomize_port_allocation()
+                .symmetric(),
+            Duration::from_secs(60),
+        );
     }
 }

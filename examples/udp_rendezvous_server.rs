@@ -3,16 +3,16 @@
 //!
 //! Use `udp_reendezvous_client` example to test this server.
 
-#[macro_use]
-extern crate unwrap;
+extern crate futures;
 #[macro_use]
 extern crate net_literals;
-extern crate tokio_core;
 extern crate p2p;
-extern crate futures;
 extern crate serde_json;
+extern crate tokio_core;
+#[macro_use]
+extern crate unwrap;
 
-use futures::{Future, future};
+use futures::{future, Future};
 use p2p::UdpRendezvousServer;
 
 fn main() {
@@ -29,8 +29,7 @@ fn main() {
                     unwrap!(serde_json::to_string(&server.public_key()))
                 );
 
-                future::empty()
-            .map(|()| drop(server))
+                future::empty().map(|()| drop(server))
             })
     });
     unwrap!(res);

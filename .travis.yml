@@ -17,9 +17,9 @@ before_script:
       cargo install cargo-prune --vers="0.1.8" --force;
     fi
   - if [ "${TRAVIS_RUST_VERSION}" = 1.22.1 ]; then
-      rustfmt_vers=0.9.0;
+      rustfmt_vers=0.3.8
       if ! rustfmt --version | grep -q $rustfmt_vers; then
-        cargo install rustfmt --vers=$rustfmt_vers --force;
+        cargo install rustfmt-nightly --vers=$rustfmt_vers --force;
       fi
     elif [ "${TRAVIS_OS_NAME}" = linux ]; then
       clippy_vers=0.0.175;
