@@ -2,7 +2,7 @@ use ECHO_REQ;
 use bytes::Bytes;
 use open_addr::BindPublicError;
 use priv_prelude::*;
-use rust_sodium::crypto::box_::{PublicKey, SecretKey, gen_keypair};
+use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::socket;
 
@@ -106,29 +106,30 @@ fn from_socket_inner(
         trace!("rendezvous server starting");
 
         socket
-        .map_err(RendezvousServerError::AcceptError)
-        .map(move |with_addr| {
-            trace!("rendezvous server started conversation with {}", with_addr.remote_addr());
+            .map_err(RendezvousServerError::AcceptError)
+            .map(move |with_addr| {
+                trace!(
+                    "rendezvous server started conversation with {}",
+                    with_addr.remote_addr()
+                );
 
-            let our_sk = our_sk.clone();
-            with_addr
-            .into_future()
-            .map_err(|(e, _with_addr)| RendezvousServerError::ReadError(e))
-            .and_then(move |(msg_opt, with_addr)| {
-                on_addr_echo_request(msg_opt, with_addr, our_pk, our_sk)
+                let our_sk = our_sk.clone();
+                with_addr
+                    .into_future()
+                    .map_err(|(e, _with_addr)| RendezvousServerError::ReadError(e))
+                    .and_then(move |(msg_opt, with_addr)| {
+                        on_addr_echo_request(msg_opt, with_addr, our_pk, our_sk)
+                    })
             })
-        })
-        .buffer_unordered(1024)
-        .log_errors(LogLevel::Info, "processing echo request")
-        .until(drop_rx)
-        .for_each(|()| {
-            Ok(())
-        })
-        .map(|x| {
-            trace!("rendezvous server exiting");
-            x
-        })
-        .infallible()
+            .buffer_unordered(1024)
+            .log_errors(LogLevel::Info, "processing echo request")
+            .until(drop_rx)
+            .for_each(|()| Ok(()))
+            .map(|x| {
+                trace!("rendezvous server exiting");
+                x
+            })
+            .infallible()
     };
     handle.spawn(f);
     UdpRendezvousServer {
@@ -151,9 +152,11 @@ fn on_addr_echo_request(
     if let Some(msg) = msg_opt {
         trace!("udp rendezvous server received message from {}", addr);
         let crypto_ctx = CryptoContext::anonymous_decrypt(our_pk, our_sk.clone());
-        let req: EncryptedRequest = try_bfut!(crypto_ctx.decrypt(&msg).map_err(
-            RendezvousServerError::Decrypt,
-        ));
+        let req: EncryptedRequest = try_bfut!(
+            crypto_ctx
+                .decrypt(&msg,)
+                .map_err(RendezvousServerError::Decrypt,)
+        );
         trace!("udp rendezvous server decrypted message from {}", addr);
 
         if req.body[..] == ECHO_REQ[..] {
@@ -179,12 +182,12 @@ mod test {
         #[test]
         fn it_returns_finished_future_when_message_is_none() {
             let ev_loop = unwrap!(Core::new());
-            let udp_sock = SharedUdpSocket::share(unwrap!(
-                UdpSocket::bind(&addr!("0.0.0.0:0"), &ev_loop.handle())
-            ));
+            let udp_sock = SharedUdpSocket::share(unwrap!(UdpSocket::bind(
+                &addr!("0.0.0.0:0"),
+                &ev_loop.handle()
+            )));
             let udp_sock = udp_sock.with_address(addr!("192.168.1.2:1234"));
             let (our_pk, our_sk) = gen_keypair();
-
 
             let fut = on_addr_echo_request(None, udp_sock, our_pk, our_sk);
 
@@ -217,12 +220,10 @@ mod test {
 
             let res = evloop.run(query);
             let timeout = match res {
-                Err(e) => {
-                    match e {
-                        QueryPublicAddrError::ResponseTimeout => true,
-                        _ => false,
-                    }
-                }
+                Err(e) => match e {
+                    QueryPublicAddrError::ResponseTimeout => true,
+                    _ => false,
+                },
                 _ => false,
             };
             assert!(timeout);
@@ -250,12 +251,10 @@ mod test {
 
             let res = evloop.run(query);
             let decrypt_error = match res {
-                Err(e) => {
-                    match e {
-                        QueryPublicAddrError::Decrypt(_e) => true,
-                        _ => false,
-                    }
-                }
+                Err(e) => match e {
+                    QueryPublicAddrError::Decrypt(_e) => true,
+                    _ => false,
+                },
                 _ => false,
             };
             assert!(decrypt_error);

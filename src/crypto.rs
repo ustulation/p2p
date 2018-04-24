@@ -15,12 +15,12 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use maidsafe_utilities::serialisation::{SerialisationError, deserialise, serialise};
+use maidsafe_utilities::serialisation::{deserialise, serialise, SerialisationError};
 use priv_prelude::*;
 use rust_sodium::crypto::box_::{PublicKey, SecretKey};
-use secure_serialisation::{Error as SecureSerialiseError, anonymous_deserialise,
-                           anonymous_serialise, deserialise as secure_deserialise,
-                           serialise as secure_serialise};
+use secure_serialisation::{anonymous_deserialise, anonymous_serialise,
+                           deserialise as secure_deserialise, serialise as secure_serialise,
+                           Error as SecureSerialiseError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -113,24 +113,18 @@ impl CryptoContext {
     /// Serialize given structure and encrypt it.
     pub fn encrypt<T: Serialize>(&self, msg: &T) -> Result<BytesMut, CryptoError> {
         match *self {
-            CryptoContext::Null => {
-                serialise(msg).map_err(CryptoError::Serialize).map(
-                    BytesMut::from,
-                )
-            }
+            CryptoContext::Null => serialise(msg)
+                .map_err(CryptoError::Serialize)
+                .map(BytesMut::from),
             CryptoContext::Authenticated {
                 ref their_pk,
                 ref our_sk,
-            } => {
-                secure_serialise(msg, their_pk, our_sk)
-                    .map_err(CryptoError::Encrypt)
-                    .map(BytesMut::from)
-            }
-            CryptoContext::AnonymousEncrypt { ref their_pk } => {
-                anonymous_serialise(msg, their_pk)
-                    .map_err(CryptoError::Encrypt)
-                    .map(BytesMut::from)
-            }
+            } => secure_serialise(msg, their_pk, our_sk)
+                .map_err(CryptoError::Encrypt)
+                .map(BytesMut::from),
+            CryptoContext::AnonymousEncrypt { ref their_pk } => anonymous_serialise(msg, their_pk)
+                .map_err(CryptoError::Encrypt)
+                .map(BytesMut::from),
             CryptoContext::AnonymousDecrypt { .. } => Err(CryptoError::DecryptForbidden),
         }
     }
