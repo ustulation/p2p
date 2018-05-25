@@ -1237,22 +1237,24 @@ mod netsim_test {
     use super::*;
     use env_logger;
     use futures;
-    use netsim::device::NatV4Builder;
+    use netsim::device::ipv4::Ipv4NatBuilder;
     use netsim::node::{self, Ipv4Node};
-    use netsim::{self, SubnetV4};
+    use netsim::{self, Ipv4Range, Network};
     use tokio_core::reactor::Core;
     use util;
 
     fn udp_rendezvous_connect_between_natted_hosts(
         num_servers: usize,
-        nat_0: NatV4Builder,
-        nat_1: NatV4Builder,
+        nat_0: Ipv4NatBuilder,
+        nat_1: Ipv4NatBuilder,
         start_delay: Duration,
     ) {
         let _ = env_logger::init();
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
+        let network = Network::new(&handle);
+        let network_handle = network.handle();
 
         let res = core.run(future::lazy(|| {
             let (ch0, ch1) = util::two_way_channel();
@@ -1271,7 +1273,7 @@ mod netsim_test {
                 let server_info_tx_0 = server_info_tx_0.clone();
                 let server_info_tx_1 = server_info_tx_1.clone();
 
-                let server_node = node::endpoint_v4(move |ip| {
+                let server_node = node::ipv4::machine(move |ip| {
                     let mut core = unwrap!(Core::new());
                     let handle = core.handle();
 
@@ -1300,9 +1302,9 @@ mod netsim_test {
                 server_nodes.push(server_node);
             }
 
-            let node_0 = node::nat_v4(
+            let node_0 = node::ipv4::nat(
                 nat_0,
-                node::endpoint_v4(move |_ip| {
+                node::ipv4::machine(move |_ip| {
                     let mut core = unwrap!(Core::new());
                     let handle = core.handle();
 
@@ -1329,9 +1331,9 @@ mod netsim_test {
                     unwrap!(res)
                 }),
             );
-            let node_1 = node::nat_v4(
+            let node_1 = node::ipv4::nat(
                 nat_1,
-                node::endpoint_v4(move |_ip| {
+                node::ipv4::machine(move |_ip| {
                     let mut core = unwrap!(Core::new());
                     let handle = core.handle();
 
@@ -1370,11 +1372,11 @@ mod netsim_test {
                 .hops(4)
                 .packet_loss(0.1, Duration::from_millis(20));
 
-            let servers = node::router_v4(server_nodes);
-            let network = node::router_v4((servers, node_0, node_1));
+            let servers = node::ipv4::router(server_nodes);
+            let network = node::ipv4::router((servers, node_0, node_1));
 
             let (spawn_complete, _plug) =
-                netsim::spawn::network_v4(&handle, SubnetV4::global(), network);
+                netsim::spawn::ipv4_tree(&network_handle, Ipv4Range::global(), network);
 
             spawn_complete
                 .resume_unwind()
@@ -1389,10 +1391,10 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_with_no_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .restrict_endpoints(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .restrict_endpoints(),
             Duration::from_secs(0),
@@ -1403,8 +1405,8 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_no_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
-            NatV4Builder::default().blacklist_unrecognized_addrs(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .randomize_port_allocation()
                 .symmetric(),
@@ -1417,10 +1419,10 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_both_symmetric_with_no_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             3,
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .symmetric(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .symmetric(),
             Duration::from_secs(0),
@@ -1431,10 +1433,10 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_with_short_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .restrict_endpoints(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .restrict_endpoints(),
             Duration::from_secs(5),
@@ -1445,8 +1447,8 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_short_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
-            NatV4Builder::default().blacklist_unrecognized_addrs(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .randomize_port_allocation()
                 .symmetric(),
@@ -1458,10 +1460,10 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_with_long_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .restrict_endpoints(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .restrict_endpoints(),
             Duration::from_secs(60),
@@ -1472,8 +1474,8 @@ mod netsim_test {
     fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_long_delay() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
-            NatV4Builder::default().blacklist_unrecognized_addrs(),
-            NatV4Builder::default()
+            Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
+            Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
                 .randomize_port_allocation()
                 .symmetric(),
