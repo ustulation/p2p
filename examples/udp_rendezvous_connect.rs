@@ -32,12 +32,12 @@ extern crate unwrap;
 extern crate void;
 
 use docopt::Docopt;
-use futures::{future, Async, AsyncSink, Future, Sink, Stream};
 use futures::future::Loop;
+use futures::{future, Async, AsyncSink, Future, Sink, Stream};
 use p2p::{PeerInfo, UdpSocketExt};
 use rust_sodium::crypto::box_::PublicKey;
-use std::{env, fmt};
 use std::net::SocketAddr;
+use std::{env, fmt};
 use tokio_core::net::{TcpStream, UdpSocket};
 use tokio_io::codec::length_delimited::Framed;
 use void::ResultVoidExt;

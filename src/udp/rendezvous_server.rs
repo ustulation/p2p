@@ -1,10 +1,10 @@
-use ECHO_REQ;
 use bytes::Bytes;
 use open_addr::BindPublicError;
 use priv_prelude::*;
 use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::socket;
+use ECHO_REQ;
 
 /// Sends response to echo address request (`ECHO_REQ`).
 /// NOTE: this function is almost identical to `tcp::rendezous_server::respond_with_addr()`,

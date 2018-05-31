@@ -4,8 +4,9 @@ use filter_addrs::filter_addrs;
 use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
 use rust_sodium::crypto::box_::{PublicKey, SecretKey};
-use secure_serialisation::{deserialise as secure_deserialise, serialise as secure_serialise,
-                           Error as SecureSerialiseError};
+use secure_serialisation::{
+    deserialise as secure_deserialise, serialise as secure_serialise, Error as SecureSerialiseError,
+};
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
 use tcp::msg::TcpRendezvousMsg;

@@ -43,11 +43,9 @@ pub fn two_way_channel<T>() -> (TwoWayChannel<T>, TwoWayChannel<T>) {
 /// Constructs peer info with given address and random public key.
 /// Usable in cases when public key is not used and we just want to get `PeerInfo`.
 macro_rules! peer_addr {
-    ($addr:pat) => {
-        {
-            PeerInfo::with_rand_key(addr!($addr))
-        }
-    };
+    ($addr:pat) => {{
+        PeerInfo::with_rand_key(addr!($addr))
+    }};
 }
 
 #[allow(unsafe_code)]

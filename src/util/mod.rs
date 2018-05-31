@@ -11,8 +11,10 @@ pub use self::test::*;
 
 /// Tries given expression. Returns boxed future error on failure.
 macro_rules! try_bfut {
-    ($e:expr) => (match $e {
-        Ok(t) => t,
-        Err(e) => return future::err(e).into_boxed(),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(t) => t,
+            Err(e) => return future::err(e).into_boxed(),
+        }
+    };
 }

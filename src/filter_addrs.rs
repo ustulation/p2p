@@ -49,7 +49,8 @@ pub fn filter_addrs(
             .any(|a0| our_private_addrs.iter().any(|a1| a0.ip() == a1.ip()))
     };
     let maybe_same_machine = any_private_ips_in_common
-        || (their_filtered_private_addrs.is_empty() && our_private_addrs.is_empty()
+        || (their_filtered_private_addrs.is_empty()
+            && our_private_addrs.is_empty()
             && maybe_same_subnet);
     let their_filtered_loopback_addr = {
         if maybe_same_machine {

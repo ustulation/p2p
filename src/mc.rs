@@ -1,11 +1,11 @@
 //! Port mapping context utilities.
 
-use ECHO_REQ;
 use priv_prelude::*;
 use protocol::Protocol;
 use rust_sodium::crypto::box_::{gen_keypair, PublicKey};
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
+use ECHO_REQ;
 
 /// `P2p` allows you to manage how NAT traversal works.
 ///
@@ -27,21 +27,17 @@ struct P2pInner {
 // Some macros to reduce boilerplate
 
 macro_rules! inner_get {
-    ($self:ident, $field:ident) => {
-        {
-            let inner = unwrap!($self.inner.lock());
-            inner.$field
-        }
-    };
+    ($self:ident, $field:ident) => {{
+        let inner = unwrap!($self.inner.lock());
+        inner.$field
+    }};
 }
 
 macro_rules! inner_set {
-    ($self:ident, $field:ident, $value:ident) => {
-        {
-            let mut inner = unwrap!($self.inner.lock());
-            inner.$field = $value;
-        }
-    };
+    ($self:ident, $field:ident, $value:ident) => {{
+        let mut inner = unwrap!($self.inner.lock());
+        inner.$field = $value;
+    }};
 }
 
 impl P2p {

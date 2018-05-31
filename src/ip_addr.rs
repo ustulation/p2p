@@ -85,8 +85,12 @@ pub trait Ipv6AddrExt {
 
 impl Ipv4AddrExt for Ipv4Addr {
     fn is_global(&self) -> bool {
-        !self.is_private() && !self.is_loopback() && !self.is_link_local() && !self.is_broadcast()
-            && !self.is_documentation() && !self.is_unspecified()
+        !self.is_private()
+            && !self.is_loopback()
+            && !self.is_link_local()
+            && !self.is_broadcast()
+            && !self.is_documentation()
+            && !self.is_unspecified()
     }
 
     fn expand_local_unspecified(&self) -> io::Result<Vec<Ipv4Addr>> {

@@ -18,11 +18,12 @@
 use maidsafe_utilities::serialisation::{deserialise, serialise, SerialisationError};
 use priv_prelude::*;
 use rust_sodium::crypto::box_::{PublicKey, SecretKey};
-use secure_serialisation::{anonymous_deserialise, anonymous_serialise,
-                           deserialise as secure_deserialise, serialise as secure_serialise,
-                           Error as SecureSerialiseError};
-use serde::Serialize;
+use secure_serialisation::{
+    anonymous_deserialise, anonymous_serialise, deserialise as secure_deserialise,
+    serialise as secure_serialise, Error as SecureSerialiseError,
+};
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 quick_error! {
     /// Encryption related errors.

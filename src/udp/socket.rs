@@ -6,7 +6,9 @@ use open_addr::{open_addr, BindPublicError};
 use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
 use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
-use secure_serialisation::{self, deserialise as secure_deserialise, serialise as secure_serialise};
+use secure_serialisation::{
+    self, deserialise as secure_deserialise, serialise as secure_serialise,
+};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
@@ -1235,9 +1237,9 @@ mod netsim_test {
     use super::*;
     use env_logger;
     use futures;
-    use netsim::{self, SubnetV4};
     use netsim::device::NatV4Builder;
     use netsim::node::{self, Ipv4Node};
+    use netsim::{self, SubnetV4};
     use tokio_core::reactor::Core;
     use util;
 

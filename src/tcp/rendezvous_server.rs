@@ -1,9 +1,9 @@
-use ECHO_REQ;
 use open_addr::BindPublicError;
 use priv_prelude::*;
 use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
 use tcp::listener::{self, TcpListenerExt};
 use tokio_io::codec::length_delimited::{self, Framed};
+use ECHO_REQ;
 
 /// Sends response to echo address request (`ECHO_REQ`).
 pub fn respond_with_addr<S>(
@@ -238,7 +238,7 @@ mod tests {
             let buf = unwrap!(
                 event_loop.run(
                     conn.into_future()
-                        .map(|(resp_opt, _conn)| unwrap!(resp_opt))
+                        .map(|(resp_opt, _conn)| unwrap!(resp_opt)),
                 )
             );
             let received_addr: SocketAddr = unwrap!(bincode::deserialize(&buf));

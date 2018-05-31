@@ -186,17 +186,23 @@
 //!
 //! [0]: https://en.wikipedia.org/wiki/Internet_Gateway_Device_Protocol
 
-#![forbid(exceeding_bitshifts, mutable_transmutes, no_mangle_const_items, unknown_crate_types,
-          warnings)]
-#![deny(deprecated, improper_ctypes, missing_docs, non_shorthand_field_patterns,
-        overflowing_literals, plugin_as_library, private_no_mangle_fns, private_no_mangle_statics,
-        stable_features, unconditional_recursion, unknown_lints, unsafe_code, unused,
-        unused_allocation, unused_attributes, unused_comparisons, unused_features, unused_parens,
-        while_true)]
-#![warn(trivial_casts, trivial_numeric_casts, unused_extern_crates, unused_import_braces,
-        unused_qualifications, unused_results)]
-#![allow(box_pointers, missing_copy_implementations, missing_debug_implementations,
-         variant_size_differences)]
+#![forbid(
+    exceeding_bitshifts, mutable_transmutes, no_mangle_const_items, unknown_crate_types, warnings
+)]
+#![deny(
+    deprecated, improper_ctypes, missing_docs, non_shorthand_field_patterns, overflowing_literals,
+    plugin_as_library, private_no_mangle_fns, private_no_mangle_statics, stable_features,
+    unconditional_recursion, unknown_lints, unsafe_code, unused, unused_allocation,
+    unused_attributes, unused_comparisons, unused_features, unused_parens, while_true
+)]
+#![warn(
+    trivial_casts, trivial_numeric_casts, unused_extern_crates, unused_import_braces,
+    unused_qualifications, unused_results
+)]
+#![allow(
+    box_pointers, missing_copy_implementations, missing_debug_implementations,
+    variant_size_differences
+)]
 #![recursion_limit = "100"]
 
 extern crate bincode;
@@ -235,25 +241,25 @@ extern crate tokio_shared_udp_socket;
 extern crate unwrap;
 extern crate void;
 
-mod priv_prelude;
 mod prelude;
+mod priv_prelude;
 
 #[macro_use]
 mod util;
 
-mod protocol;
+mod crypto;
+mod filter_addrs;
+mod igd_async;
 mod ip_addr;
+mod mc;
+mod open_addr;
+mod peer;
+mod protocol;
+mod rendezvous_addr;
+mod server_set;
 mod socket_addr;
 mod tcp;
 mod udp;
-mod server_set;
-mod mc;
-mod igd_async;
-mod open_addr;
-mod rendezvous_addr;
-mod filter_addrs;
-mod peer;
-mod crypto;
 
 pub use prelude::*;
 
