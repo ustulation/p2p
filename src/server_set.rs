@@ -1,4 +1,4 @@
-use future_utils::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use future_utils::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use priv_prelude::*;
 use rand;
 
@@ -16,17 +16,15 @@ pub struct ServerSet {
 
 impl ServerSet {
     pub fn add_server(&mut self, peer: &PeerInfo) {
-        self.iterators.retain(|sender| {
-            sender.unbounded_send(ListChange::Add(peer.clone())).is_ok()
-        });
+        self.iterators
+            .retain(|sender| sender.unbounded_send(ListChange::Add(peer.clone())).is_ok());
 
         let _ = self.servers.insert(peer.addr, peer.clone());
     }
 
     pub fn remove_server(&mut self, addr: SocketAddr) {
-        self.iterators.retain(move |sender| {
-            sender.unbounded_send(ListChange::Remove(addr)).is_ok()
-        });
+        self.iterators
+            .retain(move |sender| sender.unbounded_send(ListChange::Remove(addr)).is_ok());
 
         let _ = self.servers.remove(&addr);
     }
@@ -37,7 +35,7 @@ impl ServerSet {
         let servers = self.servers.clone();
         trace!("iterating {} servers", servers.len());
         Servers {
-            servers: servers,
+            servers,
             modifications: rx,
         }
     }
@@ -122,10 +120,12 @@ mod tests {
 
                 let mut evloop = unwrap!(Core::new());
 
-                let ret = evloop.run(servers.iter_servers().into_future().and_then(|(peer_addr,
-                  servers)| {
-                    Ok((peer_addr, servers))
-                }));
+                let ret = evloop.run(
+                    servers
+                        .iter_servers()
+                        .into_future()
+                        .and_then(|(peer_addr, servers)| Ok((peer_addr, servers))),
+                );
                 let (random_addr, servers) = match ret {
                     Ok(result) => result,
                     Err(_e) => panic!("Failed to poll server address."),

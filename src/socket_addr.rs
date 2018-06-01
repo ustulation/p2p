@@ -13,20 +13,16 @@ pub trait SocketAddrExt {
 impl SocketAddrExt for SocketAddr {
     fn expand_local_unspecified(&self) -> io::Result<Vec<SocketAddr>> {
         let ret = match *self {
-            SocketAddr::V4(v4_addr) => {
-                v4_addr
-                    .expand_local_unspecified()?
-                    .into_iter()
-                    .map(SocketAddr::V4)
-                    .collect()
-            }
-            SocketAddr::V6(v6_addr) => {
-                v6_addr
-                    .expand_local_unspecified()?
-                    .into_iter()
-                    .map(SocketAddr::V6)
-                    .collect()
-            }
+            SocketAddr::V4(v4_addr) => v4_addr
+                .expand_local_unspecified()?
+                .into_iter()
+                .map(SocketAddr::V4)
+                .collect(),
+            SocketAddr::V6(v6_addr) => v6_addr
+                .expand_local_unspecified()?
+                .into_iter()
+                .map(SocketAddr::V6)
+                .collect(),
         };
         Ok(ret)
     }
@@ -78,9 +74,7 @@ impl SocketAddrV6Ext for SocketAddrV6 {
             self.ip()
                 .expand_local_unspecified()?
                 .into_iter()
-                .map(|ip| {
-                    SocketAddrV6::new(ip, self.port(), self.flowinfo(), self.scope_id())
-                })
+                .map(|ip| SocketAddrV6::new(ip, self.port(), self.flowinfo(), self.scope_id()))
                 .collect()
         })
     }

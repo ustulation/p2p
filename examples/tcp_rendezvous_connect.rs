@@ -1,3 +1,16 @@
+extern crate bytes;
+extern crate docopt;
+extern crate env_logger;
+extern crate future_utils;
+extern crate futures;
+extern crate p2p;
+extern crate rust_sodium;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
+extern crate tokio_core;
+extern crate tokio_io;
 /// To use this, use a server with publicly accessible ports to act as a relay server between two
 /// connecting tcp streams. This relay server will act as the channel when negotiating the
 /// rendezvous connect.
@@ -16,27 +29,14 @@
 /// If successful, the peers should be able to form a TCP connection directly to each other.
 #[macro_use]
 extern crate unwrap;
-extern crate tokio_core;
-extern crate tokio_io;
-extern crate p2p;
-extern crate futures;
-extern crate future_utils;
-extern crate bytes;
 extern crate void;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate serde_json;
-extern crate docopt;
-extern crate env_logger;
-extern crate rust_sodium;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use p2p::{PeerInfo, TcpStreamExt};
 use rust_sodium::crypto::box_::PublicKey;
-use std::{env, fmt};
 use std::net::{Shutdown, SocketAddr};
+use std::{env, fmt};
 use tokio_core::net::TcpStream;
 use tokio_io::codec::length_delimited::Framed;
 use void::ResultVoidExt;
@@ -114,8 +114,7 @@ fn main() {
     }
 
     if let Some(server_addr) = args.flag_traversal_server {
-        let server_pub_key =
-            unwrap!(
+        let server_pub_key = unwrap!(
             args.flag_traversal_server_key,
             "If echo address server is specified, it's public key must be given too.",
         );

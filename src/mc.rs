@@ -1,12 +1,11 @@
 //! Port mapping context utilities.
 
-use ECHO_REQ;
-
 use priv_prelude::*;
 use protocol::Protocol;
-use rust_sodium::crypto::box_::{PublicKey, gen_keypair};
+use rust_sodium::crypto::box_::{gen_keypair, PublicKey};
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
+use ECHO_REQ;
 
 /// `P2p` allows you to manage how NAT traversal works.
 ///
@@ -28,21 +27,17 @@ struct P2pInner {
 // Some macros to reduce boilerplate
 
 macro_rules! inner_get {
-    ($self:ident, $field:ident) => {
-        {
-            let inner = unwrap!($self.inner.lock());
-            inner.$field
-        }
-    };
+    ($self:ident, $field:ident) => {{
+        let inner = unwrap!($self.inner.lock());
+        inner.$field
+    }};
 }
 
 macro_rules! inner_set {
-    ($self:ident, $field:ident, $value:ident) => {
-        {
-            let mut inner = unwrap!($self.inner.lock());
-            inner.$field = $value;
-        }
-    };
+    ($self:ident, $field:ident, $value:ident) => {{
+        let mut inner = unwrap!($self.inner.lock());
+        inner.$field = $value;
+    }};
 }
 
 impl P2p {
@@ -298,9 +293,9 @@ fn tcp_recv_echo_addr(
             })
         })
         .and_then(move |resp| {
-            crypto_ctx.decrypt(&resp).map_err(
-                QueryPublicAddrError::Decrypt,
-            )
+            crypto_ctx
+                .decrypt(&resp)
+                .map_err(QueryPublicAddrError::Decrypt)
         })
         .with_timeout(Duration::from_secs(2), handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
@@ -329,8 +324,11 @@ pub fn udp_query_public_addr(
                     if len != n {
                         let e = io::Error::new(
                             io::ErrorKind::Other,
-                            format!("failed to send complete request. \
-                                    Sent {} bytes of {}", len, n),
+                            format!(
+                                "failed to send complete request. \
+                                 Sent {} bytes of {}",
+                                len, n
+                            ),
                         );
                         return Err(QueryPublicAddrError::SendRequest(e));
                     }
@@ -351,9 +349,9 @@ pub fn udp_query_public_addr(
                         continue;
                     }
                     trace!("server responded with: {:?}", &buffer[..len]);
-                    let external_addr = crypto_ctx.decrypt(&buffer[..len]).map_err(
-                        QueryPublicAddrError::Decrypt,
-                    )?;
+                    let external_addr = crypto_ctx
+                        .decrypt(&buffer[..len])
+                        .map_err(QueryPublicAddrError::Decrypt)?;
                     return Ok(Async::Ready(external_addr));
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {

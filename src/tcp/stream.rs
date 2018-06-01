@@ -2,10 +2,11 @@ use bincode::{self, Infinite};
 use bytes::BufMut;
 use filter_addrs::filter_addrs;
 use priv_prelude::*;
-use rendezvous_addr::{RendezvousAddrError, rendezvous_addr};
+use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
 use rust_sodium::crypto::box_::{PublicKey, SecretKey};
-use secure_serialisation::{Error as SecureSerialiseError, deserialise as secure_deserialise,
-                           serialise as secure_serialise};
+use secure_serialisation::{
+    deserialise as secure_deserialise, serialise as secure_serialise, Error as SecureSerialiseError,
+};
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
 use tcp::msg::TcpRendezvousMsg;
@@ -56,7 +57,10 @@ pub enum TcpRendezvousConnectError<Ei, Eo> {
     /// Failure to deserialize message received from rendezvous connection info exchange channel.
     DeserializeMsg(bincode::Error),
     /// Used when all rendezvous connection attempts failed.
-    AllAttemptsFailed(Vec<SingleRendezvousAttemptError>, Option<RendezvousAddrError>),
+    AllAttemptsFailed(
+        Vec<SingleRendezvousAttemptError>,
+        Option<RendezvousAddrError>,
+    ),
 }
 
 impl<Ei, Eo> fmt::Display for TcpRendezvousConnectError<Ei, Eo>
@@ -127,9 +131,7 @@ where
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
-            ChannelClosed |
-            ChannelTimedOut |
-            AllAttemptsFailed(..) => None,
+            ChannelClosed | ChannelTimedOut | AllAttemptsFailed(..) => None,
         }
     }
 }
@@ -203,16 +205,12 @@ impl TcpStreamExt for TcpStream {
         handle: &Handle,
     ) -> BoxFuture<TcpStream, ConnectReusableError> {
         let try = || {
-            let builder = {
-                TcpBuilder::bind_reusable(bind_addr).map_err(
-                    ConnectReusableError::Bind,
-                )?
-            };
+            let builder =
+                { TcpBuilder::bind_reusable(bind_addr).map_err(ConnectReusableError::Bind)? };
             let stream = unwrap!(builder.to_tcp_stream());
             Ok({
-                TcpStream::connect_stream(stream, addr, handle).map_err(
-                    ConnectReusableError::Connect,
-                )
+                TcpStream::connect_stream(stream, addr, handle)
+                    .map_err(ConnectReusableError::Connect)
             })
         };
 
@@ -241,15 +239,15 @@ impl TcpStreamExt for TcpStream {
                     .map_err(TcpRendezvousConnectError::Bind)
             }?;
             let bind_addr = {
-                listener.local_addr().map_err(
-                    TcpRendezvousConnectError::Bind,
-                )?
+                listener
+                    .local_addr()
+                    .map_err(TcpRendezvousConnectError::Bind)?
             };
 
             let addrs = {
-                listener.expanded_local_addrs().map_err(
-                    TcpRendezvousConnectError::IfAddrs,
-                )?
+                listener
+                    .expanded_local_addrs()
+                    .map_err(TcpRendezvousConnectError::IfAddrs)?
             };
             let our_addrs = addrs.iter().cloned().collect();
 
@@ -320,7 +318,9 @@ impl TcpStreamExt for TcpStream {
             })
         };
 
-        TcpRendezvousConnect { inner: future::result(try()).flatten().into_boxed() }
+        TcpRendezvousConnect {
+            inner: future::result(try()).flatten().into_boxed(),
+        }
     }
 }
 
@@ -414,7 +414,11 @@ fn recv_choose_conn_msg(
 
 /// Returns given stream, if received "choose connection" message. Otherwise `None` is returned.
 fn only_chosen_connection<T>(stream: T, buf: &[u8]) -> Option<T> {
-    if buf == CHOOSE { Some(stream) } else { None }
+    if buf == CHOOSE {
+        Some(stream)
+    } else {
+        None
+    }
 }
 
 /// Contructs empty mutable buffer with given size that is ready to receive data.
@@ -449,15 +453,12 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
-
     use env_logger;
     use tokio_core::reactor::Core;
     use tokio_io;
-
     use util;
 
     mod buffer_with_len {

@@ -1,12 +1,12 @@
 //! Demonstrates how to bind to public address (using UPnP) and listen for incoming connections
 
-#[macro_use]
-extern crate unwrap;
+extern crate futures;
 #[macro_use]
 extern crate net_literals;
-extern crate tokio_core;
 extern crate p2p;
-extern crate futures;
+extern crate tokio_core;
+#[macro_use]
+extern crate unwrap;
 
 use futures::{Future, Stream};
 use p2p::TcpListenerExt;
