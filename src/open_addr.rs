@@ -113,10 +113,10 @@ pub fn open_addr(
     let mc0 = mc.clone();
     igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
         .or_else(move |igd_err| OpenAddr {
-            protocol: protocol,
+            protocol,
             igd_err: Some(igd_err),
-            handle: handle,
-            bind_addr: bind_addr,
+            handle,
+            bind_addr,
             known_addr_opt: None,
             traversal_servers: mc0.iter_servers(protocol),
             active_queries: stream::FuturesUnordered::new(),

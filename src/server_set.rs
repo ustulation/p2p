@@ -35,7 +35,7 @@ impl ServerSet {
         let servers = self.servers.clone();
         trace!("iterating {} servers", servers.len());
         Servers {
-            servers: servers,
+            servers,
             modifications: rx,
         }
     }

@@ -320,7 +320,7 @@ impl UdpSocketExt for UdpSocket {
                                     let msg = UdpRendezvousMsg::Init {
                                         enc_pk: our_pk,
                                         open_addrs: our_addrs.clone(),
-                                        rendezvous_addrs: rendezvous_addrs,
+                                        rendezvous_addrs,
                                     };
                                     trace!("exchanging rendezvous info with peer");
                                     exchange_msgs(&handle2, channel, &msg).and_then(
@@ -622,8 +622,8 @@ impl HolePunching {
             socket: Some(socket),
             sending_msg: None,
             timeout: Timeout::new(Duration::new(0, 0), handle),
-            their_pk: their_pk,
-            our_sk: our_sk,
+            their_pk,
+            our_sk,
             phase: HolePunchingPhase::Syn {
                 time_of_last_ttl_increment: Instant::now(),
                 ttl_increment_duration: Duration::new(u64::max_value(), 0),
@@ -642,8 +642,8 @@ impl HolePunching {
             socket: Some(socket),
             sending_msg: None,
             timeout: Timeout::new(Duration::new(0, 0), handle),
-            their_pk: their_pk,
-            our_sk: our_sk,
+            their_pk,
+            our_sk,
             phase: HolePunchingPhase::Syn {
                 time_of_last_ttl_increment: Instant::now(),
                 ttl_increment_duration: {
