@@ -1,15 +1,15 @@
 //! Demonstrates how to bind to public address (using UPnP) and receive some data
 
-#[macro_use]
-extern crate unwrap;
+extern crate futures;
 #[macro_use]
 extern crate net_literals;
-extern crate tokio_core;
 extern crate p2p;
-extern crate futures;
+extern crate tokio_core;
+#[macro_use]
+extern crate unwrap;
 extern crate void;
 
-use futures::{Async, Future, future};
+use futures::{future, Async, Future};
 use p2p::UdpSocketExt;
 use std::{io, str};
 use tokio_core::net::UdpSocket;
@@ -31,26 +31,26 @@ fn main() {
                 // print incoming packets
                 future::poll_fn(move || {
                     while let Async::Ready(()) = socket.poll_read() {
-                    let mut buffer = [0; 64];
-                    match socket.recv_from(&mut buffer[..]) {
-                        Ok((n, addr)) => {
-                            let buffer = &buffer[..n];
-                            match str::from_utf8(buffer) {
-                                Ok(s) => {
-                                    println!("received from {}: {:?}", addr, s);
-                                },
-                                Err(..) => {
-                                    println!("received binary data from {}", addr);
-                                },
+                        let mut buffer = [0; 64];
+                        match socket.recv_from(&mut buffer[..]) {
+                            Ok((n, addr)) => {
+                                let buffer = &buffer[..n];
+                                match str::from_utf8(buffer) {
+                                    Ok(s) => {
+                                        println!("received from {}: {:?}", addr, s);
+                                    }
+                                    Err(..) => {
+                                        println!("received binary data from {}", addr);
+                                    }
+                                }
                             }
-                        },
-                        Err(e) => {
-                            if e.kind() != io::ErrorKind::WouldBlock {
-                                panic!("error reading from socket! {}", e);
+                            Err(e) => {
+                                if e.kind() != io::ErrorKind::WouldBlock {
+                                    panic!("error reading from socket! {}", e);
+                                }
                             }
-                        },
+                        }
                     }
-                }
                     Ok(Async::NotReady)
                 })
             })

@@ -86,12 +86,12 @@ pub fn open_addr(
     mc: &P2p,
 ) -> BoxFuture<SocketAddr, OpenAddrError> {
     let addrs_res = {
-        bind_addr.expand_local_unspecified().map_err(|e| {
-            OpenAddrError {
+        bind_addr
+            .expand_local_unspecified()
+            .map_err(|e| OpenAddrError {
                 igd_err: None,
                 kind: OpenAddrErrorKind::IfAddrs(e),
-            }
-        })
+            })
     };
 
     let addrs = match addrs_res {
@@ -99,9 +99,9 @@ pub fn open_addr(
         Err(e) => return future::err(e).into_boxed(),
     };
 
-    if let Some(addr) = addrs.into_iter().find(
-        |addr| IpAddrExt::is_global(&addr.ip()),
-    )
+    if let Some(addr) = addrs
+        .into_iter()
+        .find(|addr| IpAddrExt::is_global(&addr.ip()))
     {
         trace!("we have a global local address: {}", addr);
         return future::ok(addr).into_boxed();
@@ -112,18 +112,16 @@ pub fn open_addr(
 
     let mc0 = mc.clone();
     igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
-        .or_else(move |igd_err| {
-            OpenAddr {
-                protocol: protocol,
-                igd_err: Some(igd_err),
-                handle: handle,
-                bind_addr: bind_addr,
-                known_addr_opt: None,
-                traversal_servers: mc0.iter_servers(protocol),
-                active_queries: stream::FuturesUnordered::new(),
-                errors: Vec::new(),
-                more_servers_timeout: None,
-            }
+        .or_else(move |igd_err| OpenAddr {
+            protocol,
+            igd_err: Some(igd_err),
+            handle,
+            bind_addr,
+            known_addr_opt: None,
+            traversal_servers: mc0.iter_servers(protocol),
+            active_queries: stream::FuturesUnordered::new(),
+            errors: Vec::new(),
+            more_servers_timeout: None,
         })
         .into_boxed()
 }

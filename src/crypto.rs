@@ -1,201 +1,204 @@
-// Copyright 2018 MaidSafe.net limited.
-//
-// This SAFE Network Software is licensed to you under (1) the MaidSafe.net Commercial License,
-// version 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which
-// licence you accepted on initial access to the Software (the "Licences").
-//
-// By contributing code to the SAFE Network Software, or to this project generally, you agree to be
-// bound by the terms of the MaidSafe Contributor Agreement.  This, along with the Licenses can be
-// found in the root directory of this project at LICENSE, COPYING and CONTRIBUTOR.
-//
-// Unless required by applicable law or agreed to in writing, the SAFE Network Software distributed
-// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.
-//
-// Please review the Licences for the specific language governing permissions and limitations
-// relating to use of the SAFE Network Software.
+#![allow(missing_docs)]
 
-use maidsafe_utilities::serialisation::{SerialisationError, deserialise, serialise};
 use priv_prelude::*;
-use rust_sodium::crypto::box_::{PublicKey, SecretKey};
-use secure_serialisation::{Error as SecureSerialiseError, anonymous_deserialise,
-                           anonymous_serialise, deserialise as secure_deserialise,
-                           serialise as secure_serialise};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use maidsafe_utilities::serialisation;
+use rust_sodium::crypto::{box_, sealedbox, sign};
+
+pub trait Id
+    : 'static
+    + Send
+    + fmt::Debug
+    + Eq
+    + PartialEq {
+}
+
+pub trait PublicId: Id + Clone + Serialize + DeserializeOwned {
+    type Signature: Id + Clone + Serialize + DeserializeOwned;
+    
+    fn encrypt_anonymous<T>(&self, plaintext: &T) -> Vec<u8>
+    where T:
+        Serialize;
+    
+    fn encrypt_anonymous_bytes(&self, plaintext: &[u8]) -> Vec<u8>;
+
+    fn verify_detached(&self, signature: &Self::Signature, data: &[u8]) -> bool;
+}
+
+pub trait SecretId: Id {
+    type Public: PublicId;
+    type SharedSecret: SharedSecretKey;
+    
+    fn public_id(&self) -> &Self::Public;
+    fn decrypt_anonymous<T>(&self, cyphertext: &[u8]) -> Result<T, DecryptError>
+    where
+        T: Serialize + DeserializeOwned;
+    fn decrypt_anonymous_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError>;
+    
+    fn sign_detached(&self, data: &[u8]) -> <Self::Public as PublicId>::Signature;
+    fn precompute(&self, their_pk: &Self::Public) -> Self::SharedSecret;
+}
+
+pub trait SharedSecretKey: Id {
+    fn encrypt_bytes(&self, plaintext: &[u8]) -> Vec<u8>;
+    fn encrypt<T>(&self, plaintext: &T) -> Vec<u8>
+    where
+        T: Serialize;
+    fn decrypt_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError>;
+    fn decrypt<T>(&self, cyphertext: &[u8]) -> Result<T, DecryptError>
+    where
+        T: Serialize + DeserializeOwned;
+}
 
 quick_error! {
-    /// Encryption related errors.
     #[derive(Debug)]
-    pub enum CryptoError {
-        /// Failure to serialize structure into bytes.
-        Serialize(e: SerialisationError) {
-            description("Error serializing message")
-            display("Error serializing message: {}", e)
+    pub enum DecryptError {
+        DecryptVerify {
+            description("error decrypting/verifying message")
+        }
+        Deserialization(e: serialisation::SerialisationError) {
+            description("error deserializing decrypted message")
+            display("error deserializing decrypted message: {}", e)
             cause(e)
-        }
-        /// Failure to deserialize bytes into structure.
-        Deserialize(e: SerialisationError) {
-            description("Error deserializing message")
-            display("Error deserializing message: {}", e)
-            cause(e)
-        }
-        /// Encryption failure.
-        Encrypt(e: SecureSerialiseError) {
-            description("Error encrypting message")
-            display("Error encrypting message: {:?}", e)
-        }
-        /// Failure to decrypt bytes.
-        Decrypt(e: SecureSerialiseError) {
-            description("Error decrypting message")
-            display("Error decrypting message: {:?}", e)
-        }
-        /// Encrypt operation is forbidden withing current state.
-        EncryptForbidden {
-            description("Encrypt operation is not allowed within this crypto context")
-        }
-        /// Decrypt operation is forbidden withing current state.
-        DecryptForbidden {
-            description("Decrypt operation is not allowed within this crypto context")
         }
     }
 }
 
-/// Simplifies encryption/decryption by holding the necessary context - encryption keys.
-/// Allows "null" encryption where data is only serialized. See: null object pattern.
-#[derive(Clone, Debug)]
-pub enum CryptoContext {
-    /// No encryption.
-    Null,
-    /// Encryption + authentication
-    Authenticated {
-        /// Their public key.
-        their_pk: PublicKey,
-        /// Our secret key.
-        our_sk: SecretKey,
-    },
-    /// No message authentication. Only decrypt operation is allowed.
-    AnonymousDecrypt {
-        /// Our private key.
-        our_pk: PublicKey,
-        /// Our secret key.
-        our_sk: SecretKey,
-    },
-    /// No message authentication. Only encrypt operation is allowed.
-    AnonymousEncrypt {
-        /// Their public key.
-        their_pk: PublicKey,
-    },
-}
-
-impl CryptoContext {
-    /// Construct crypto context that encrypts and authenticate messages.
-    pub fn authenticated(their_pk: PublicKey, our_sk: SecretKey) -> Self {
-        CryptoContext::Authenticated { their_pk, our_sk }
-    }
-
-    /// Contructs "null" encryption context which actually does no encryption.
-    /// In this case data is simply serialized but not encrypted.
-    pub fn null() -> Self {
-        CryptoContext::Null
-    }
-
-    /// Constructs crypto context that is only meant for unauthenticated deryption.
-    pub fn anonymous_decrypt(our_pk: PublicKey, our_sk: SecretKey) -> Self {
-        CryptoContext::AnonymousDecrypt { our_pk, our_sk }
-    }
-
-    /// Constructs crypto context that is only meant for unauthenticated encryption.
-    pub fn anonymous_encrypt(their_pk: PublicKey) -> Self {
-        CryptoContext::AnonymousEncrypt { their_pk }
-    }
-
-    /// Serialize given structure and encrypt it.
-    pub fn encrypt<T: Serialize>(&self, msg: &T) -> Result<BytesMut, CryptoError> {
-        match *self {
-            CryptoContext::Null => {
-                serialise(msg).map_err(CryptoError::Serialize).map(
-                    BytesMut::from,
-                )
-            }
-            CryptoContext::Authenticated {
-                ref their_pk,
-                ref our_sk,
-            } => {
-                secure_serialise(msg, their_pk, our_sk)
-                    .map_err(CryptoError::Encrypt)
-                    .map(BytesMut::from)
-            }
-            CryptoContext::AnonymousEncrypt { ref their_pk } => {
-                anonymous_serialise(msg, their_pk)
-                    .map_err(CryptoError::Encrypt)
-                    .map(BytesMut::from)
-            }
-            CryptoContext::AnonymousDecrypt { .. } => Err(CryptoError::DecryptForbidden),
+quick_error! {
+    #[derive(Clone, Debug)]
+    pub enum DecryptBytesError {
+        DecryptVerify {
+            description("error decrypting/verifying message")
         }
     }
+}
 
-    /// Decrypt given buffer and deserialize into structure.
-    pub fn decrypt<T>(&self, msg: &[u8]) -> Result<T, CryptoError>
-    where
-        T: Serialize + DeserializeOwned,
+#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Clone)]
+pub struct P2pPublicId {
+    sign: sign::PublicKey,
+    encrypt: box_::PublicKey,
+}
+
+impl Id for P2pPublicId {}
+impl Id for sign::Signature {}
+
+impl PublicId for P2pPublicId {
+    type Signature = sign::Signature;
+
+    fn encrypt_anonymous<T>(&self, plaintext: &T) -> Vec<u8>
+    where T:
+        Serialize
     {
-        match *self {
-            CryptoContext::Null => deserialise(msg).map_err(CryptoError::Deserialize),
-            CryptoContext::Authenticated {
-                ref their_pk,
-                ref our_sk,
-            } => secure_deserialise(msg, their_pk, our_sk).map_err(CryptoError::Decrypt),
-            CryptoContext::AnonymousDecrypt {
-                ref our_pk,
-                ref our_sk,
-            } => anonymous_deserialise(msg, our_pk, our_sk).map_err(CryptoError::Decrypt),
-            CryptoContext::AnonymousEncrypt { .. } => Err(CryptoError::EncryptForbidden),
+        let bytes = unwrap!(serialisation::serialise(plaintext));
+        self.encrypt_anonymous_bytes(&bytes)
+    }
+
+    fn encrypt_anonymous_bytes(&self, plaintext: &[u8]) -> Vec<u8> {
+        sealedbox::seal(plaintext, &self.encrypt)
+    }
+
+    fn verify_detached(&self, signature: &sign::Signature, data: &[u8]) -> bool {
+        sign::verify_detached(signature, data, &self.sign)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct P2pSecretId {
+    sign: sign::SecretKey,
+    encrypt: box_::SecretKey,
+    public: P2pPublicId,
+}
+
+impl P2pSecretId {
+    pub fn new() -> P2pSecretId {
+        let (sign_pk, sign_sk) = sign::gen_keypair();
+        let (encrypt_pk, encrypt_sk) = box_::gen_keypair();
+        let public = P2pPublicId {
+            sign: sign_pk,
+            encrypt: encrypt_pk,
+        };
+        P2pSecretId {
+            public: public,
+            sign: sign_sk,
+            encrypt: encrypt_sk,
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl Id for P2pSecretId {}
 
-    mod crypto_context {
-        use super::*;
-        use rust_sodium::crypto::box_::gen_keypair;
+impl SecretId for P2pSecretId {
+    type Public = P2pPublicId;
+    type SharedSecret = P2pSharedSecretKey;
 
-        #[test]
-        fn when_encryption_is_null_it_serializes_and_deserializes_data() {
-            let crypto = CryptoContext::null();
+    fn public_id(&self) -> &P2pPublicId {
+        &self.public
+    }
 
-            let encrypted = unwrap!(crypto.encrypt(b"test123"));
-            let decrypted: [u8; 7] = unwrap!(crypto.decrypt(&encrypted[..]));
+    fn decrypt_anonymous<T>(&self, cyphertext: &[u8]) -> Result<T, DecryptError>
+    where
+        T: Serialize + DeserializeOwned
+    {
+        let bytes = self
+            .decrypt_anonymous_bytes(cyphertext)
+            .map_err(|DecryptBytesError::DecryptVerify| DecryptError::DecryptVerify)?;
+        serialisation::deserialise(&bytes)
+            .map_err(|e| DecryptError::Deserialization(e))
+    }
 
-            assert_eq!(&decrypted, b"test123");
-        }
+    fn decrypt_anonymous_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError> {
+        sealedbox::open(cyphertext, &self.public.encrypt, &self.encrypt)
+            .map_err(|()| DecryptBytesError::DecryptVerify)
+    }
+    
+    fn sign_detached(&self, data: &[u8]) -> sign::Signature {
+        sign::sign_detached(data, &self.sign)
+    }
 
-        #[test]
-        fn when_encryption_keys_are_given_it_encrypts_and_decrypts_data_with_them() {
-            let (pk1, sk1) = gen_keypair();
-            let (pk2, sk2) = gen_keypair();
-            let crypto1 = CryptoContext::authenticated(pk2, sk1);
-            let crypto2 = CryptoContext::authenticated(pk1, sk2);
-
-            let encrypted = unwrap!(crypto1.encrypt(b"test123"));
-            let decrypted: [u8; 7] = unwrap!(crypto2.decrypt(&encrypted[..]));
-
-            assert_eq!(&decrypted, b"test123");
-        }
-
-        #[test]
-        fn anonymous_encryption() {
-            let (pk2, sk2) = gen_keypair();
-            let crypto1 = CryptoContext::anonymous_encrypt(pk2);
-            let crypto2 = CryptoContext::anonymous_decrypt(pk2, sk2);
-
-            let encrypted = unwrap!(crypto1.encrypt(b"test123"));
-            let decrypted: [u8; 7] = unwrap!(crypto2.decrypt(&encrypted[..]));
-
-            assert_eq!(&decrypted, b"test123");
+    fn precompute(&self, their_pk: &P2pPublicId) -> P2pSharedSecretKey {
+        let precomputed = box_::precompute(&their_pk.encrypt, &self.encrypt);
+        P2pSharedSecretKey {
+            precomputed,
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct P2pSharedSecretKey {
+    precomputed: box_::PrecomputedKey,
+}
+
+impl Id for P2pSharedSecretKey {}
+
+impl SharedSecretKey for P2pSharedSecretKey {
+    fn encrypt_bytes(&self, plaintext: &[u8]) -> Vec<u8> {
+        let nonce = unwrap!(box_::Nonce::from_slice(&[0u8; 24][..]));
+        box_::seal_precomputed(plaintext, &nonce, &self.precomputed)
+    }
+
+    fn encrypt<T>(&self, plaintext: &T) -> Vec<u8>
+    where
+        T: Serialize
+    {
+        let bytes = unwrap!(serialisation::serialise(plaintext));
+        self.encrypt_bytes(&bytes)
+    }
+
+    fn decrypt_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError> {
+        let nonce = unwrap!(box_::Nonce::from_slice(&[0u8; 24][..]));
+        box_::open_precomputed(cyphertext, &nonce, &self.precomputed)
+            .map_err(|()| DecryptBytesError::DecryptVerify)
+    }
+
+    fn decrypt<T>(&self, cyphertext: &[u8]) -> Result<T, DecryptError>
+    where
+        T: Serialize + DeserializeOwned
+    {
+        let bytes = self
+            .decrypt_bytes(cyphertext)
+            .map_err(|DecryptBytesError::DecryptVerify| DecryptError::DecryptVerify)?;
+        serialisation::deserialise(&bytes)
+            .map_err(|e| DecryptError::Deserialization(e))
+    }
+}
+
+

@@ -1,5 +1,4 @@
 use priv_prelude::*;
-
 use socket_addr::SocketAddrExt;
 
 /// Extensions methods for `TcpBuilder`.

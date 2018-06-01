@@ -65,13 +65,10 @@ impl Gateway {
                 let port = addr.port();
                 handle.spawn({
                     Timeout::new(timeout, &handle)
-                .infallible()
-                .and_then(move |()| {
-                    self
-                    .remove_port(protocol, port)
-                })
-                .log_error(LogLevel::Warn, "unregister router port")
-                .infallible()
+                        .infallible()
+                        .and_then(move |()| self.remove_port(protocol, port))
+                        .log_error(LogLevel::Warn, "unregister router port")
+                        .infallible()
                 });
                 addr
             })
@@ -193,8 +190,9 @@ fn get_any_address(
                         .get_any_address(protocol, socket_addr_v4, lease_duration, "p2p")
                         .or_else(move |e| {
                             if let GetAnyAddressError::RequestPort(
-                                AddAnyPortError::OnlyPermanentLeasesSupported
-                            ) = e {
+                                AddAnyPortError::OnlyPermanentLeasesSupported,
+                            ) = e
+                            {
                                 if let Some(timeout) = timeout {
                                     return gateway.get_any_address_manual_timeout(
                                         protocol,
@@ -223,9 +221,8 @@ fn get_any_address(
 /// IPv4 because gateway always has IPv4 address as well.
 fn discover_local_addr_to_gateway(gateway_addr: Ipv4Addr) -> io::Result<Ipv4Addr> {
     let ifs = get_if_addrs::get_if_addrs()?;
-    local_addr_to_gateway(ifs, gateway_addr).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "No local addresses to gateway")
-    })
+    local_addr_to_gateway(ifs, gateway_addr)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No local addresses to gateway"))
 }
 
 fn local_addr_to_gateway(interfaces: Vec<Interface>, gateway_addr: Ipv4Addr) -> Option<Ipv4Addr> {
@@ -248,9 +245,11 @@ fn in_same_subnet(addr1: Ipv4Addr, addr2: Ipv4Addr, subnet_mask: Ipv4Addr) -> bo
         .iter()
         .zip(subnet_mask.octets().iter())
         .map(|(o1, o2)| o1 & o2)
-        .eq(addr2.octets().iter().zip(subnet_mask.octets().iter()).map(
-            |(o1, o2)| o1 & o2,
-        ))
+        .eq(addr2
+            .octets()
+            .iter()
+            .zip(subnet_mask.octets().iter())
+            .map(|(o1, o2)| o1 & o2))
 }
 
 #[cfg(test)]

@@ -1,12 +1,10 @@
 //! Port mapping context utilities.
 
-use ECHO_REQ;
-
 use priv_prelude::*;
 use protocol::Protocol;
-use rust_sodium::crypto::box_::{PublicKey, gen_keypair};
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
+use ECHO_REQ;
 
 /// `P2p` allows you to manage how NAT traversal works.
 ///
@@ -28,21 +26,17 @@ struct P2pInner {
 // Some macros to reduce boilerplate
 
 macro_rules! inner_get {
-    ($self:ident, $field:ident) => {
-        {
-            let inner = unwrap!($self.inner.lock());
-            inner.$field
-        }
-    };
+    ($self:ident, $field:ident) => {{
+        let inner = unwrap!($self.inner.lock());
+        inner.$field
+    }};
 }
 
 macro_rules! inner_set {
-    ($self:ident, $field:ident, $value:ident) => {
-        {
-            let mut inner = unwrap!($self.inner.lock());
-            inner.$field = $value;
-        }
-    };
+    ($self:ident, $field:ident, $value:ident) => {{
+        let mut inner = unwrap!($self.inner.lock());
+        inner.$field = $value;
+    }};
 }
 
 impl P2p {
@@ -156,22 +150,23 @@ impl P2pInner {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EncryptedRequest {
     /// Sender's public key. Response should be encrypted with it.
-    pub our_pk: PublicKey,
+    pub our_pk: P2pPublicId,
     /// Arbitrary request body.
     pub body: Vec<u8>,
 }
 
 impl EncryptedRequest {
     /// Create new request.
-    pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
+    pub fn new(our_pk: P2pPublicId, body: Vec<u8>) -> Self {
         Self { our_pk, body }
     }
 
     /// Constructs request with random public key.
     /// Useful for testing.
+    #[cfg(test)]
     pub fn with_rand_key(body: Vec<u8>) -> Self {
-        let (our_pk, _our_sk) = gen_keypair();
-        Self::new(our_pk, body)
+        let sk = P2pSecretId::new();
+        Self::new(sk.public_id().clone(), body)
     }
 }
 
@@ -182,23 +177,18 @@ pub fn query_public_addr(
     server_info: &PeerInfo,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let (our_pk, our_sk) = gen_keypair(); // TODO(povilas): pass this from upper layers. MAID-2532
-    let request = EncryptedRequest::new(our_pk, ECHO_REQ.to_vec());
+    let our_sk = P2pSecretId::new(); // TODO(povilas): pass this from upper layers. MAID-2532
+    let request = EncryptedRequest::new(our_sk.public_id().clone(), ECHO_REQ.to_vec());
     // First message is encrypted anonymously.
-    let crypto_ctx = CryptoContext::anonymous_encrypt(server_info.pub_key);
-    let encrypted_req = match crypto_ctx.encrypt(&request) {
-        Ok(data) => data,
-        Err(e) => return future::err(QueryPublicAddrError::Encrypt(e)).into_boxed(),
-    };
+    let encrypted_req = BytesMut::from(server_info.pub_key.encrypt_anonymous(&request));
+    let shared_key = our_sk.precompute(&server_info.pub_key);
 
-    // Response comes encrypted and authenticated.
-    let crypto_ctx = CryptoContext::authenticated(server_info.pub_key, our_sk);
     match protocol {
         Protocol::Tcp => {
-            tcp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
+            tcp_query_public_addr(bind_addr, server_info, handle, shared_key, encrypted_req)
         }
         Protocol::Udp => {
-            udp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
+            udp_query_public_addr(bind_addr, server_info, handle, shared_key, encrypted_req)
         }
     }
 }
@@ -239,14 +229,8 @@ quick_error! {
         ResponseTimeout {
             description("timed out waiting for response from echo server")
         }
-        /// Failure to encrypt request.
-        Encrypt(e: CryptoError) {
-            description("Error encrypting message")
-            display("Error encrypting message: {}", e)
-            cause(e)
-        }
         /// Failure to decrypt request.
-        Decrypt(e: CryptoError) {
+        Decrypt(e: DecryptError) {
             description("Error decrypting message")
             display("Error decrypting message: {}", e)
             cause(e)
@@ -259,7 +243,7 @@ pub fn tcp_query_public_addr(
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
-    crypto_ctx: CryptoContext,
+    shared_key: P2pSharedSecretKey,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let bind_addr = *bind_addr;
@@ -280,27 +264,28 @@ pub fn tcp_query_public_addr(
                 QueryPublicAddrError::SendRequest,
             )
         })
-        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream, crypto_ctx))
+        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream, shared_key))
         .into_boxed()
 }
 
 fn tcp_recv_echo_addr(
     handle: &Handle,
     stream: Framed<TcpStream>,
-    crypto_ctx: CryptoContext,
+    shared_key: P2pSharedSecretKey,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     stream
         .into_future()
         .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
         .and_then(|(resp_opt, _stream)| {
             resp_opt.ok_or_else(|| {
+                println!("it didn't send us anything!");
                 QueryPublicAddrError::ReadResponse(io::ErrorKind::ConnectionReset.into())
             })
         })
         .and_then(move |resp| {
-            crypto_ctx.decrypt(&resp).map_err(
-                QueryPublicAddrError::Decrypt,
-            )
+            shared_key
+                .decrypt(&resp)
+                .map_err(QueryPublicAddrError::Decrypt)
         })
         .with_timeout(Duration::from_secs(2), handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
@@ -311,7 +296,7 @@ pub fn udp_query_public_addr(
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
-    crypto_ctx: CryptoContext,
+    shared_key: P2pSharedSecretKey,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let server_addr = server_info.addr;
@@ -329,8 +314,11 @@ pub fn udp_query_public_addr(
                     if len != n {
                         let e = io::Error::new(
                             io::ErrorKind::Other,
-                            format!("failed to send complete request. \
-                                    Sent {} bytes of {}", len, n),
+                            format!(
+                                "failed to send complete request. \
+                                 Sent {} bytes of {}",
+                                len, n
+                            ),
                         );
                         return Err(QueryPublicAddrError::SendRequest(e));
                     }
@@ -351,9 +339,9 @@ pub fn udp_query_public_addr(
                         continue;
                     }
                     trace!("server responded with: {:?}", &buffer[..len]);
-                    let external_addr = crypto_ctx.decrypt(&buffer[..len]).map_err(
-                        QueryPublicAddrError::Decrypt,
-                    )?;
+                    let external_addr = shared_key
+                        .decrypt(&buffer[..len])
+                        .map_err(QueryPublicAddrError::Decrypt)?;
                     return Ok(Async::Ready(external_addr));
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {

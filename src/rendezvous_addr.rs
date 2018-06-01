@@ -71,12 +71,15 @@ pub fn rendezvous_addr(
     igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, &p2p)
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
-            PublicAddrsFromStun::new(handle.clone(), &p2p, protocol, bind_addr, igd_error)
-                .map(move |addr| if p2p.force_use_local_port() {
-                    SocketAddr::new(addr.ip(), bind_addr.port())
-                } else {
-                    addr
-                })
+            PublicAddrsFromStun::new(handle.clone(), &p2p, protocol, bind_addr, igd_error).map(
+                move |addr| {
+                    if p2p.force_use_local_port() {
+                        SocketAddr::new(addr.ip(), bind_addr.port())
+                    } else {
+                        addr
+                    }
+                },
+            )
         })
         .into_boxed()
 }
@@ -185,8 +188,7 @@ impl PublicAddrsFromStun {
                                 trace!("... timed out");
                                 if self.ports.len() == 1 {
                                     let ip = unwrap!(self.known_ip_opt);
-                                    return Ok(Async::Ready(
-                                        SocketAddr::new(ip, self.ports[0])));
+                                    return Ok(Async::Ready(SocketAddr::new(ip, self.ports[0])));
                                 }
                                 return Err(RendezvousAddrError {
                                     igd_error: unwrap!(self.igd_error.take()),
@@ -248,9 +250,10 @@ impl PublicAddrsFromStun {
                         let diff0 = self.ports[1].wrapping_sub(self.ports[0]);
                         let diff1 = self.ports[2].wrapping_sub(self.ports[1]);
                         if diff0 == diff1 {
-                            return Ok(Async::Ready(
-                                SocketAddr::new(ip, self.ports[2].wrapping_add(diff0)),
-                            ));
+                            return Ok(Async::Ready(SocketAddr::new(
+                                ip,
+                                self.ports[2].wrapping_add(diff0),
+                            )));
                         } else {
                             let _ = self.ports.remove(0);
                             self.failed_sequences += 1;
@@ -381,13 +384,13 @@ mod tests {
                     GetAnyAddressError::Disabled,
                 );
 
-                let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(
-                    addr!("1.2.3.4:4000"),
-                ).into_boxed();
+                let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(addr!(
+                    "1.2.3.4:4000"
+                )).into_boxed();
                 public_addrs.add_stun_query(addr_fut);
-                let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(
-                    addr!("1.2.3.4:4000"),
-                ).into_boxed();
+                let addr_fut = future::ok::<SocketAddr, QueryPublicAddrError>(addr!(
+                    "1.2.3.4:4000"
+                )).into_boxed();
                 public_addrs.add_stun_query(addr_fut);
 
                 let poll_addrs = future::poll_fn(|| {
