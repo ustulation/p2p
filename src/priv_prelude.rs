@@ -1,4 +1,5 @@
 pub use bytes::{Bytes, BytesMut};
+pub use crypto::{DecryptBytesError, DecryptError, PublicId, SecretId, SharedSecretKey};
 pub use future_utils::Timeout;
 pub use future_utils::{drop_notify, DropNotice, DropNotify};
 pub use future_utils::{BoxFuture, BoxStream, FutureExt, StreamExt};
@@ -10,6 +11,7 @@ pub use prelude::*;
 pub use protocol::Protocol;
 pub use rand::Rng;
 pub use rust_sodium::crypto;
+pub use serde::{de::DeserializeOwned, Deserialize, Serialize};
 pub use std::collections::{HashMap, HashSet};
 pub use std::hash::Hash;
 pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

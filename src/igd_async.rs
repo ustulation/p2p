@@ -130,12 +130,12 @@ quick_error! {
 
 /// Used by the `rendezvous_addr` module. This function will try to temporarily open a port for you
 /// during a rendezvous connect.
-pub fn get_any_address_rendezvous(
+pub fn get_any_address_rendezvous<S: SecretId>(
     protocol: Protocol,
     local_addr: SocketAddr,
     timeout: Duration,
     handle: &Handle,
-    mc: &P2p,
+    mc: &P2p<S>,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     if !mc.is_igd_enabled_for_rendezvous() {
         return future::err(GetAnyAddressError::Disabled).into_boxed();
@@ -146,21 +146,21 @@ pub fn get_any_address_rendezvous(
 
 /// Used by the `open_addr` module. This function will try to permanently open port for a server to
 /// listen on.
-pub fn get_any_address_open(
+pub fn get_any_address_open<S: SecretId>(
     protocol: Protocol,
     local_addr: SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    mc: &P2p<S>,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     get_any_address(protocol, local_addr, None, handle, mc)
 }
 
-fn get_any_address(
+fn get_any_address<S: SecretId>(
     protocol: Protocol,
     local_addr: SocketAddr,
     timeout: Option<Duration>,
     handle: &Handle,
-    mc: &P2p,
+    mc: &P2p<S>,
 ) -> BoxFuture<SocketAddr, GetAnyAddressError> {
     if !mc.is_igd_enabled() {
         return future::err(GetAnyAddressError::Disabled).into_boxed();

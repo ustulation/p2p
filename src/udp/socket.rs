@@ -148,19 +148,19 @@ pub trait UdpSocketExt {
 
     /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
     /// that can be used to message the socket from across the internet.
-    fn bind_public(
+    fn bind_public<S: SecretId>(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &P2p,
+        mc: &P2p<S>,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError>;
 
     /// Perform a UDP rendezvous connection to another peer. Both peers must call this
     /// simultaneously and `channel` must provide a channel through which the peers can communicate
     /// out-of-band.
-    fn rendezvous_connect<C>(
+    fn rendezvous_connect<S: SecretId, C>(
         channel: C,
         handle: &Handle,
-        mc: &P2p,
+        mc: &P2p<S>,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -216,10 +216,10 @@ impl UdpSocketExt for UdpSocket {
         Ok(addrs)
     }
 
-    fn bind_public(
+    fn bind_public<S: SecretId>(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &P2p,
+        mc: &P2p<S>,
     ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError> {
         bind_public_with_addr(addr, handle, mc)
             .map(|(socket, _bind_addr, public_addr)| (socket, public_addr))
@@ -227,10 +227,10 @@ impl UdpSocketExt for UdpSocket {
     }
 
     // TODO(povilas): decompose this method - it would be more readable, maintainable and testable
-    fn rendezvous_connect<C>(
+    fn rendezvous_connect<S: SecretId, C>(
         channel: C,
         handle: &Handle,
-        mc: &P2p,
+        mc: &P2p<S>,
     ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<C::Error, C::SinkError>>
     where
         C: Stream<Item = Bytes>,
@@ -482,9 +482,9 @@ impl UdpSocketExt for UdpSocket {
 type SocketsWithAddr = Vec<(UdpSocket, SocketAddr)>;
 
 /// Creates N sockets for hole punching.
-fn hole_punching_sockets<Ei, Eo>(
+fn hole_punching_sockets<Ei, Eo, S: SecretId>(
     handle: &Handle,
-    p2p: &P2p,
+    p2p: &P2p<S>,
 ) -> BoxFuture<(SocketsWithAddr, Option<RendezvousAddrError>), UdpRendezvousConnectError<Ei, Eo>>
 where
     Ei: 'static,
@@ -528,10 +528,10 @@ where
     }).into_boxed()
 }
 
-pub fn bind_public_with_addr(
+pub fn bind_public_with_addr<S: SecretId>(
     addr: &SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    mc: &P2p<S>,
 ) -> BoxFuture<(UdpSocket, SocketAddr, SocketAddr), BindPublicError> {
     let handle = handle.clone();
     let try = || {
@@ -1032,6 +1032,7 @@ enum HolePunchMsg {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crypto::P2pSecretId;
     use env_logger;
     use tokio_core::reactor::Core;
     use util;
@@ -1195,7 +1196,7 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
-        let mc0 = P2p::default();
+        let mc0 = P2p::<P2pSecretId>::default();
         let mc1 = mc0.clone();
 
         let result = core.run({
@@ -1235,6 +1236,7 @@ mod test {
 #[cfg(feature = "netsim")]
 mod netsim_test {
     use super::*;
+    use crypto::P2pSecretId;
     use env_logger;
     use futures;
     use netsim::device::NatV4Builder;
@@ -1276,8 +1278,10 @@ mod netsim_test {
                     let handle = core.handle();
 
                     let res = core.run(future::lazy(move || {
-                        let server =
-                            unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+                        let server = unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(
+                            &addr!("0.0.0.0:0"),
+                            &handle
+                        ));
                         let server_port = server.local_addr().port();
                         let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
                         let server_info = PeerInfo {
@@ -1311,7 +1315,7 @@ mod netsim_test {
                             .collect()
                             .map_err(|()| panic!("error getting server addr"))
                             .map(|server_infos| {
-                                let p2p = P2p::default();
+                                let p2p = P2p::<P2pSecretId>::default();
                                 for server_info in server_infos {
                                     p2p.add_udp_traversal_server(&server_info);
                                 }
@@ -1341,7 +1345,7 @@ mod netsim_test {
                             .and_then(|()| server_info_rx_1.collect())
                             .map_err(|()| panic!("error getting server addr"))
                             .map(|server_infos| {
-                                let p2p = P2p::default();
+                                let p2p = P2p::<P2pSecretId>::default();
                                 for server_info in server_infos {
                                     p2p.add_udp_traversal_server(&server_info);
                                 }

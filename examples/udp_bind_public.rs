@@ -10,7 +10,7 @@ extern crate unwrap;
 extern crate void;
 
 use futures::{future, Async, Future};
-use p2p::UdpSocketExt;
+use p2p::{crypto::P2pSecretId, UdpSocketExt};
 use std::{io, str};
 use tokio_core::net::UdpSocket;
 use void::ResultVoidExt;
@@ -18,7 +18,7 @@ use void::ResultVoidExt;
 fn main() {
     let mut core = unwrap!(tokio_core::reactor::Core::new());
     let handle = core.handle();
-    let mc = p2p::P2p::default();
+    let mc = p2p::P2p::<P2pSecretId>::default();
     let res = core.run({
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), &handle, &mc)
             .map_err(|e| panic!("Error binding socket publicly: {}", e))

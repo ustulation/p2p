@@ -17,10 +17,10 @@ pub trait TcpListenerExt {
     ///
     /// This method will try to open a port on the local router (if there is one) and return the
     /// external address of the port if successful.
-    fn bind_public(
+    fn bind_public<S: SecretId>(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &P2p,
+        mc: &P2p<S>,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError>;
 }
 
@@ -39,21 +39,21 @@ impl TcpListenerExt for TcpListener {
         Ok(addrs)
     }
 
-    fn bind_public(
+    fn bind_public<S: SecretId>(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &P2p,
+        mc: &P2p<S>,
     ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError> {
-        bind_public_with_addr(addr, handle, mc)
+        bind_public_with_addr::<S>(addr, handle, mc)
             .map(|(listener, _bind_addr, public_addr)| (listener, public_addr))
             .into_boxed()
     }
 }
 
-pub fn bind_public_with_addr(
+pub fn bind_public_with_addr<S: SecretId>(
     addr: &SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    mc: &P2p<S>,
 ) -> BoxFuture<(TcpListener, SocketAddr, SocketAddr), BindPublicError> {
     let handle = handle.clone();
     let try = || {
@@ -61,7 +61,7 @@ pub fn bind_public_with_addr(
             { TcpListener::bind_reusable(addr, &handle).map_err(BindPublicError::Bind) }?;
         let bind_addr = { listener.local_addr().map_err(BindPublicError::Bind) }?;
         Ok({
-            open_addr(Protocol::Tcp, &bind_addr, &handle, mc)
+            open_addr::<S>(Protocol::Tcp, &bind_addr, &handle, mc)
                 .map_err(BindPublicError::OpenAddr)
                 .map(move |public_addr| (listener, bind_addr, public_addr))
         })
