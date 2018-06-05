@@ -79,7 +79,7 @@ quick_error! {
     }
 }
 
-pub fn open_addr<'p, S: SecretId>(
+pub fn open_addr<S: SecretId>(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,

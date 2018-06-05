@@ -132,7 +132,7 @@ impl SecretId for P2pSecretId {
             encrypt: encrypt_pk,
         };
         P2pSecretId {
-            public: public,
+            public,
             sign: sign_sk,
             encrypt: encrypt_sk,
         }
@@ -149,7 +149,7 @@ impl SecretId for P2pSecretId {
         let bytes = self
             .decrypt_anonymous_bytes(cyphertext)
             .map_err(|DecryptBytesError::DecryptVerify| DecryptError::DecryptVerify)?;
-        serialisation::deserialise(&bytes).map_err(|e| DecryptError::Deserialization(e))
+        serialisation::deserialise(&bytes).map_err(DecryptError::Deserialization)
     }
 
     fn decrypt_anonymous_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError> {
@@ -199,6 +199,6 @@ impl SharedSecretKey for P2pSharedSecretKey {
         let bytes = self
             .decrypt_bytes(cyphertext)
             .map_err(|DecryptBytesError::DecryptVerify| DecryptError::DecryptVerify)?;
-        serialisation::deserialise(&bytes).map_err(|e| DecryptError::Deserialization(e))
+        serialisation::deserialise(&bytes).map_err(DecryptError::Deserialization)
     }
 }

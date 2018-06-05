@@ -12,7 +12,7 @@ use ECHO_REQ;
 pub fn respond_with_addr<T, K: SharedSecretKey>(
     sink: T,
     addr: SocketAddr,
-    shared_key: K,
+    shared_key: &K,
 ) -> BoxFuture<T, RendezvousServerError>
 where
     T: Sink<SinkItem = Bytes, SinkError = io::Error> + 'static,
@@ -113,7 +113,7 @@ fn from_socket_inner<S: SecretId>(
                     .into_future()
                     .map_err(|(e, _with_addr)| RendezvousServerError::ReadError(e))
                     .and_then(move |(msg_opt, with_addr)| {
-                        on_addr_echo_request(msg_opt, with_addr, our_sk)
+                        on_addr_echo_request(msg_opt, with_addr, &our_sk)
                     })
             })
             .buffer_unordered(1024)
@@ -140,7 +140,7 @@ fn from_socket_inner<S: SecretId>(
 fn on_addr_echo_request<S: SecretId>(
     msg_opt: Option<Bytes>,
     with_addr: WithAddress,
-    our_sk: S,
+    our_sk: &S,
 ) -> BoxFuture<(), RendezvousServerError> {
     let addr = with_addr.remote_addr();
     if let Some(msg) = msg_opt {
@@ -155,7 +155,7 @@ fn on_addr_echo_request<S: SecretId>(
         if req.body[..] == ECHO_REQ[..] {
             trace!("udp rendezvous server received echo request from {}", addr);
             let shared_key = our_sk.precompute(&req.our_pk);
-            return respond_with_addr(with_addr, addr, shared_key)
+            return respond_with_addr(with_addr, addr, &shared_key)
                 .map(|_with_addr| ())
                 .into_boxed();
         }
@@ -183,7 +183,7 @@ mod test {
             let udp_sock = udp_sock.with_address(addr!("192.168.1.2:1234"));
             let our_sk = P2pSecretId::new();
 
-            let fut = on_addr_echo_request(None, udp_sock, our_sk);
+            let fut = on_addr_echo_request(None, udp_sock, &our_sk);
 
             unwrap!(fut.wait())
         }
