@@ -1,8 +1,10 @@
 #!/bin/bash
 
-if [[ ! "$(rustfmt --version)" =~ "0.9.0" ]]; then
-    echo "Rustfmt version 0.9.0 needed"
+set -e
+
+if [[ ! "$(cargo fmt --version | grep 0.8.2-nightly)" ]]; then
+    echo "Rustfmt version 0.8.2-nightly needed"
     exit 1
 fi
 
-cargo fmt -- --write-mode=diff
+cargo fmt -- --check
