@@ -21,6 +21,6 @@ pub use tokio_core::net::{TcpListener, TcpStream, UdpSocket};
 pub use tokio_core::reactor::Handle;
 pub use util::{HashMapExt, HashSetExt};
 pub use void::{ResultVoidExt, Void};
-pub use crypto::{PublicId, SecretId, SharedSecretKey, P2pPublicId, P2pSecretId, P2pSharedSecretKey, DecryptError, DecryptBytesError};
-pub use serde::{Serialize, de::DeserializeOwned};
+pub use crypto::{PublicId, SecretId, SharedSecretKey, DecryptError, DecryptBytesError};
+pub use serde::{Serialize, Deserialize, de::DeserializeOwned};
 

@@ -5,13 +5,13 @@ use tokio_io::codec::length_delimited::{self, Framed};
 use ECHO_REQ;
 
 /// Sends response to echo address request (`ECHO_REQ`).
-pub fn respond_with_addr<S>(
-    sink: S,
+pub fn respond_with_addr<T, K: SharedSecretKey>(
+    sink: T,
     addr: SocketAddr,
-    shared_key: &P2pSharedSecretKey,
-) -> BoxFuture<S, RendezvousServerError>
+    shared_key: &K,
+) -> BoxFuture<T, RendezvousServerError>
 where
-    S: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
+    T: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
 {
     println!("responding to their request");
     let encrypted = BytesMut::from(shared_key.encrypt(&addr));
@@ -22,31 +22,31 @@ where
 
 /// A TCP rendezvous server. Other peers can use this when performing rendezvous connects and
 /// hole-punching.
-pub struct TcpRendezvousServer {
+pub struct TcpRendezvousServer<S: SecretId> {
     local_addr: SocketAddr,
-    our_pk: P2pPublicId,
+    our_pk: <S as SecretId>::Public,
     _drop_tx: DropNotify,
 }
 
-impl TcpRendezvousServer {
+impl<S: SecretId> TcpRendezvousServer<S> {
     /// Create a rendezvous server from a `TcpListener`.
     pub fn from_listener(
         listener: TcpListener,
         handle: &Handle,
-    ) -> io::Result<TcpRendezvousServer> {
+    ) -> io::Result<TcpRendezvousServer<S>> {
         let local_addr = listener.local_addr()?;
         Ok(from_listener_inner(listener, &local_addr, handle))
     }
 
     /// Create a new rendezvous server, bound to the given address.
-    pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<TcpRendezvousServer> {
+    pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<TcpRendezvousServer<S>> {
         let listener = TcpListener::bind(addr, handle)?;
         let server = TcpRendezvousServer::from_listener(listener, handle)?;
         Ok(server)
     }
 
     /// Create a new rendezvous server, reusably bound to the given address.
-    pub fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<TcpRendezvousServer> {
+    pub fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<TcpRendezvousServer<S>> {
         let listener = TcpListener::bind_reusable(addr, handle)?;
         let server = TcpRendezvousServer::from_listener(listener, handle)?;
         Ok(server)
@@ -58,8 +58,8 @@ impl TcpRendezvousServer {
     pub fn bind_public(
         addr: &SocketAddr,
         handle: &Handle,
-        mc: &P2p,
-    ) -> BoxFuture<(TcpRendezvousServer, SocketAddr), BindPublicError> {
+        mc: &P2p<S>,
+    ) -> BoxFuture<(TcpRendezvousServer<S>, SocketAddr), BindPublicError> {
         let handle = handle.clone();
         listener::bind_public_with_addr(addr, &handle, mc)
             .map(move |(listener, bind_addr, public_addr)| {
@@ -85,18 +85,18 @@ impl TcpRendezvousServer {
 
     /// Returns server public key.
     /// Server expects incoming messages to be encrypted with this public key.
-    pub fn public_key(&self) -> P2pPublicId {
+    pub fn public_key(&self) -> S::Public {
         self.our_pk.clone()
     }
 }
 
-fn from_listener_inner(
+fn from_listener_inner<S: SecretId>(
     listener: TcpListener,
     bind_addr: &SocketAddr,
     handle: &Handle,
-) -> TcpRendezvousServer {
+) -> TcpRendezvousServer<S> {
     let (drop_tx, drop_rx) = drop_notify();
-    let our_sk = P2pSecretId::new();
+    let our_sk = S::new();
     let our_sk_cloned = our_sk.clone();
     let handle_connections = {
         let handle = handle.clone();
@@ -159,11 +159,11 @@ quick_error! {
     }
 }
 
-fn handle_connection(
+fn handle_connection<S: SecretId>(
     stream: TcpStream,
     addr: SocketAddr,
     handle: &Handle,
-    our_sk: P2pSecretId,
+    our_sk: S,
 ) -> BoxFuture<(), RendezvousServerError> {
     println!("got a new connection");
     let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
@@ -177,7 +177,7 @@ fn handle_connection(
                 .ok_or(RendezvousServerError::ConnectionClosed)
         })
         .and_then(move |(req, stream)| {
-            let req: EncryptedRequest = try_bfut!(
+            let req: EncryptedRequest<S::Public> = try_bfut!(
                 our_sk
                     .decrypt_anonymous(&req)
                     .map_err(RendezvousServerError::Decrypt)
@@ -204,6 +204,7 @@ fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crypto::{P2pPublicId, P2pSecretId};
     use tokio_core::reactor::Core;
 
     mod respond_with_addr {
@@ -255,17 +256,17 @@ mod tests {
         fn when_unencrypted_request_is_sent_client_connection_is_closed() {
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
-            let server = unwrap!(TcpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+            let server = unwrap!(TcpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
-            let server_info = PeerInfo::with_rand_key(server_addr);
-            let request = EncryptedRequest::with_rand_key(ECHO_REQ.to_vec());
+            let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
+            let request = EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
             let unencrypted_request = BytesMut::from(unwrap!(serialise(&request)));
 
             let server_pk = server.public_key();
             let client_pk = P2pSecretId::new();
             let shared_key = client_pk.precompute(&server_pk);
 
-            let query = tcp_query_public_addr(
+            let query = tcp_query_public_addr::<P2pSecretId>(
                 &addr!("0.0.0.0:0"),
                 &server_info,
                 &handle,
@@ -291,18 +292,18 @@ mod tests {
         fn it_sends_encrypted_responses() {
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
-            let server = unwrap!(TcpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
+            let server = unwrap!(TcpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_info = PeerInfo::new(server_addr, server.public_key());
 
-            let request = EncryptedRequest::with_rand_key(ECHO_REQ.to_vec());
+            let request = EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
 
             let server_pk = server.public_key();
             let client_sk = P2pSecretId::new();
             let shared_key = client_sk.precompute(&server_pk);
             let encrypted_request = BytesMut::from(server_pk.encrypt_anonymous(&request));
 
-            let query = tcp_query_public_addr(
+            let query = tcp_query_public_addr::<P2pSecretId>(
                 &addr!("0.0.0.0:0"),
                 &server_info,
                 &handle,

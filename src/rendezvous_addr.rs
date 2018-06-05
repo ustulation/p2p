@@ -56,11 +56,11 @@ quick_error! {
     }
 }
 
-pub fn rendezvous_addr(
+pub fn rendezvous_addr<S: SecretId>(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
-    p2p: &P2p,
+    p2p: &P2p<S>,
 ) -> BoxFuture<SocketAddr, RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();
@@ -71,7 +71,7 @@ pub fn rendezvous_addr(
     igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, &p2p)
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
-            PublicAddrsFromStun::new(handle.clone(), &p2p, protocol, bind_addr, igd_error).map(
+            PublicAddrsFromStun::<S>::new(handle.clone(), &p2p, protocol, bind_addr, igd_error).map(
                 move |addr| {
                     if p2p.force_use_local_port() {
                         SocketAddr::new(addr.ip(), bind_addr.port())
@@ -85,7 +85,7 @@ pub fn rendezvous_addr(
 }
 
 /// Does the heavy lifting of public address determination.
-struct PublicAddrsFromStun {
+struct PublicAddrsFromStun<S: SecretId> {
     handle: Handle,
     protocol: Protocol,
     bind_addr: SocketAddr,
@@ -98,19 +98,19 @@ struct PublicAddrsFromStun {
     max_stun_errors: usize,
     keep_querying_stun: bool,
     more_servers_timeout: Option<Timeout>,
-    servers: Servers,
+    servers: Servers<S::Public>,
 }
 
-impl PublicAddrsFromStun {
+impl<S: SecretId> PublicAddrsFromStun<S> {
     /// Constructs future that yields our public IP address.
     /// This code is only meant to be used, if IGD fails. Hence, IGD error must be always passed.
     fn new(
         handle: Handle,
-        p2p: &P2p,
+        p2p: &P2p<S>,
         protocol: Protocol,
         bind_addr: SocketAddr,
         igd_error: GetAnyAddressError,
-    ) -> PublicAddrsFromStun {
+    ) -> PublicAddrsFromStun<S> {
         let servers = p2p.iter_servers(protocol);
         PublicAddrsFromStun {
             handle,
@@ -132,7 +132,7 @@ impl PublicAddrsFromStun {
 
     /// Constructs `PublicAddrsFromStun` with convenient defaults for testing.
     #[cfg(test)]
-    fn with_defaults(handle: Handle, igd_error: GetAnyAddressError) -> PublicAddrsFromStun {
+    fn with_defaults(handle: Handle, igd_error: GetAnyAddressError) -> PublicAddrsFromStun<S> {
         PublicAddrsFromStun::new(
             handle,
             &P2p::default(),
@@ -153,7 +153,7 @@ impl PublicAddrsFromStun {
             Async::Ready(Some(server_info)) => {
                 trace!("got a new server to try: {}", server_info);
                 let active_query =
-                    query_public_addr(self.protocol, &self.bind_addr, &server_info, &self.handle);
+                    query_public_addr::<S>(self.protocol, &self.bind_addr, &server_info, &self.handle);
                 self.add_stun_query(active_query);
                 self.more_servers_timeout = None;
                 self.keep_querying_stun = true;
@@ -277,7 +277,7 @@ impl PublicAddrsFromStun {
     }
 }
 
-impl Future for PublicAddrsFromStun {
+impl<S: SecretId> Future for PublicAddrsFromStun<S> {
     type Item = SocketAddr;
     type Error = RendezvousAddrError;
 
@@ -310,6 +310,7 @@ impl Future for PublicAddrsFromStun {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crypto::P2pSecretId;
 
     mod public_addrs_from_stun {
         use super::*;
@@ -322,7 +323,7 @@ mod tests {
             fn it_notifies_that_stun_servers_should_be_queried_when_new_servers_are_polled() {
                 let mut evloop = unwrap!(Core::new());
 
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
                 p2p.add_udp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 let mut public_addrs = PublicAddrsFromStun::new(
                     evloop.handle(),
@@ -348,7 +349,7 @@ mod tests {
             fn it_consumes_stun_server() {
                 let mut evloop = unwrap!(Core::new());
 
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
                 p2p.add_udp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 let mut public_addrs = PublicAddrsFromStun::new(
                     evloop.handle(),
@@ -379,7 +380,7 @@ mod tests {
             fn it_returns_address_when_same_port_is_returned_twice_by_stun_queries() {
                 let mut evloop = unwrap!(Core::new());
 
-                let mut public_addrs = PublicAddrsFromStun::with_defaults(
+                let mut public_addrs = PublicAddrsFromStun::<P2pSecretId>::with_defaults(
                     evloop.handle(),
                     GetAnyAddressError::Disabled,
                 );
@@ -406,7 +407,7 @@ mod tests {
             #[test]
             fn it_returns_error_when_stun_query_error_limit_is_reached() {
                 let mut evloop = unwrap!(Core::new());
-                let mut public_addrs = PublicAddrsFromStun::with_defaults(
+                let mut public_addrs = PublicAddrsFromStun::<P2pSecretId>::with_defaults(
                     evloop.handle(),
                     GetAnyAddressError::Disabled,
                 );

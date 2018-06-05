@@ -79,11 +79,11 @@ quick_error! {
     }
 }
 
-pub fn open_addr(
+pub fn open_addr<'p, S: SecretId>(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    mc: &P2p<S>,
 ) -> BoxFuture<SocketAddr, OpenAddrError> {
     let addrs_res = {
         bind_addr
@@ -112,33 +112,35 @@ pub fn open_addr(
 
     let mc0 = mc.clone();
     igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
-        .or_else(move |igd_err| OpenAddr {
-            protocol,
-            igd_err: Some(igd_err),
-            handle,
-            bind_addr,
-            known_addr_opt: None,
-            traversal_servers: mc0.iter_servers(protocol),
-            active_queries: stream::FuturesUnordered::new(),
-            errors: Vec::new(),
-            more_servers_timeout: None,
+        .or_else(move |igd_err| -> OpenAddr<S> {
+            OpenAddr {
+                protocol,
+                igd_err: Some(igd_err),
+                handle,
+                bind_addr,
+                known_addr_opt: None,
+                traversal_servers: mc0.iter_servers(protocol),
+                active_queries: stream::FuturesUnordered::new(),
+                errors: Vec::new(),
+                more_servers_timeout: None,
+            }
         })
         .into_boxed()
 }
 
-struct OpenAddr {
+struct OpenAddr<S: SecretId> {
     protocol: Protocol,
     igd_err: Option<GetAnyAddressError>,
     handle: Handle,
     bind_addr: SocketAddr,
     known_addr_opt: Option<SocketAddr>,
-    traversal_servers: Servers,
+    traversal_servers: Servers<S::Public>,
     active_queries: stream::FuturesUnordered<BoxFuture<SocketAddr, QueryPublicAddrError>>,
     errors: Vec<QueryPublicAddrError>,
     more_servers_timeout: Option<Timeout>,
 }
 
-impl Future for OpenAddr {
+impl<S: SecretId> Future for OpenAddr<S> {
     type Item = SocketAddr;
     type Error = OpenAddrError;
 
@@ -185,7 +187,7 @@ impl Future for OpenAddr {
             match self.traversal_servers.poll().void_unwrap() {
                 Async::Ready(Some(server_info)) => {
                     trace!("new server to query: {}", server_info);
-                    let active_query = query_public_addr(
+                    let active_query = query_public_addr::<S>(
                         self.protocol,
                         &self.bind_addr,
                         &server_info,

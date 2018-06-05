@@ -4,16 +4,29 @@ use priv_prelude::*;
 use maidsafe_utilities::serialisation;
 use rust_sodium::crypto::{box_, sealedbox, sign};
 
-pub trait Id
-    : 'static
-    + Send
-    + fmt::Debug
-    + Eq
-    + PartialEq {
-}
-
-pub trait PublicId: Id + Clone + Serialize + DeserializeOwned {
-    type Signature: Id + Clone + Serialize + DeserializeOwned;
+pub trait PublicId: 'static
+        + Send
+        + fmt::Debug
+        + PartialEq
+        + Eq
+        + PartialOrd
+        + Ord
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + Hash
+{
+    type Signature: 'static
+        + Send
+        + fmt::Debug
+        + PartialEq
+        + Eq
+        + PartialOrd
+        + Ord
+        + Hash
+        + Clone
+        + Serialize
+        + DeserializeOwned;
     
     fn encrypt_anonymous<T>(&self, plaintext: &T) -> Vec<u8>
     where T:
@@ -24,10 +37,15 @@ pub trait PublicId: Id + Clone + Serialize + DeserializeOwned {
     fn verify_detached(&self, signature: &Self::Signature, data: &[u8]) -> bool;
 }
 
-pub trait SecretId: Id {
+pub trait SecretId: 'static
+        + Send
+        + fmt::Debug
+        + Clone
+{
     type Public: PublicId;
     type SharedSecret: SharedSecretKey;
     
+    fn new() -> Self;
     fn public_id(&self) -> &Self::Public;
     fn decrypt_anonymous<T>(&self, cyphertext: &[u8]) -> Result<T, DecryptError>
     where
@@ -38,7 +56,11 @@ pub trait SecretId: Id {
     fn precompute(&self, their_pk: &Self::Public) -> Self::SharedSecret;
 }
 
-pub trait SharedSecretKey: Id {
+pub trait SharedSecretKey: 'static
+        + Send
+        + fmt::Debug
+        + Clone
+{
     fn encrypt_bytes(&self, plaintext: &[u8]) -> Vec<u8>;
     fn encrypt<T>(&self, plaintext: &T) -> Vec<u8>
     where
@@ -78,9 +100,6 @@ pub struct P2pPublicId {
     encrypt: box_::PublicKey,
 }
 
-impl Id for P2pPublicId {}
-impl Id for sign::Signature {}
-
 impl PublicId for P2pPublicId {
     type Signature = sign::Signature;
 
@@ -108,8 +127,11 @@ pub struct P2pSecretId {
     public: P2pPublicId,
 }
 
-impl P2pSecretId {
-    pub fn new() -> P2pSecretId {
+impl SecretId for P2pSecretId {
+    type Public = P2pPublicId;
+    type SharedSecret = P2pSharedSecretKey;
+
+    fn new() -> P2pSecretId {
         let (sign_pk, sign_sk) = sign::gen_keypair();
         let (encrypt_pk, encrypt_sk) = box_::gen_keypair();
         let public = P2pPublicId {
@@ -122,13 +144,6 @@ impl P2pSecretId {
             encrypt: encrypt_sk,
         }
     }
-}
-
-impl Id for P2pSecretId {}
-
-impl SecretId for P2pSecretId {
-    type Public = P2pPublicId;
-    type SharedSecret = P2pSharedSecretKey;
 
     fn public_id(&self) -> &P2pPublicId {
         &self.public
@@ -162,12 +177,10 @@ impl SecretId for P2pSecretId {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct P2pSharedSecretKey {
     precomputed: box_::PrecomputedKey,
 }
-
-impl Id for P2pSharedSecretKey {}
 
 impl SharedSecretKey for P2pSharedSecretKey {
     fn encrypt_bytes(&self, plaintext: &[u8]) -> Vec<u8> {

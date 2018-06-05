@@ -1,6 +1,7 @@
 //! Port mapping context utilities.
 
 use priv_prelude::*;
+use serde;
 use protocol::Protocol;
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
@@ -9,18 +10,45 @@ use ECHO_REQ;
 /// `P2p` allows you to manage how NAT traversal works.
 ///
 /// You can edit rendezvous (traversal) servers, enable/Disable IGD use, etc.
-#[derive(Default, Clone)]
-pub struct P2p {
-    inner: Arc<Mutex<P2pInner>>,
+pub struct P2p<S: SecretId> {
+    inner: Arc<Mutex<P2pInner<S::Public>>>,
 }
 
-#[derive(Default, Clone)]
-struct P2pInner {
-    tcp_server_set: ServerSet,
-    udp_server_set: ServerSet,
+impl<S: SecretId> Default for P2p<S> {
+    fn default() -> P2p<S> {
+        P2p {
+            inner: Arc::new(Mutex::new(P2pInner::default())),
+        }
+    }
+}
+
+impl<S: SecretId> Clone for P2p<S> {
+    fn clone(&self) -> P2p<S> {
+        P2p {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct P2pInner<P: PublicId> {
+    tcp_server_set: ServerSet<P>,
+    udp_server_set: ServerSet<P>,
     igd_disabled: bool,
     igd_disabled_for_rendezvous: bool,
     force_use_local_port: bool,
+}
+
+impl<P: PublicId> Default for P2pInner<P> {
+    fn default() -> P2pInner<P> {
+        P2pInner {
+            tcp_server_set: ServerSet::default(),
+            udp_server_set: ServerSet::default(),
+            igd_disabled: false,
+            igd_disabled_for_rendezvous: false,
+            force_use_local_port: false,
+        }
+    }
 }
 
 // Some macros to reduce boilerplate
@@ -39,7 +67,7 @@ macro_rules! inner_set {
     }};
 }
 
-impl P2p {
+impl<S: SecretId> P2p<S> {
     /// Check if IGD for rendezvous connections option is on or off.
     pub fn is_igd_enabled_for_rendezvous(&self) -> bool {
         !inner_get!(self, igd_disabled_for_rendezvous)
@@ -85,7 +113,7 @@ impl P2p {
 
     /// Tell about a `TcpTraversalServer` than can be used to help use perform rendezvous
     /// connects and hole punching.
-    pub fn add_tcp_traversal_server(&self, addr: &PeerInfo) {
+    pub fn add_tcp_traversal_server(&self, addr: &PeerInfo<S::Public>) {
         self.add_server(Protocol::Tcp, addr);
     }
 
@@ -96,13 +124,13 @@ impl P2p {
     }
 
     /// Returns a iterator over all tcp traversal server addresses.
-    pub fn tcp_traversal_servers(&self) -> Servers {
+    pub fn tcp_traversal_servers(&self) -> Servers<S::Public> {
         self.iter_servers(Protocol::Tcp)
     }
 
     /// Tell about a `UdpTraversalServer` than can be used to help use perform rendezvous
     /// connects and hole punching.
-    pub fn add_udp_traversal_server(&self, addr: &PeerInfo) {
+    pub fn add_udp_traversal_server(&self, addr: &PeerInfo<S::Public>) {
         self.add_server(Protocol::Udp, addr);
     }
 
@@ -114,17 +142,17 @@ impl P2p {
 
     /// Returns an iterator over all udp traversal server addresses added with
     /// `add_tcp_traversal_server`.
-    pub fn udp_traversal_servers(&self) -> Servers {
+    pub fn udp_traversal_servers(&self) -> Servers<S::Public> {
         self.iter_servers(Protocol::Udp)
     }
 
     /// Returns a `Stream` of traversal servers.
-    pub fn iter_servers(&self, protocol: Protocol) -> Servers {
+    pub fn iter_servers(&self, protocol: Protocol) -> Servers<S::Public> {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).iter_servers()
     }
 
-    fn add_server(&self, protocol: Protocol, addr: &PeerInfo) {
+    fn add_server(&self, protocol: Protocol, addr: &PeerInfo<S::Public>) {
         let mut inner = unwrap!(self.inner.lock());
         inner.server_set(protocol).add_server(addr);
     }
@@ -135,8 +163,8 @@ impl P2p {
     }
 }
 
-impl P2pInner {
-    fn server_set(&mut self, protocol: Protocol) -> &mut ServerSet {
+impl<P: PublicId> P2pInner<P> {
+    fn server_set(&mut self, protocol: Protocol) -> &mut ServerSet<P> {
         match protocol {
             Protocol::Udp => &mut self.udp_server_set,
             Protocol::Tcp => &mut self.tcp_server_set,
@@ -147,37 +175,59 @@ impl P2pInner {
 /// Request that has sender's public key and arbitrary body.
 /// This request is SHOULD be anonymously encrypted and it allows receiver to switch to
 /// authenticated encryption.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EncryptedRequest {
+#[derive(Debug)]
+pub struct EncryptedRequest<P: PublicId> {
     /// Sender's public key. Response should be encrypted with it.
-    pub our_pk: P2pPublicId,
+    pub our_pk: P,
     /// Arbitrary request body.
     pub body: Vec<u8>,
 }
 
-impl EncryptedRequest {
+impl<P: PublicId> Serialize for EncryptedRequest<P> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer
+    {
+        (&self.our_pk, &self.body).serialize(serializer)
+    }
+}
+
+impl<'de, P: PublicId> Deserialize<'de> for EncryptedRequest<P> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>
+   {
+        let (our_pk, body) = <(_, _)>::deserialize(deserializer)?;
+        Ok(EncryptedRequest {
+            our_pk,
+            body,
+        })
+    }
+}
+
+impl<P: PublicId> EncryptedRequest<P> {
     /// Create new request.
-    pub fn new(our_pk: P2pPublicId, body: Vec<u8>) -> Self {
+    pub fn new(our_pk: P, body: Vec<u8>) -> Self {
         Self { our_pk, body }
     }
 
     /// Constructs request with random public key.
     /// Useful for testing.
     #[cfg(test)]
-    pub fn with_rand_key(body: Vec<u8>) -> Self {
-        let sk = P2pSecretId::new();
+    pub fn with_rand_key<S: SecretId<Public = P>>(body: Vec<u8>) -> Self {
+        let sk = S::new();
         Self::new(sk.public_id().clone(), body)
     }
 }
 
 /// Sends request to echo address server and returns our public address on success.
-pub fn query_public_addr(
+pub fn query_public_addr<S: SecretId>(
     protocol: Protocol,
     bind_addr: &SocketAddr,
-    server_info: &PeerInfo,
+    server_info: &PeerInfo<S::Public>,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let our_sk = P2pSecretId::new(); // TODO(povilas): pass this from upper layers. MAID-2532
+    let our_sk = S::new(); // TODO(povilas): pass this from upper layers. MAID-2532
     let request = EncryptedRequest::new(our_sk.public_id().clone(), ECHO_REQ.to_vec());
     // First message is encrypted anonymously.
     let encrypted_req = BytesMut::from(server_info.pub_key.encrypt_anonymous(&request));
@@ -185,10 +235,10 @@ pub fn query_public_addr(
 
     match protocol {
         Protocol::Tcp => {
-            tcp_query_public_addr(bind_addr, server_info, handle, shared_key, encrypted_req)
+            tcp_query_public_addr::<S>(bind_addr, server_info, handle, shared_key, encrypted_req)
         }
         Protocol::Udp => {
-            udp_query_public_addr(bind_addr, server_info, handle, shared_key, encrypted_req)
+            udp_query_public_addr::<S>(bind_addr, server_info, handle, shared_key, encrypted_req)
         }
     }
 }
@@ -239,11 +289,11 @@ quick_error! {
 }
 
 /// Queries our public IP.
-pub fn tcp_query_public_addr(
+pub fn tcp_query_public_addr<S: SecretId>(
     bind_addr: &SocketAddr,
-    server_info: &PeerInfo,
+    server_info: &PeerInfo<S::Public>,
     handle: &Handle,
-    shared_key: P2pSharedSecretKey,
+    shared_key: S::SharedSecret,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let bind_addr = *bind_addr;
@@ -268,10 +318,10 @@ pub fn tcp_query_public_addr(
         .into_boxed()
 }
 
-fn tcp_recv_echo_addr(
+fn tcp_recv_echo_addr<K: SharedSecretKey>(
     handle: &Handle,
     stream: Framed<TcpStream>,
-    shared_key: P2pSharedSecretKey,
+    shared_key: K,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     stream
         .into_future()
@@ -292,11 +342,11 @@ fn tcp_recv_echo_addr(
         .into_boxed()
 }
 
-pub fn udp_query_public_addr(
+pub fn udp_query_public_addr<S: SecretId>(
     bind_addr: &SocketAddr,
-    server_info: &PeerInfo,
+    server_info: &PeerInfo<S::Public>,
     handle: &Handle,
-    shared_key: P2pSharedSecretKey,
+    shared_key: S::SharedSecret,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let server_addr = server_info.addr;
@@ -358,6 +408,7 @@ pub fn udp_query_public_addr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crypto::P2pSecretId;
     use maidsafe_utilities::serialisation::deserialise;
     use tokio_core::reactor::Core;
 
@@ -369,21 +420,21 @@ mod tests {
 
             #[test]
             fn it_creates_mapping_context_with_igd_enabled() {
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
 
                 assert!(p2p.is_igd_enabled())
             }
 
             #[test]
             fn it_creates_mapping_context_with_igd_enabled_for_rendezvous() {
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
 
                 assert!(p2p.is_igd_enabled_for_rendezvous())
             }
 
             #[test]
             fn it_creates_mapping_context_with_force_use_local_port_disabled() {
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
 
                 assert!(!p2p.force_use_local_port())
             }
@@ -394,7 +445,7 @@ mod tests {
 
             #[test]
             fn it_returns_current_tcp_traversal_servers() {
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
 
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
@@ -410,7 +461,7 @@ mod tests {
 
             #[test]
             fn it_removes_given_server_from_the_list_if_it_exists() {
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
@@ -423,7 +474,7 @@ mod tests {
 
             #[test]
             fn it_does_nothing_if_give_address_is_not_in_the_list() {
-                let p2p = P2p::default();
+                let p2p = P2p::<P2pSecretId>::default();
                 p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
 
                 p2p.remove_tcp_traversal_server(addr!("1.2.3.4:4000"));
@@ -436,6 +487,7 @@ mod tests {
 
     mod query_public_addr {
         use super::*;
+        use crypto::{P2pPublicId, P2pSecretId};
         use bytes::buf::FromBuf;
 
         #[test]
@@ -446,9 +498,9 @@ mod tests {
             let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
             let incoming = listener.incoming();
 
-            let server_info = PeerInfo::with_rand_key(server_addr);
+            let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
             let query =
-                query_public_addr(Protocol::Tcp, &addr!("0.0.0.0:0"), &server_info, &handle)
+                query_public_addr::<P2pSecretId>(Protocol::Tcp, &addr!("0.0.0.0:0"), &server_info, &handle)
                     .then(|_| Ok(()));
 
             let make_query = incoming.into_future()
@@ -473,7 +525,7 @@ mod tests {
                 .map(|(request, _response)| request);
 
             let request = unwrap!(evloop.run(make_query));
-            let request: Result<EncryptedRequest, _> = deserialise(&request);
+            let request: Result<EncryptedRequest<P2pPublicId>, _> = deserialise(&request);
             assert!(request.is_err());
         }
 
@@ -485,9 +537,9 @@ mod tests {
             let listener = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
 
-            let server_info = PeerInfo::with_rand_key(server_addr);
+            let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
             let query =
-                query_public_addr(Protocol::Udp, &addr!("0.0.0.0:0"), &server_info, &handle)
+                query_public_addr::<P2pSecretId>(Protocol::Udp, &addr!("0.0.0.0:0"), &server_info, &handle)
                     .then(|_| Ok(()));
 
             let make_query = listener.recv_dgram(vec![0u8; 256])
@@ -498,7 +550,7 @@ mod tests {
                 .map(|(request, _response)| request);
 
             let request = unwrap!(evloop.run(make_query));
-            let request: Result<EncryptedRequest, _> = deserialise(&request);
+            let request: Result<EncryptedRequest<P2pPublicId>, _> = deserialise(&request);
             assert!(request.is_err());
         }
     }

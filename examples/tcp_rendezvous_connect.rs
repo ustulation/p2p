@@ -33,7 +33,7 @@ extern crate void;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
-use p2p::{PeerInfo, TcpStreamExt, crypto::P2pPublicId};
+use p2p::{PeerInfo, TcpStreamExt, crypto::{P2pSecretId, P2pPublicId}};
 use std::net::{Shutdown, SocketAddr};
 use std::{env, fmt};
 use tokio_core::net::TcpStream;
@@ -107,7 +107,7 @@ fn main() {
             .unwrap_or_else(|e| e.exit())
     };
 
-    let mc = p2p::P2p::default();
+    let mc = p2p::P2p::<P2pSecretId>::default();
     if args.flag_disable_igd {
         mc.disable_igd();
     }
