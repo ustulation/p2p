@@ -9,7 +9,7 @@ extern crate tokio_core;
 extern crate unwrap;
 
 use futures::{Future, Stream};
-use p2p::{TcpListenerExt, crypto::P2pSecretId};
+use p2p::{crypto::P2pSecretId, TcpListenerExt};
 use tokio_core::net::TcpListener;
 
 fn main() {

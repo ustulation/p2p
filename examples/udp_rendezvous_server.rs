@@ -13,7 +13,7 @@ extern crate tokio_core;
 extern crate unwrap;
 
 use futures::{future, Future};
-use p2p::{UdpRendezvousServer, crypto::P2pSecretId};
+use p2p::{crypto::P2pSecretId, UdpRendezvousServer};
 
 fn main() {
     let mut core = unwrap!(tokio_core::reactor::Core::new());

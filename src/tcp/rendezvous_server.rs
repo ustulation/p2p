@@ -194,10 +194,12 @@ fn handle_connection<S: SecretId>(
             }
         })
         .with_timeout(Duration::from_secs(2), handle)
-        .and_then(|opt| opt.ok_or_else(|| {
-            println!("timed out responding to their request");
-            RendezvousServerError::Timeout
-        }))
+        .and_then(|opt| {
+            opt.ok_or_else(|| {
+                println!("timed out responding to their request");
+                RendezvousServerError::Timeout
+            })
+        })
         .into_boxed()
 }
 
@@ -256,10 +258,14 @@ mod tests {
         fn when_unencrypted_request_is_sent_client_connection_is_closed() {
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
-            let server = unwrap!(TcpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
+            let server = unwrap!(TcpRendezvousServer::<P2pSecretId>::bind(
+                &addr!("0.0.0.0:0"),
+                &handle
+            ));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
-            let request = EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
+            let request =
+                EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
             let unencrypted_request = BytesMut::from(unwrap!(serialise(&request)));
 
             let server_pk = server.public_key();
@@ -292,11 +298,15 @@ mod tests {
         fn it_sends_encrypted_responses() {
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
-            let server = unwrap!(TcpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
+            let server = unwrap!(TcpRendezvousServer::<P2pSecretId>::bind(
+                &addr!("0.0.0.0:0"),
+                &handle
+            ));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_info = PeerInfo::new(server_addr, server.public_key());
 
-            let request = EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
+            let request =
+                EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
 
             let server_pk = server.public_key();
             let client_sk = P2pSecretId::new();

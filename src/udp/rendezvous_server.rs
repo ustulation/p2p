@@ -198,10 +198,14 @@ mod test {
         fn when_unencrypted_request_is_sent_no_response_is_sent_back_to_client() {
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
-            let server = unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
+            let server = unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(
+                &addr!("0.0.0.0:0"),
+                &handle
+            ));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
-            let request = EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
+            let request =
+                EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
             let unencrypted_request = BytesMut::from(unwrap!(serialise(&request)));
 
             let server_sk = P2pSecretId::new();
@@ -231,7 +235,10 @@ mod test {
         fn it_sends_encrypted_responses() {
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
-            let server = unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
+            let server = unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(
+                &addr!("0.0.0.0:0"),
+                &handle
+            ));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_info = PeerInfo::new(server_addr, server.public_key());
 
@@ -239,7 +246,8 @@ mod test {
             let client_sk = P2pSecretId::new();
             let shared_key = client_sk.precompute(&server_pk);
 
-            let request = EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
+            let request =
+                EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());
             let encrypted_request = BytesMut::from(server_pk.encrypt_anonymous(&request));
 
             let query = udp_query_public_addr::<P2pSecretId>(

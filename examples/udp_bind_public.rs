@@ -10,7 +10,7 @@ extern crate unwrap;
 extern crate void;
 
 use futures::{future, Async, Future};
-use p2p::{UdpSocketExt, crypto::P2pSecretId};
+use p2p::{crypto::P2pSecretId, UdpSocketExt};
 use std::{io, str};
 use tokio_core::net::UdpSocket;
 use void::ResultVoidExt;

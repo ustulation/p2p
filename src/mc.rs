@@ -1,8 +1,8 @@
 //! Port mapping context utilities.
 
 use priv_prelude::*;
-use serde;
 use protocol::Protocol;
+use serde;
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
 use ECHO_REQ;
@@ -186,7 +186,7 @@ pub struct EncryptedRequest<P: PublicId> {
 impl<P: PublicId> Serialize for EncryptedRequest<P> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer
+        S: serde::Serializer,
     {
         (&self.our_pk, &self.body).serialize(serializer)
     }
@@ -195,13 +195,10 @@ impl<P: PublicId> Serialize for EncryptedRequest<P> {
 impl<'de, P: PublicId> Deserialize<'de> for EncryptedRequest<P> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>
-   {
+        D: serde::Deserializer<'de>,
+    {
         let (our_pk, body) = <(_, _)>::deserialize(deserializer)?;
-        Ok(EncryptedRequest {
-            our_pk,
-            body,
-        })
+        Ok(EncryptedRequest { our_pk, body })
     }
 }
 
@@ -487,8 +484,8 @@ mod tests {
 
     mod query_public_addr {
         use super::*;
-        use crypto::{P2pPublicId, P2pSecretId};
         use bytes::buf::FromBuf;
+        use crypto::{P2pPublicId, P2pSecretId};
 
         #[test]
         fn when_protocol_is_tcp_it_sends_encrypted_echo_address_request() {
@@ -499,9 +496,12 @@ mod tests {
             let incoming = listener.incoming();
 
             let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
-            let query =
-                query_public_addr::<P2pSecretId>(Protocol::Tcp, &addr!("0.0.0.0:0"), &server_info, &handle)
-                    .then(|_| Ok(()));
+            let query = query_public_addr::<P2pSecretId>(
+                Protocol::Tcp,
+                &addr!("0.0.0.0:0"),
+                &server_info,
+                &handle,
+            ).then(|_| Ok(()));
 
             let make_query = incoming.into_future()
                 .map_err(|e| panic!(e))
@@ -538,9 +538,12 @@ mod tests {
             let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
 
             let server_info = PeerInfo::<P2pPublicId>::with_rand_key::<P2pSecretId>(server_addr);
-            let query =
-                query_public_addr::<P2pSecretId>(Protocol::Udp, &addr!("0.0.0.0:0"), &server_info, &handle)
-                    .then(|_| Ok(()));
+            let query = query_public_addr::<P2pSecretId>(
+                Protocol::Udp,
+                &addr!("0.0.0.0:0"),
+                &server_info,
+                &handle,
+            ).then(|_| Ok(()));
 
             let make_query = listener.recv_dgram(vec![0u8; 256])
                 .map_err(|e| panic!(e))

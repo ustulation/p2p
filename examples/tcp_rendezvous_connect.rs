@@ -33,7 +33,9 @@ extern crate void;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
-use p2p::{PeerInfo, TcpStreamExt, crypto::{P2pSecretId, P2pPublicId}};
+use p2p::{
+    crypto::{P2pPublicId, P2pSecretId}, PeerInfo, TcpStreamExt,
+};
 use std::net::{Shutdown, SocketAddr};
 use std::{env, fmt};
 use tokio_core::net::TcpStream;

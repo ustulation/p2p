@@ -1278,8 +1278,10 @@ mod netsim_test {
                     let handle = core.handle();
 
                     let res = core.run(future::lazy(move || {
-                        let server =
-                            unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(&addr!("0.0.0.0:0"), &handle));
+                        let server = unwrap!(UdpRendezvousServer::<P2pSecretId>::bind(
+                            &addr!("0.0.0.0:0"),
+                            &handle
+                        ));
                         let server_port = server.local_addr().port();
                         let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
                         let server_info = PeerInfo {
