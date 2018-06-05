@@ -189,7 +189,11 @@ pub trait TcpStreamExt {
     /// to form one TCP connection, connected from both ends. `channel` must provide a channel
     /// through which the two connecting peers can communicate with each other out-of-band while
     /// negotiating the connection.
-    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &P2p) -> TcpRendezvousConnect<C>
+    fn rendezvous_connect<S: SecretId, C>(
+        channel: C,
+        handle: &Handle,
+        mc: &P2p<S>,
+    ) -> TcpRendezvousConnect<C>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -217,7 +221,11 @@ impl TcpStreamExt for TcpStream {
         future::result(try()).flatten().into_boxed()
     }
 
-    fn rendezvous_connect<C>(channel: C, handle: &Handle, mc: &P2p) -> TcpRendezvousConnect<C>
+    fn rendezvous_connect<S: SecretId, C>(
+        channel: C,
+        handle: &Handle,
+        mc: &P2p<S>,
+    ) -> TcpRendezvousConnect<C>
     where
         C: Stream<Item = Bytes>,
         C: Sink<SinkItem = Bytes>,
@@ -456,6 +464,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crypto::P2pSecretId;
     use env_logger;
     use tokio_core::reactor::Core;
     use tokio_io;
@@ -498,7 +507,7 @@ mod test {
 
         let mut core = unwrap!(Core::new());
         let handle = core.handle();
-        let mc0 = P2p::default();
+        let mc0 = P2p::<P2pSecretId>::default();
         let mc1 = mc0.clone();
 
         let result = core.run({
