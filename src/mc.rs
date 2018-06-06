@@ -325,7 +325,6 @@ fn tcp_recv_echo_addr<K: SharedSecretKey>(
         .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
         .and_then(|(resp_opt, _stream)| {
             resp_opt.ok_or_else(|| {
-                println!("it didn't send us anything!");
                 QueryPublicAddrError::ReadResponse(io::ErrorKind::ConnectionReset.into())
             })
         })

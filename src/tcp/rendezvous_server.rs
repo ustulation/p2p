@@ -13,7 +13,6 @@ pub fn respond_with_addr<T, K: SharedSecretKey>(
 where
     T: Sink<SinkItem = BytesMut, SinkError = io::Error> + 'static,
 {
-    println!("responding to their request");
     let encrypted = BytesMut::from(shared_key.encrypt(&addr));
     sink.send(encrypted)
         .map_err(RendezvousServerError::SendError)
@@ -165,13 +164,11 @@ fn handle_connection<S: SecretId>(
     handle: &Handle,
     our_sk: S,
 ) -> BoxFuture<(), RendezvousServerError> {
-    println!("got a new connection");
     let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
     stream
         .into_future()
         .map_err(|(err, _stream)| RendezvousServerError::ReadError(err))
         .and_then(|(req_opt, stream)| {
-            println!("read their request");
             req_opt
                 .map(|req| (req, stream))
                 .ok_or(RendezvousServerError::ConnectionClosed)
@@ -182,23 +179,18 @@ fn handle_connection<S: SecretId>(
                     .decrypt_anonymous(&req)
                     .map_err(RendezvousServerError::Decrypt)
             );
-            println!("decrypted their request");
             if req.body[..] == ECHO_REQ {
                 let shared_key = our_sk.precompute(&req.our_pk);
                 respond_with_addr(stream, addr, &shared_key)
                     .map(|_stream| ())
                     .into_boxed()
             } else {
-                println!("ignoring their request");
                 future::ok(()).into_boxed()
             }
         })
         .with_timeout(Duration::from_secs(2), handle)
         .and_then(|opt| {
-            opt.ok_or_else(|| {
-                println!("timed out responding to their request");
-                RendezvousServerError::Timeout
-            })
+            opt.ok_or(RendezvousServerError::Timeout)
         })
         .into_boxed()
 }
@@ -283,7 +275,6 @@ mod tests {
             let res = evloop.run(query);
             let connection_closed = match res {
                 Err(e) => {
-                    println!("{:?}", e);
                     match e {
                         QueryPublicAddrError::ReadResponse(_) => true,
                         _ => false,
