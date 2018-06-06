@@ -89,8 +89,8 @@ quick_error! {
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Clone)]
 pub struct P2pPublicId {
-    sign: sign::PublicKey,
-    encrypt: box_::PublicKey,
+    sign_pk: sign::PublicKey,
+    encrypt_pk: box_::PublicKey,
 }
 
 impl PublicId for P2pPublicId {
@@ -105,18 +105,18 @@ impl PublicId for P2pPublicId {
     }
 
     fn encrypt_anonymous_bytes(&self, plaintext: &[u8]) -> Vec<u8> {
-        sealedbox::seal(plaintext, &self.encrypt)
+        sealedbox::seal(plaintext, &self.encrypt_pk)
     }
 
     fn verify_detached(&self, signature: &sign::Signature, data: &[u8]) -> bool {
-        sign::verify_detached(signature, data, &self.sign)
+        sign::verify_detached(signature, data, &self.sign_pk)
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct P2pSecretId {
-    sign: sign::SecretKey,
-    encrypt: box_::SecretKey,
+    sign_sk: sign::SecretKey,
+    encrypt_sk: box_::SecretKey,
     public: P2pPublicId,
 }
 
@@ -128,13 +128,13 @@ impl SecretId for P2pSecretId {
         let (sign_pk, sign_sk) = sign::gen_keypair();
         let (encrypt_pk, encrypt_sk) = box_::gen_keypair();
         let public = P2pPublicId {
-            sign: sign_pk,
-            encrypt: encrypt_pk,
+            sign_pk,
+            encrypt_pk,
         };
         P2pSecretId {
             public,
-            sign: sign_sk,
-            encrypt: encrypt_sk,
+            sign_sk,
+            encrypt_sk,
         }
     }
 
@@ -153,16 +153,16 @@ impl SecretId for P2pSecretId {
     }
 
     fn decrypt_anonymous_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError> {
-        sealedbox::open(cyphertext, &self.public.encrypt, &self.encrypt)
+        sealedbox::open(cyphertext, &self.public.encrypt_pk, &self.encrypt_sk)
             .map_err(|()| DecryptBytesError::DecryptVerify)
     }
 
     fn sign_detached(&self, data: &[u8]) -> sign::Signature {
-        sign::sign_detached(data, &self.sign)
+        sign::sign_detached(data, &self.sign_sk)
     }
 
     fn precompute(&self, their_pk: &P2pPublicId) -> P2pSharedSecretKey {
-        let precomputed = box_::precompute(&their_pk.encrypt, &self.encrypt);
+        let precomputed = box_::precompute(&their_pk.encrypt_pk, &self.encrypt_sk);
         P2pSharedSecretKey { precomputed }
     }
 }
