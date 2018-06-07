@@ -154,7 +154,7 @@ fn on_addr_echo_request<S: SecretId>(
 
         if req.body[..] == ECHO_REQ[..] {
             trace!("udp rendezvous server received echo request from {}", addr);
-            let shared_key = our_sk.precompute(&req.our_pk);
+            let shared_key = our_sk.shared_key(&req.our_pk);
             return respond_with_addr(with_addr, addr, &shared_key)
                 .map(|_with_addr| ())
                 .into_boxed();
@@ -210,7 +210,7 @@ mod test {
 
             let server_sk = P2pSecretId::new();
             let client_sk = P2pSecretId::new();
-            let shared_key = client_sk.precompute(server_sk.public_id());
+            let shared_key = client_sk.shared_key(server_sk.public_id());
 
             let query = udp_query_public_addr::<P2pSecretId>(
                 &addr!("0.0.0.0:0"),
@@ -244,7 +244,7 @@ mod test {
 
             let server_pk = server.public_key();
             let client_sk = P2pSecretId::new();
-            let shared_key = client_sk.precompute(&server_pk);
+            let shared_key = client_sk.shared_key(&server_pk);
 
             let request =
                 EncryptedRequest::<P2pPublicId>::with_rand_key::<P2pSecretId>(ECHO_REQ.to_vec());

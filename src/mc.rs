@@ -228,7 +228,7 @@ pub fn query_public_addr<S: SecretId>(
     let request = EncryptedRequest::new(our_sk.public_id().clone(), ECHO_REQ.to_vec());
     // First message is encrypted anonymously.
     let encrypted_req = BytesMut::from(server_info.pub_key.encrypt_anonymous(&request));
-    let shared_key = our_sk.precompute(&server_info.pub_key);
+    let shared_key = our_sk.shared_key(&server_info.pub_key);
 
     match protocol {
         Protocol::Tcp => {

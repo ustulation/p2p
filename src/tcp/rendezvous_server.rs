@@ -180,7 +180,7 @@ fn handle_connection<S: SecretId>(
                     .map_err(RendezvousServerError::Decrypt)
             );
             if req.body[..] == ECHO_REQ {
-                let shared_key = our_sk.precompute(&req.our_pk);
+                let shared_key = our_sk.shared_key(&req.our_pk);
                 respond_with_addr(stream, addr, &shared_key)
                     .map(|_stream| ())
                     .into_boxed()
@@ -211,8 +211,8 @@ mod tests {
 
             let server_sk = P2pSecretId::new();
             let client_sk = P2pSecretId::new();
-            let server_shared_key = server_sk.precompute(&client_sk.public_id());
-            let client_shared_key = client_sk.precompute(&server_sk.public_id());
+            let server_shared_key = server_sk.shared_key(&client_sk.public_id());
+            let client_shared_key = client_sk.shared_key(&server_sk.public_id());
 
             let listener = unwrap!(TcpListener::bind(&addr!("127.0.0.1:0"), &handle));
             let listener_addr = unwrap!(listener.local_addr());
@@ -262,7 +262,7 @@ mod tests {
 
             let server_pk = server.public_key();
             let client_pk = P2pSecretId::new();
-            let shared_key = client_pk.precompute(&server_pk);
+            let shared_key = client_pk.shared_key(&server_pk);
 
             let query = tcp_query_public_addr::<P2pSecretId>(
                 &addr!("0.0.0.0:0"),
@@ -301,7 +301,7 @@ mod tests {
 
             let server_pk = server.public_key();
             let client_sk = P2pSecretId::new();
-            let shared_key = client_sk.precompute(&server_pk);
+            let shared_key = client_sk.shared_key(&server_pk);
             let encrypted_request = BytesMut::from(server_pk.encrypt_anonymous(&request));
 
             let query = tcp_query_public_addr::<P2pSecretId>(

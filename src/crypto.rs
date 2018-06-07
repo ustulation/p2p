@@ -2,11 +2,12 @@
 
 use maidsafe_utilities::serialisation;
 use priv_prelude::*;
-use rust_sodium::crypto::{box_, sealedbox, sign};
+use rust_sodium::crypto::{box_, sealedbox};
 
 pub trait PublicId:
     'static
     + Send
+    + Sync
     + fmt::Debug
     + PartialEq
     + Eq
@@ -17,28 +18,14 @@ pub trait PublicId:
     + DeserializeOwned
     + Hash
 {
-    type Signature: 'static
-        + Send
-        + fmt::Debug
-        + PartialEq
-        + Eq
-        + PartialOrd
-        + Ord
-        + Hash
-        + Clone
-        + Serialize
-        + DeserializeOwned;
-
     fn encrypt_anonymous<T>(&self, plaintext: &T) -> Vec<u8>
     where
         T: Serialize;
 
     fn encrypt_anonymous_bytes(&self, plaintext: &[u8]) -> Vec<u8>;
-
-    fn verify_detached(&self, signature: &Self::Signature, data: &[u8]) -> bool;
 }
 
-pub trait SecretId: 'static + Send + fmt::Debug + Clone {
+pub trait SecretId: 'static + Send + Sync + fmt::Debug + Clone {
     type Public: PublicId;
     type SharedSecret: SharedSecretKey;
 
@@ -48,12 +35,10 @@ pub trait SecretId: 'static + Send + fmt::Debug + Clone {
     where
         T: Serialize + DeserializeOwned;
     fn decrypt_anonymous_bytes(&self, cyphertext: &[u8]) -> Result<Vec<u8>, DecryptBytesError>;
-
-    fn sign_detached(&self, data: &[u8]) -> <Self::Public as PublicId>::Signature;
-    fn precompute(&self, their_pk: &Self::Public) -> Self::SharedSecret;
+    fn shared_key(&self, their_pk: &Self::Public) -> Self::SharedSecret;
 }
 
-pub trait SharedSecretKey: 'static + Send + fmt::Debug + Clone {
+pub trait SharedSecretKey: 'static + Send + Sync + fmt::Debug + Clone {
     fn encrypt_bytes(&self, plaintext: &[u8]) -> Vec<u8>;
     fn encrypt<T>(&self, plaintext: &T) -> Vec<u8>
     where
@@ -89,13 +74,10 @@ quick_error! {
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Clone)]
 pub struct P2pPublicId {
-    sign_pk: sign::PublicKey,
     encrypt_pk: box_::PublicKey,
 }
 
 impl PublicId for P2pPublicId {
-    type Signature = sign::Signature;
-
     fn encrypt_anonymous<T>(&self, plaintext: &T) -> Vec<u8>
     where
         T: Serialize,
@@ -107,16 +89,11 @@ impl PublicId for P2pPublicId {
     fn encrypt_anonymous_bytes(&self, plaintext: &[u8]) -> Vec<u8> {
         sealedbox::seal(plaintext, &self.encrypt_pk)
     }
-
-    fn verify_detached(&self, signature: &sign::Signature, data: &[u8]) -> bool {
-        sign::verify_detached(signature, data, &self.sign_pk)
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct P2pSecretId {
-    sign_sk: sign::SecretKey,
-    encrypt_sk: box_::SecretKey,
+    encrypt_sk: Arc<box_::SecretKey>,
     public: P2pPublicId,
 }
 
@@ -125,16 +102,13 @@ impl SecretId for P2pSecretId {
     type SharedSecret = P2pSharedSecretKey;
 
     fn new() -> P2pSecretId {
-        let (sign_pk, sign_sk) = sign::gen_keypair();
         let (encrypt_pk, encrypt_sk) = box_::gen_keypair();
         let public = P2pPublicId {
-            sign_pk,
             encrypt_pk,
         };
         P2pSecretId {
             public,
-            sign_sk,
-            encrypt_sk,
+            encrypt_sk: Arc::new(encrypt_sk),
         }
     }
 
@@ -157,11 +131,7 @@ impl SecretId for P2pSecretId {
             .map_err(|()| DecryptBytesError::DecryptVerify)
     }
 
-    fn sign_detached(&self, data: &[u8]) -> sign::Signature {
-        sign::sign_detached(data, &self.sign_sk)
-    }
-
-    fn precompute(&self, their_pk: &P2pPublicId) -> P2pSharedSecretKey {
+    fn shared_key(&self, their_pk: &P2pPublicId) -> P2pSharedSecretKey {
         let precomputed = box_::precompute(&their_pk.encrypt_pk, &self.encrypt_sk);
         P2pSharedSecretKey { precomputed }
     }
