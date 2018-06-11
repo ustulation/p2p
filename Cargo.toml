@@ -4,8 +4,10 @@ authors = [
     "Andrew Cann <shum@canndrew.org>",
     "Povilas Balciunas <balciunas90@gmail.com>",
 ]
+description = "A peer-to-peer NAT traversal library"
+license = "GPL-3.0"
 name = "p2p"
-version = "0.4.6"
+version = "0.5.0"
 
 [dependencies]
 bincode = "~0.9.2"
