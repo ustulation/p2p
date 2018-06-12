@@ -205,7 +205,6 @@
 )]
 #![recursion_limit = "100"]
 
-extern crate bincode;
 extern crate bytes;
 #[cfg(test)]
 extern crate env_logger;
@@ -229,9 +228,6 @@ extern crate netsim;
 #[macro_use]
 extern crate quick_error;
 extern crate rand;
-extern crate rust_sodium;
-extern crate secure_serialisation;
-extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate tokio_core;
@@ -239,6 +235,7 @@ extern crate tokio_io;
 extern crate tokio_shared_udp_socket;
 #[macro_use]
 extern crate unwrap;
+extern crate safe_crypto;
 extern crate void;
 
 mod prelude;
@@ -247,7 +244,6 @@ mod priv_prelude;
 #[macro_use]
 mod util;
 
-mod crypto;
 mod filter_addrs;
 mod igd_async;
 mod ip_addr;
@@ -255,14 +251,11 @@ mod mc;
 mod open_addr;
 mod peer;
 mod protocol;
+mod querier_set;
+mod query;
 mod rendezvous_addr;
-mod server_set;
 mod socket_addr;
 mod tcp;
 mod udp;
 
 pub use prelude::*;
-
-/// Message sent to rendezvous server.
-/// This message asks to respond with our own IP address.
-pub const ECHO_REQ: [u8; 8] = [b'E', b'C', b'H', b'O', b'A', b'D', b'D', b'R'];

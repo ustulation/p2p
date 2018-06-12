@@ -1,11 +1,7 @@
 //! Port mapping context utilities.
 
+use future_utils::mpsc::UnboundedReceiver;
 use priv_prelude::*;
-use protocol::Protocol;
-use rust_sodium::crypto::box_::{gen_keypair, PublicKey};
-use server_set::{ServerSet, Servers};
-use tokio_io::codec::length_delimited::{self, Framed};
-use ECHO_REQ;
 
 /// `P2p` allows you to manage how NAT traversal works.
 ///
@@ -15,10 +11,10 @@ pub struct P2p {
     inner: Arc<Mutex<P2pInner>>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 struct P2pInner {
-    tcp_server_set: ServerSet,
-    udp_server_set: ServerSet,
+    tcp_addr_querier_set: TcpAddrQuerierSet,
+    udp_addr_querier_set: UdpAddrQuerierSet,
     igd_disabled: bool,
     igd_disabled_for_rendezvous: bool,
     force_use_local_port: bool,
@@ -84,118 +80,54 @@ impl P2p {
         inner_set!(self, igd_disabled, false);
     }
 
-    /// Tell about a `TcpTraversalServer` than can be used to help use perform rendezvous
-    /// connects and hole punching.
-    pub fn add_tcp_traversal_server(&self, addr: &PeerInfo) {
-        self.add_server(Protocol::Tcp, addr);
-    }
-
-    /// Tells the library to forget a `TcpTraversalServer` previously added with
-    /// `add_tcp_traversal_server`.
-    pub fn remove_tcp_traversal_server(&self, addr: SocketAddr) {
-        self.remove_server(Protocol::Tcp, addr);
-    }
-
-    /// Returns a iterator over all tcp traversal server addresses.
-    pub fn tcp_traversal_servers(&self) -> Servers {
-        self.iter_servers(Protocol::Tcp)
-    }
-
-    /// Tell about a `UdpTraversalServer` than can be used to help use perform rendezvous
-    /// connects and hole punching.
-    pub fn add_udp_traversal_server(&self, addr: &PeerInfo) {
-        self.add_server(Protocol::Udp, addr);
-    }
-
-    /// Tells the library to forget a `UdpTraversalServer` previously added with
-    /// `add_udp_traversal_server`.
-    pub fn remove_udp_traversal_server(&self, addr: SocketAddr) {
-        self.remove_server(Protocol::Udp, addr);
-    }
-
-    /// Returns an iterator over all udp traversal server addresses added with
-    /// `add_tcp_traversal_server`.
-    pub fn udp_traversal_servers(&self) -> Servers {
-        self.iter_servers(Protocol::Udp)
-    }
-
-    /// Returns a `Stream` of traversal servers.
-    pub fn iter_servers(&self, protocol: Protocol) -> Servers {
+    /// Register a TCP addr_querier with p2p
+    pub fn add_tcp_addr_querier(&self, tcp_addr_querier: impl TcpAddrQuerier + Hash) {
         let mut inner = unwrap!(self.inner.lock());
-        inner.server_set(protocol).iter_servers()
+        inner
+            .tcp_addr_querier_set
+            .add_addr_querier(tcp_addr_querier);
     }
 
-    fn add_server(&self, protocol: Protocol, addr: &PeerInfo) {
+    /// Register a UDP addr_querier with p2p
+    pub fn add_udp_addr_querier(&self, udp_addr_querier: impl UdpAddrQuerier + Hash) {
         let mut inner = unwrap!(self.inner.lock());
-        inner.server_set(protocol).add_server(addr);
+        inner
+            .udp_addr_querier_set
+            .add_addr_querier(udp_addr_querier);
     }
 
-    fn remove_server(&self, protocol: Protocol, addr: SocketAddr) {
+    /// Remove a TCP addr_querier from p2p
+    pub fn remove_tcp_addr_querier<T: Hash>(&self, tcp_addr_querier: &T) {
         let mut inner = unwrap!(self.inner.lock());
-        inner.server_set(protocol).remove_server(addr);
+        inner
+            .tcp_addr_querier_set
+            .remove_addr_querier(tcp_addr_querier);
+    }
+
+    /// Remove a UDP addr_querier from p2p
+    pub fn remove_udp_addr_querier<T: Hash>(&self, udp_addr_querier: &T) {
+        let mut inner = unwrap!(self.inner.lock());
+        inner
+            .udp_addr_querier_set
+            .remove_addr_querier(udp_addr_querier);
+    }
+
+    /// Iterate over the registered TCP addr_queriers
+    pub fn tcp_addr_queriers(&self) -> UnboundedReceiver<Arc<TcpAddrQuerier>> {
+        let mut inner = unwrap!(self.inner.lock());
+        inner.tcp_addr_querier_set.addr_queriers()
+    }
+
+    /// Iterate over the registered UDP addr_queriers
+    pub fn udp_addr_queriers(&self) -> UnboundedReceiver<Arc<UdpAddrQuerier>> {
+        let mut inner = unwrap!(self.inner.lock());
+        inner.udp_addr_querier_set.addr_queriers()
     }
 }
 
-impl P2pInner {
-    fn server_set(&mut self, protocol: Protocol) -> &mut ServerSet {
-        match protocol {
-            Protocol::Udp => &mut self.udp_server_set,
-            Protocol::Tcp => &mut self.tcp_server_set,
-        }
-    }
-}
-
-/// Request that has sender's public key and arbitrary body.
-/// This request is SHOULD be anonymously encrypted and it allows receiver to switch to
-/// authenticated encryption.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EncryptedRequest {
-    /// Sender's public key. Response should be encrypted with it.
-    pub our_pk: PublicKey,
-    /// Arbitrary request body.
-    pub body: Vec<u8>,
-}
-
-impl EncryptedRequest {
-    /// Create new request.
-    pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
-        Self { our_pk, body }
-    }
-
-    /// Constructs request with random public key.
-    /// Useful for testing.
-    pub fn with_rand_key(body: Vec<u8>) -> Self {
-        let (our_pk, _our_sk) = gen_keypair();
-        Self::new(our_pk, body)
-    }
-}
-
-/// Sends request to echo address server and returns our public address on success.
-pub fn query_public_addr(
-    protocol: Protocol,
-    bind_addr: &SocketAddr,
-    server_info: &PeerInfo,
-    handle: &Handle,
-) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let (our_pk, our_sk) = gen_keypair(); // TODO(povilas): pass this from upper layers. MAID-2532
-    let request = EncryptedRequest::new(our_pk, ECHO_REQ.to_vec());
-    // First message is encrypted anonymously.
-    let crypto_ctx = CryptoContext::anonymous_encrypt(server_info.pub_key);
-    let encrypted_req = match crypto_ctx.encrypt(&request) {
-        Ok(data) => data,
-        Err(e) => return future::err(QueryPublicAddrError::Encrypt(e)).into_boxed(),
-    };
-
-    // Response comes encrypted and authenticated.
-    let crypto_ctx = CryptoContext::authenticated(server_info.pub_key, our_sk);
-    match protocol {
-        Protocol::Tcp => {
-            tcp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
-        }
-        Protocol::Udp => {
-            udp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
-        }
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EchoRequest {
+    pub client_pk: PublicId,
 }
 
 quick_error! {
@@ -235,13 +167,13 @@ quick_error! {
             description("timed out waiting for response from echo server")
         }
         /// Failure to encrypt request.
-        Encrypt(e: CryptoError) {
+        Encrypt(e: EncryptionError) {
             description("Error encrypting message")
             display("Error encrypting message: {}", e)
             cause(e)
         }
         /// Failure to decrypt request.
-        Decrypt(e: CryptoError) {
+        Decrypt(e: EncryptionError) {
             description("Error decrypting message")
             display("Error decrypting message: {}", e)
             cause(e)
@@ -249,126 +181,9 @@ quick_error! {
     }
 }
 
-/// Queries our public IP.
-pub fn tcp_query_public_addr(
-    bind_addr: &SocketAddr,
-    server_info: &PeerInfo,
-    handle: &Handle,
-    crypto_ctx: CryptoContext,
-    encrypted_req: BytesMut,
-) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let bind_addr = *bind_addr;
-    let server_addr = server_info.addr;
-    let handle = handle.clone();
-
-    TcpStream::connect_reusable(&bind_addr, &server_addr, &handle)
-        // TODO(povilas): use QueryPublicAddrError::from(ConnectReusableError)
-        .map_err(|err| match err {
-            ConnectReusableError::Connect(e) => QueryPublicAddrError::Connect(e),
-            ConnectReusableError::Bind(e) => QueryPublicAddrError::Bind(e),
-        })
-        .with_timeout(Duration::from_secs(3), &handle)
-        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ConnectTimeout))
-        .map(|stream| length_delimited::Builder::new().new_framed(stream))
-        .and_then(move |stream| {
-            stream.send(encrypted_req).map_err(
-                QueryPublicAddrError::SendRequest,
-            )
-        })
-        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream, crypto_ctx))
-        .into_boxed()
-}
-
-fn tcp_recv_echo_addr(
-    handle: &Handle,
-    stream: Framed<TcpStream>,
-    crypto_ctx: CryptoContext,
-) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    stream
-        .into_future()
-        .map_err(|(err, _stream)| QueryPublicAddrError::ReadResponse(err))
-        .and_then(|(resp_opt, _stream)| {
-            resp_opt.ok_or_else(|| {
-                QueryPublicAddrError::ReadResponse(io::ErrorKind::ConnectionReset.into())
-            })
-        })
-        .and_then(move |resp| {
-            crypto_ctx
-                .decrypt(&resp)
-                .map_err(QueryPublicAddrError::Decrypt)
-        })
-        .with_timeout(Duration::from_secs(2), handle)
-        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
-        .into_boxed()
-}
-
-pub fn udp_query_public_addr(
-    bind_addr: &SocketAddr,
-    server_info: &PeerInfo,
-    handle: &Handle,
-    crypto_ctx: CryptoContext,
-    encrypted_req: BytesMut,
-) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let server_addr = server_info.addr;
-    let socket = try_bfut!(
-        UdpSocket::bind_connect_reusable(bind_addr, &server_addr, handle)
-            .map_err(QueryPublicAddrError::Bind)
-    );
-
-    let mut timeout = Timeout::new(Duration::new(0, 0), handle);
-    future::poll_fn(move || {
-        while let Async::Ready(()) = timeout.poll().void_unwrap() {
-            match socket.send(&encrypted_req[..]) {
-                Ok(n) => {
-                    let len = encrypted_req.len();
-                    if len != n {
-                        let e = io::Error::new(
-                            io::ErrorKind::Other,
-                            format!(
-                                "failed to send complete request. \
-                                 Sent {} bytes of {}",
-                                len, n
-                            ),
-                        );
-                        return Err(QueryPublicAddrError::SendRequest(e));
-                    }
-                    timeout.reset(Instant::now() + Duration::from_millis(500));
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    break;
-                }
-                Err(e) => return Err(QueryPublicAddrError::SendRequest(e)),
-            }
-        }
-
-        loop {
-            let mut buffer = [0u8; 256];
-            match socket.recv_from(&mut buffer) {
-                Ok((len, recv_addr)) => {
-                    if recv_addr != server_addr {
-                        continue;
-                    }
-                    trace!("server responded with: {:?}", &buffer[..len]);
-                    let external_addr = crypto_ctx
-                        .decrypt(&buffer[..len])
-                        .map_err(QueryPublicAddrError::Decrypt)?;
-                    return Ok(Async::Ready(external_addr));
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    break Ok(Async::NotReady);
-                }
-                Err(e) => return Err(QueryPublicAddrError::ReadResponse(e)),
-            }
-        }
-    }).with_timeout(Duration::from_secs(3), handle)
-        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
-        .into_boxed()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maidsafe_utilities::serialisation::deserialise;
     use tokio_core::reactor::Core;
 
     mod p2p {
@@ -399,117 +214,33 @@ mod tests {
             }
         }
 
-        mod tcp_traversal_servers {
+        mod tcp_addr_queriers {
             use super::*;
 
             #[test]
-            fn it_returns_current_tcp_traversal_servers() {
+            fn it_returns_tcp_addr_queriers() {
                 let p2p = P2p::default();
 
-                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
-                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
+                let server_sk0 = SecretId::new();
+                let server_pk0 = server_sk0.public_id().clone();
+                let server_addr0 = addr!("1.2.3.4:5000");
+                let server_sk1 = SecretId::new();
+                let server_pk1 = server_sk1.public_id().clone();
+                let server_addr1 = addr!("5.6.7.8:9000");
 
-                let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
-                assert!(addrs.contains(&addr!("1.2.3.4:4000")));
-                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
+                let mut core = unwrap!(Core::new());
+                let handle = core.handle();
+                let addr_queriers = {
+                    p2p.tcp_addr_queriers()
+                        .with_readiness_timeout(Duration::from_secs(1), &handle)
+                        .collect()
+                };
+                p2p.add_tcp_addr_querier(RemoteTcpRendezvousServer::new(server_addr0, server_pk0));
+                p2p.add_tcp_addr_querier(RemoteTcpRendezvousServer::new(server_addr1, server_pk1));
+
+                let addr_queriers: Vec<_> = core.run(addr_queriers).void_unwrap();
+                assert_eq!(addr_queriers.len(), 2);
             }
-        }
-
-        mod remove_tcp_traversal_server {
-            use super::*;
-
-            #[test]
-            fn it_removes_given_server_from_the_list_if_it_exists() {
-                let p2p = P2p::default();
-                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.4:4000"));
-                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
-
-                p2p.remove_tcp_traversal_server(addr!("1.2.3.4:4000"));
-
-                let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
-                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
-                assert!(!addrs.contains(&addr!("1.2.3.4:4000")));
-            }
-
-            #[test]
-            fn it_does_nothing_if_give_address_is_not_in_the_list() {
-                let p2p = P2p::default();
-                p2p.add_tcp_traversal_server(&peer_addr!("1.2.3.5:5000"));
-
-                p2p.remove_tcp_traversal_server(addr!("1.2.3.4:4000"));
-
-                let addrs = p2p.tcp_traversal_servers().addrs_snapshot();
-                assert!(addrs.contains(&addr!("1.2.3.5:5000")));
-            }
-        }
-    }
-
-    mod query_public_addr {
-        use super::*;
-        use bytes::buf::FromBuf;
-
-        #[test]
-        fn when_protocol_is_tcp_it_sends_encrypted_echo_address_request() {
-            let mut evloop = unwrap!(Core::new());
-            let handle = evloop.handle();
-            let listener = unwrap!(TcpListener::bind(&addr!("0.0.0.0:0"), &handle));
-            let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
-            let incoming = listener.incoming();
-
-            let server_info = PeerInfo::with_rand_key(server_addr);
-            let query =
-                query_public_addr(Protocol::Tcp, &addr!("0.0.0.0:0"), &server_info, &handle)
-                    .then(|_| Ok(()));
-
-            let make_query = incoming.into_future()
-                .map_err(|e| panic!(e))
-                .map(|(client_opt, _incoming)| {
-                    unwrap!(client_opt, "Failed to receive client connection")
-                })
-                .map(|(client_stream, _addr)| {
-                    length_delimited::Builder::new().new_framed(client_stream)
-                })
-                .and_then(|client_stream: Framed<TcpStream>| {
-                    client_stream.into_future()
-                        .map(|(request_opt, _stream)| {
-                            unwrap!(request_opt, "Failed to receive data from client connection")
-                        })
-                        .and_then(|request| {
-                            Ok(request)
-                        })
-                })
-                // When server is running, let's make a query.
-                .join(query)
-                .map(|(request, _response)| request);
-
-            let request = unwrap!(evloop.run(make_query));
-            let request: Result<EncryptedRequest, _> = deserialise(&request);
-            assert!(request.is_err());
-        }
-
-        #[test]
-        fn when_protocol_is_udp_it_sends_encrypted_echo_address_request() {
-            let mut evloop = unwrap!(Core::new());
-            let handle = evloop.handle();
-
-            let listener = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
-            let server_addr = unwrap!(listener.local_addr()).unspecified_to_localhost();
-
-            let server_info = PeerInfo::with_rand_key(server_addr);
-            let query =
-                query_public_addr(Protocol::Udp, &addr!("0.0.0.0:0"), &server_info, &handle)
-                    .then(|_| Ok(()));
-
-            let make_query = listener.recv_dgram(vec![0u8; 256])
-                .map_err(|e| panic!(e))
-                .map(move |(_socket, data, len, _addr)| BytesMut::from_buf(&data[..len]))
-                // When server is running, let's make a query.
-                .join(query)
-                .map(|(request, _response)| request);
-
-            let request = unwrap!(evloop.run(make_query));
-            let request: Result<EncryptedRequest, _> = deserialise(&request);
-            assert!(request.is_err());
         }
     }
 }

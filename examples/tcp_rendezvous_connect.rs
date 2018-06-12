@@ -4,10 +4,10 @@ extern crate env_logger;
 extern crate future_utils;
 extern crate futures;
 extern crate p2p;
-extern crate rust_sodium;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate safe_crypto;
 extern crate serde_json;
 extern crate tokio_core;
 extern crate tokio_io;
@@ -33,8 +33,8 @@ extern crate void;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
-use p2p::{PeerInfo, TcpStreamExt};
-use rust_sodium::crypto::box_::PublicKey;
+use p2p::{RemoteTcpRendezvousServer, TcpStreamExt};
+use safe_crypto::PublicId;
 use std::net::{Shutdown, SocketAddr};
 use std::{env, fmt};
 use tokio_core::net::TcpStream;
@@ -118,9 +118,9 @@ fn main() {
             args.flag_traversal_server_key,
             "If echo address server is specified, it's public key must be given too.",
         );
-        let server_pub_key: PublicKey = unwrap!(serde_json::from_str(&server_pub_key));
-        let server_info = PeerInfo::new(server_addr, server_pub_key);
-        mc.add_tcp_traversal_server(&server_info);
+        let server_pub_key: PublicId = unwrap!(serde_json::from_str(&server_pub_key));
+        let addr_querier = RemoteTcpRendezvousServer::new(server_addr, server_pub_key);
+        mc.add_tcp_addr_querier(addr_querier);
     }
 
     let relay_addr = args.flag_relay;

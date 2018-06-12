@@ -1,10 +1,8 @@
 use bytes::Bytes;
 use open_addr::BindPublicError;
 use priv_prelude::*;
-use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::socket;
-use ECHO_REQ;
 
 /// Sends response to echo address request (`ECHO_REQ`).
 /// NOTE: this function is almost identical to `tcp::rendezous_server::respond_with_addr()`,
@@ -13,16 +11,16 @@ use ECHO_REQ;
 pub fn respond_with_addr<S>(
     sink: S,
     addr: SocketAddr,
-    crypto_ctx: &CryptoContext,
+    shared_secret: &SharedSecretKey,
 ) -> BoxFuture<S, RendezvousServerError>
 where
     S: Sink<SinkItem = Bytes, SinkError = io::Error> + 'static,
 {
     let encrypted = try_bfut!(
-        crypto_ctx
+        shared_secret
             .encrypt(&addr)
             .map_err(RendezvousServerError::Encrypt)
-            .map(|data| data.freeze())
+            .map(Bytes::from)
     );
     sink.send(encrypted)
         .map_err(RendezvousServerError::SendError)
@@ -33,7 +31,7 @@ where
 /// Acts much like STUN server except doesn't implement the standard protocol - RFC 5389.
 pub struct UdpRendezvousServer {
     local_addr: SocketAddr,
-    our_pk: PublicKey,
+    our_pk: PublicId,
     _drop_tx: DropNotify,
 }
 
@@ -85,8 +83,8 @@ impl UdpRendezvousServer {
 
     /// Returns server public key.
     /// Server expects incoming messages to be encrypted with this public key.
-    pub fn public_key(&self) -> PublicKey {
-        self.our_pk
+    pub fn public_key(&self) -> &PublicId {
+        &self.our_pk
     }
 }
 
@@ -99,7 +97,8 @@ fn from_socket_inner(
     handle: &Handle,
 ) -> UdpRendezvousServer {
     let (drop_tx, drop_rx) = drop_notify();
-    let (our_pk, our_sk) = gen_keypair();
+    let our_sk = SecretId::new();
+    let our_pk = our_sk.public_id().clone();
 
     let f = {
         let socket = SharedUdpSocket::share(socket);
@@ -117,8 +116,9 @@ fn from_socket_inner(
                 with_addr
                     .into_future()
                     .map_err(|(e, _with_addr)| RendezvousServerError::ReadError(e))
-                    .and_then(move |(msg_opt, with_addr)| {
-                        on_addr_echo_request(msg_opt, with_addr, our_pk, our_sk)
+                    .and_then(move |(msg_opt, with_addr)| match msg_opt {
+                        Some(msg) => on_addr_echo_request(&msg, with_addr, &our_sk),
+                        None => future::ok(()).into_boxed(),
                     })
             })
             .buffer_unordered(1024)
@@ -143,32 +143,23 @@ fn from_socket_inner(
 ///
 /// Reponds with client address.
 fn on_addr_echo_request(
-    msg_opt: Option<Bytes>,
+    msg: &[u8],
     with_addr: WithAddress,
-    our_pk: PublicKey,
-    our_sk: SecretKey,
+    our_sk: &SecretId,
 ) -> BoxFuture<(), RendezvousServerError> {
     let addr = with_addr.remote_addr();
-    if let Some(msg) = msg_opt {
-        trace!("udp rendezvous server received message from {}", addr);
-        let crypto_ctx = CryptoContext::anonymous_decrypt(our_pk, our_sk.clone());
-        let req: EncryptedRequest = try_bfut!(
-            crypto_ctx
-                .decrypt(&msg,)
-                .map_err(RendezvousServerError::Decrypt,)
-        );
-        trace!("udp rendezvous server decrypted message from {}", addr);
+    trace!("udp rendezvous server received message from {}", addr);
+    let request: EchoRequest = try_bfut!(
+        our_sk
+            .decrypt_anonymous(msg)
+            .map_err(RendezvousServerError::Decrypt)
+    );
 
-        if req.body[..] == ECHO_REQ[..] {
-            trace!("udp rendezvous server received echo request from {}", addr);
-            let crypto_ctx = CryptoContext::authenticated(req.our_pk, our_sk);
-            return respond_with_addr(with_addr, addr, &crypto_ctx)
-                .map(|_with_addr| ())
-                .into_boxed();
-        }
-    }
-
-    future::ok(()).into_boxed()
+    trace!("udp rendezvous server received echo request from {}", addr);
+    let shared_secret = our_sk.shared_secret(&request.client_pk);
+    respond_with_addr(with_addr, addr, &shared_secret)
+        .map(|_with_addr| ())
+        .into_boxed()
 }
 
 #[cfg(test)]
@@ -176,29 +167,10 @@ mod test {
     use super::*;
     use tokio_core::reactor::Core;
 
-    mod on_addr_echo_request {
-        use super::*;
-
-        #[test]
-        fn it_returns_finished_future_when_message_is_none() {
-            let ev_loop = unwrap!(Core::new());
-            let udp_sock = SharedUdpSocket::share(unwrap!(UdpSocket::bind(
-                &addr!("0.0.0.0:0"),
-                &ev_loop.handle()
-            )));
-            let udp_sock = udp_sock.with_address(addr!("192.168.1.2:1234"));
-            let (our_pk, our_sk) = gen_keypair();
-
-            let fut = on_addr_echo_request(None, udp_sock, our_pk, our_sk);
-
-            unwrap!(fut.wait())
-        }
-    }
-
     mod rendezvous_server {
         use super::*;
-        use maidsafe_utilities::serialisation::serialise;
-        use mc::udp_query_public_addr;
+        use maidsafe_utilities::serialisation;
+        use util;
 
         #[test]
         fn when_unencrypted_request_is_sent_no_response_is_sent_back_to_client() {
@@ -206,27 +178,30 @@ mod test {
             let handle = evloop.handle();
             let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
-            let server_info = PeerInfo::with_rand_key(server_addr);
-            let request = EncryptedRequest::with_rand_key(ECHO_REQ.to_vec());
-            let unencrypted_request = BytesMut::from(unwrap!(serialise(&request)));
-
-            let query = udp_query_public_addr(
-                &addr!("0.0.0.0:0"),
-                &server_info,
-                &handle,
-                CryptoContext::null(),
-                unencrypted_request,
-            );
-
-            let res = evloop.run(query);
-            let timeout = match res {
-                Err(e) => match e {
-                    QueryPublicAddrError::ResponseTimeout => true,
-                    _ => false,
-                },
-                _ => false,
+            let client_sk = SecretId::new();
+            let request = EchoRequest {
+                client_pk: client_sk.public_id().clone(),
             };
-            assert!(timeout);
+            let unencrypted_request = BytesMut::from(unwrap!(serialisation::serialise(&request)));
+
+            let socket = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+
+            let f = {
+                socket
+                    .send_dgram(unencrypted_request, server_addr)
+                    .map_err(|e| panic!("error sending: {}", e))
+                    .and_then(|(socket, _msg)| {
+                        socket
+                            .recv_dgram(util::zeroed_vec(256))
+                            .map_err(|e| panic!("error receiving: {}", e))
+                            .with_timeout(Duration::from_secs(1), &handle)
+                            .map(|opt| {
+                                assert!(opt.is_none());
+                            })
+                    })
+            };
+
+            evloop.run(f).void_unwrap()
         }
 
         #[test]
@@ -235,29 +210,37 @@ mod test {
             let handle = evloop.handle();
             let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
-            let server_info = PeerInfo::new(server_addr, server.public_key());
-
-            let request = EncryptedRequest::with_rand_key(ECHO_REQ.to_vec());
-            let crypto_ctx = CryptoContext::anonymous_encrypt(server.public_key());
-            let encrypted_request = unwrap!(crypto_ctx.encrypt(&request));
-
-            let query = udp_query_public_addr(
-                &addr!("0.0.0.0:0"),
-                &server_info,
-                &handle,
-                CryptoContext::null(),
-                encrypted_request,
-            );
-
-            let res = evloop.run(query);
-            let decrypt_error = match res {
-                Err(e) => match e {
-                    QueryPublicAddrError::Decrypt(_e) => true,
-                    _ => false,
-                },
-                _ => false,
+            let server_pk = server.public_key();
+            let client_sk = SecretId::new();
+            let request = EchoRequest {
+                client_pk: client_sk.public_id().clone(),
             };
-            assert!(decrypt_error);
+            let encrypted_request = BytesMut::from(unwrap!(server_pk.encrypt_anonymous(&request)));
+            let invalid_shared_secret = SecretId::new().shared_secret(&server_pk);
+
+            let socket = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+
+            let f = {
+                socket
+                    .send_dgram(encrypted_request, server_addr)
+                    .map_err(|e| panic!("error sending: {}", e))
+                    .and_then(|(socket, _msg)| {
+                        socket
+                            .recv_dgram(util::zeroed_vec(256))
+                            .map_err(|e| panic!("error receiving: {}", e))
+                            .with_timeout(Duration::from_secs(1), &handle)
+                            .map(|msg_opt| {
+                                let (_socket, msg, n, addr) = unwrap!(msg_opt);
+                                assert_eq!(addr, server_addr);
+                                match invalid_shared_secret.decrypt::<EchoRequest>(&msg[..n]) {
+                                    Err(_) => (),
+                                    Ok(x) => panic!("unexpected success: {:?}", x),
+                                }
+                            })
+                    })
+            };
+
+            evloop.run(f).void_unwrap()
         }
     }
 }
