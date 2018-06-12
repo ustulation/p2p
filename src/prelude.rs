@@ -1,6 +1,5 @@
-pub use crypto::{CryptoContext, CryptoError};
 pub use ip_addr::{IpAddrExt, Ipv4AddrExt, Ipv6AddrExt};
-pub use mc::{query_public_addr, EncryptedRequest, P2p, QueryPublicAddrError};
+pub use mc::{query_public_addr, P2p, QueryPublicAddrError};
 pub use open_addr::{BindPublicError, OpenAddrError, OpenAddrErrorKind};
 pub use peer::PeerInfo;
 pub use protocol::Protocol;

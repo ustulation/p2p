@@ -1,24 +1,14 @@
-use bincode::{self, Infinite};
-use bytes::BufMut;
 use filter_addrs::filter_addrs;
+use maidsafe_utilities::serialisation;
 use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
-use rust_sodium::crypto::box_::{PublicKey, SecretKey};
-use secure_serialisation::{
-    deserialise as secure_deserialise, serialise as secure_serialise, Error as SecureSerialiseError,
-};
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
 use tcp::msg::TcpRendezvousMsg;
-use tokio_io;
+use tokio_io::codec::length_delimited::{self, Framed};
 
 const RENDEZVOUS_TIMEOUT_SEC: u64 = 10;
 const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
-
-/// Final connection handshake message.
-/// One peer reads incoming stream and waits for this message, while the other sends this
-/// message indicating wish to connect.
-const CHOOSE: &[u8] = b"choose";
 
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
@@ -54,8 +44,14 @@ pub enum TcpRendezvousConnectError<Ei, Eo> {
     ChannelRead(Ei),
     /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
-    /// Failure to deserialize message received from rendezvous connection info exchange channel.
-    DeserializeMsg(bincode::Error),
+    /// Failure to serialize message sent via rendezvous channel
+    SerializeMsg(SerialisationError),
+    /// Failure to deserialize  message received via rendezvous channel
+    DeserializeMsg(SerialisationError),
+    /// Failure to encrypt message
+    Encrypt(EncryptError),
+    /// Failure to decrypt message from remote peer
+    Decrypt(DecryptError),
     /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(
         Vec<SingleRendezvousAttemptError>,
@@ -82,8 +78,17 @@ where
             ChannelWrite(ref e) => {
                 write!(f, "channel error: {}", e)?;
             }
+            SerializeMsg(ref e) => {
+                write!(f, "error serializing message: {}", e)?;
+            }
             DeserializeMsg(ref e) => {
-                write!(f, "error: {}", e)?;
+                write!(f, "error deserializing message: {}", e)?;
+            }
+            Encrypt(ref e) => {
+                write!(f, "error encrypting message: {}", e)?;
+            }
+            Decrypt(ref e) => {
+                write!(f, "error decrypting message: {}", e)?;
             }
             AllAttemptsFailed(ref attempt_errors, ref map_error) => {
                 if let Some(ref map_error) = *map_error {
@@ -119,7 +124,10 @@ where
             ChannelTimedOut => "timed out waiting for message via rendezvous channel",
             ChannelRead(..) => "error reading from rendezvous channel",
             ChannelWrite(..) => "error writing to rendezvous channel",
+            SerializeMsg(..) => "error serializing rendezvous message",
             DeserializeMsg(..) => "error deserializing rendezvous message",
+            Encrypt(..) => "error encrypting message to send to remote peer",
+            Decrypt(..) => "error decrypting message received from remote peer",
             AllAttemptsFailed(..) => "all attempts to connect to the remote host failed",
         }
     }
@@ -130,7 +138,10 @@ where
             Bind(ref e) | IfAddrs(ref e) => Some(e),
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
+            SerializeMsg(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
+            Encrypt(ref e) => Some(e),
+            Decrypt(ref e) => Some(e),
             ChannelClosed | ChannelTimedOut | AllAttemptsFailed(..) => None,
         }
     }
@@ -159,17 +170,15 @@ quick_error! {
             display("error reading handshake on connection candidate socket: {}", e)
             cause(e)
         }
-        Decrypt(e: SecureSerialiseError) {
+        Decrypt(e: DecryptError) {
             description("error decrypting data")
             display("error decrypting data: {:?}", e)
-            // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
-            // trait.
+            cause(e)
         }
-        Encrypt(e: SecureSerialiseError) {
+        Encrypt(e: SerialisationError) {
             description("error decrypting data")
             display("error decrypting data: {:?}", e)
-            // TODO(povilas): implement cause() when secure_serialisation::Error implements Error
-            // trait.
+            cause(e)
         }
     }
 }
@@ -230,7 +239,7 @@ impl TcpStreamExt for TcpStream {
         // anything other than the first message to the other peer.
 
         let handle0 = handle.clone();
-        let (our_pk, our_sk) = crypto::box_::gen_keypair();
+        let our_sk = SecretId::new();
 
         let try = || {
             trace!("starting tcp rendezvous connect");
@@ -261,7 +270,7 @@ impl TcpStreamExt for TcpStream {
                     .and_then(move |(rendezvous_addr_opt, map_error)| {
                         trace!("got rendezvous address: {:?}", rendezvous_addr_opt);
                         let msg = TcpRendezvousMsg::Init {
-                            enc_pk: our_pk,
+                            enc_pk: our_sk.public_id().clone(),
                             open_addrs: addrs,
                             rendezvous_addr: rendezvous_addr_opt,
                         };
@@ -307,12 +316,7 @@ impl TcpStreamExt for TcpStream {
                             let all_incoming = stream::futures_unordered(connectors)
                                 .select(incoming)
                                 .into_boxed();
-                            choose_connections(all_incoming, our_pk, their_pk, our_sk)
-                                .first_ok()
-                                .map_err(|v| {
-                                    TcpRendezvousConnectError::AllAttemptsFailed(v, map_error)
-                                })
-                                .into_boxed()
+                            choose_connections(all_incoming, &their_pk, &our_sk, map_error)
                         })
                     })
             })
@@ -337,7 +341,8 @@ where
     C: 'static,
 {
     let handle = handle.clone();
-    let msg = unwrap!(bincode::serialize(&msg, Infinite));
+    let msg =
+        try_bfut!(serialisation::serialise(&msg).map_err(TcpRendezvousConnectError::SerializeMsg));
     let msg = Bytes::from(msg);
     channel
         .send(msg)
@@ -352,80 +357,78 @@ where
                 )
                 .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
                 .and_then(|(msg, _channel)| {
-                    bincode::deserialize(&msg).map_err(TcpRendezvousConnectError::DeserializeMsg)
+                    serialisation::deserialise(&msg)
+                        .map_err(TcpRendezvousConnectError::DeserializeMsg)
                 })
         })
         .into_boxed()
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ChooseMessage;
+
 /// Finalizes rendezvous connection with sending special message 'choose'.
 /// Only one peer sends this message while the other receives and validates it. Who is who is
 /// determined by public keys.
-fn choose_connections(
+fn choose_connections<Ei: 'static, Eo: 'static>(
     all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError>,
-    our_pk: PublicKey,
-    their_pk: PublicKey,
-    our_sk: SecretKey,
-) -> BoxStream<TcpStream, SingleRendezvousAttemptError> {
-    let encrypted_msg = match secure_serialise(&CHOOSE, &their_pk, &our_sk) {
-        Ok(msg) => msg,
-        Err(e) => {
-            return stream::iter_result(vec![Err(SingleRendezvousAttemptError::Encrypt(e))])
-                .into_boxed()
-        }
-    };
+    their_pk: &PublicId,
+    our_sk: &SecretId,
+    map_error: Option<RendezvousAddrError>,
+) -> BoxFuture<TcpStream, TcpRendezvousConnectError<Ei, Eo>> {
+    let shared_key = our_sk.shared_key(&their_pk);
+    let encrypted_msg = try_bfut!(
+        shared_key
+            .encrypt(&ChooseMessage)
+            .map_err(TcpRendezvousConnectError::Encrypt)
+    );
 
+    let our_pk = our_sk.public_id();
     if our_pk > their_pk {
         all_incoming
             .and_then(move |stream| {
-                tokio_io::io::write_all(stream, encrypted_msg.clone())
+                let framed = length_delimited::Builder::new().new_framed(stream);
+                framed
+                    .send(encrypted_msg.clone())
                     .map_err(SingleRendezvousAttemptError::Write)
-                    .map(|(stream, _buf)| stream)
+                    .map(|framed| framed.into_inner())
             })
             .into_boxed()
     } else {
         all_incoming
             .and_then(move |stream| {
-                recv_choose_conn_msg(stream, encrypted_msg.len(), their_pk, our_sk.clone())
+                let framed = length_delimited::Builder::new().new_framed(stream);
+                recv_choose_conn_msg(framed, shared_key.clone())
             })
             .filter_map(|stream_opt| stream_opt)
             .into_boxed()
-    }
+    }.first_ok()
+        .map_err(|v| TcpRendezvousConnectError::AllAttemptsFailed(v, map_error))
+        .into_boxed()
 }
 
 /// Receives incoming data stream and check's if it's connection choose message.
 /// If it is, returns the stream. Otherwise None is returned.
 fn recv_choose_conn_msg(
-    stream: TcpStream,
-    expected_msg_len: usize,
-    their_pk: PublicKey,
-    our_sk: SecretKey,
+    framed: Framed<TcpStream>,
+    shared_key: SharedSecretKey,
 ) -> BoxFuture<Option<TcpStream>, SingleRendezvousAttemptError> {
-    tokio_io::io::read_exact(stream, buffer_with_len(expected_msg_len))
-        .map_err(SingleRendezvousAttemptError::Read)
-        .and_then(move |(stream, buf)| {
-            secure_deserialise::<Vec<u8>>(&buf[..], &their_pk, &our_sk)
-                .map_err(SingleRendezvousAttemptError::Decrypt)
-                .map(|buf| (stream, buf))
+    framed
+        .into_future()
+        .map_err(|(e, _framed)| SingleRendezvousAttemptError::Read(e))
+        .and_then(move |(msg_opt, framed)| {
+            let msg = match msg_opt {
+                Some(msg) => msg,
+                None => return future::ok(None).into_boxed(),
+            };
+            let _decrypted_msg: ChooseMessage = try_bfut!(
+                shared_key
+                    .decrypt(&msg)
+                    .map_err(SingleRendezvousAttemptError::Decrypt)
+            );
+            future::ok(Some(framed.into_inner())).into_boxed()
         })
-        .map(|(stream, buf)| only_chosen_connection(stream, &buf[..]))
         .into_boxed()
-}
-
-/// Returns given stream, if received "choose connection" message. Otherwise `None` is returned.
-fn only_chosen_connection<T>(stream: T, buf: &[u8]) -> Option<T> {
-    if buf == CHOOSE {
-        Some(stream)
-    } else {
-        None
-    }
-}
-
-/// Contructs empty mutable buffer with given size that is ready to receive data.
-fn buffer_with_len(len: usize) -> BytesMut {
-    let mut buf = BytesMut::with_capacity(len);
-    buf.put(vec![0; len]);
-    buf
 }
 
 pub struct TcpRendezvousConnect<C>
@@ -460,35 +463,6 @@ mod test {
     use tokio_core::reactor::Core;
     use tokio_io;
     use util;
-
-    mod buffer_with_len {
-        use super::*;
-
-        #[test]
-        fn it_returns_buffer_with_given_length() {
-            let buf = buffer_with_len(8);
-
-            assert_eq!(buf.len(), 8);
-        }
-    }
-
-    mod only_chosen_connection {
-        use super::*;
-
-        #[test]
-        fn when_received_message_is_not_choose_connection_it_returns_none() {
-            let conn = only_chosen_connection("conn1", b"some random data");
-
-            assert_eq!(conn, None);
-        }
-
-        #[test]
-        fn when_received_message_is_choose_connection_it_returns_given_connection() {
-            let conn = only_chosen_connection("conn1", CHOOSE);
-
-            assert_eq!(conn, Some("conn1"));
-        }
-    }
 
     #[test]
     fn rendezvous_over_loopback() {
