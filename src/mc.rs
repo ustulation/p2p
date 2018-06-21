@@ -2,10 +2,8 @@
 
 use priv_prelude::*;
 use protocol::Protocol;
-use rust_sodium::crypto::box_::{gen_keypair, PublicKey};
 use server_set::{ServerSet, Servers};
 use tokio_io::codec::length_delimited::{self, Framed};
-use ECHO_REQ;
 
 /// `P2p` allows you to manage how NAT traversal works.
 ///
@@ -145,29 +143,9 @@ impl P2pInner {
     }
 }
 
-/// Request that has sender's public key and arbitrary body.
-/// This request is SHOULD be anonymously encrypted and it allows receiver to switch to
-/// authenticated encryption.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EncryptedRequest {
-    /// Sender's public key. Response should be encrypted with it.
-    pub our_pk: PublicKey,
-    /// Arbitrary request body.
-    pub body: Vec<u8>,
-}
-
-impl EncryptedRequest {
-    /// Create new request.
-    pub fn new(our_pk: PublicKey, body: Vec<u8>) -> Self {
-        Self { our_pk, body }
-    }
-
-    /// Constructs request with random public key.
-    /// Useful for testing.
-    pub fn with_rand_key(body: Vec<u8>) -> Self {
-        let (our_pk, _our_sk) = gen_keypair();
-        Self::new(our_pk, body)
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EchoRequest {
+    pub client_pk: PublicId,
 }
 
 /// Sends request to echo address server and returns our public address on success.
@@ -177,23 +155,22 @@ pub fn query_public_addr(
     server_info: &PeerInfo,
     handle: &Handle,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
-    let (our_pk, our_sk) = gen_keypair(); // TODO(povilas): pass this from upper layers. MAID-2532
-    let request = EncryptedRequest::new(our_pk, ECHO_REQ.to_vec());
-    // First message is encrypted anonymously.
-    let crypto_ctx = CryptoContext::anonymous_encrypt(server_info.pub_key);
-    let encrypted_req = match crypto_ctx.encrypt(&request) {
-        Ok(data) => data,
+    let our_sk = SecretId::new();
+    let request = EchoRequest {
+        client_pk: our_sk.public_id().clone(),
+    };
+    let encrypted_req = match server_info.pub_key.encrypt_anonymous(&request) {
+        Ok(data) => BytesMut::from(data),
         Err(e) => return future::err(QueryPublicAddrError::Encrypt(e)).into_boxed(),
     };
 
-    // Response comes encrypted and authenticated.
-    let crypto_ctx = CryptoContext::authenticated(server_info.pub_key, our_sk);
+    let shared_key = our_sk.shared_key(&server_info.pub_key);
     match protocol {
         Protocol::Tcp => {
-            tcp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
+            tcp_query_public_addr(bind_addr, server_info, handle, shared_key, encrypted_req)
         }
         Protocol::Udp => {
-            udp_query_public_addr(bind_addr, server_info, handle, crypto_ctx, encrypted_req)
+            udp_query_public_addr(bind_addr, server_info, handle, shared_key, encrypted_req)
         }
     }
 }
@@ -235,13 +212,13 @@ quick_error! {
             description("timed out waiting for response from echo server")
         }
         /// Failure to encrypt request.
-        Encrypt(e: CryptoError) {
+        Encrypt(e: EncryptError) {
             description("Error encrypting message")
             display("Error encrypting message: {}", e)
             cause(e)
         }
         /// Failure to decrypt request.
-        Decrypt(e: CryptoError) {
+        Decrypt(e: DecryptError) {
             description("Error decrypting message")
             display("Error decrypting message: {}", e)
             cause(e)
@@ -254,7 +231,7 @@ pub fn tcp_query_public_addr(
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
-    crypto_ctx: CryptoContext,
+    shared_key: SharedSecretKey,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let bind_addr = *bind_addr;
@@ -275,14 +252,14 @@ pub fn tcp_query_public_addr(
                 QueryPublicAddrError::SendRequest,
             )
         })
-        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream, crypto_ctx))
+        .and_then(move |stream| tcp_recv_echo_addr(&handle, stream, shared_key))
         .into_boxed()
 }
 
 fn tcp_recv_echo_addr(
     handle: &Handle,
     stream: Framed<TcpStream>,
-    crypto_ctx: CryptoContext,
+    shared_key: SharedSecretKey,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     stream
         .into_future()
@@ -293,7 +270,7 @@ fn tcp_recv_echo_addr(
             })
         })
         .and_then(move |resp| {
-            crypto_ctx
+            shared_key
                 .decrypt(&resp)
                 .map_err(QueryPublicAddrError::Decrypt)
         })
@@ -306,7 +283,7 @@ pub fn udp_query_public_addr(
     bind_addr: &SocketAddr,
     server_info: &PeerInfo,
     handle: &Handle,
-    crypto_ctx: CryptoContext,
+    shared_key: SharedSecretKey,
     encrypted_req: BytesMut,
 ) -> BoxFuture<SocketAddr, QueryPublicAddrError> {
     let server_addr = server_info.addr;
@@ -348,8 +325,7 @@ pub fn udp_query_public_addr(
                     if recv_addr != server_addr {
                         continue;
                     }
-                    trace!("server responded with: {:?}", &buffer[..len]);
-                    let external_addr = crypto_ctx
+                    let external_addr = shared_key
                         .decrypt(&buffer[..len])
                         .map_err(QueryPublicAddrError::Decrypt)?;
                     return Ok(Async::Ready(external_addr));
@@ -368,7 +344,7 @@ pub fn udp_query_public_addr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maidsafe_utilities::serialisation::deserialise;
+    use maidsafe_utilities::serialisation;
     use tokio_core::reactor::Core;
 
     mod p2p {
@@ -447,6 +423,7 @@ mod tests {
     mod query_public_addr {
         use super::*;
         use bytes::buf::FromBuf;
+        use env_logger;
 
         #[test]
         fn when_protocol_is_tcp_it_sends_encrypted_echo_address_request() {
@@ -459,10 +436,18 @@ mod tests {
             let server_info = PeerInfo::with_rand_key(server_addr);
             let query =
                 query_public_addr(Protocol::Tcp, &addr!("0.0.0.0:0"), &server_info, &handle)
-                    .then(|_| Ok(()));
+                    .map(|x| panic!("unexpected success: {:?}", x))
+                    .or_else(|e| match e {
+                        QueryPublicAddrError::ReadResponse(ref e)
+                            if e.kind() == io::ErrorKind::ConnectionReset =>
+                        {
+                            Ok(())
+                        }
+                        e => panic!("unexpected error: {:?}", e),
+                    });
 
             let make_query = incoming.into_future()
-                .map_err(|e| panic!(e))
+                .map_err(|(e, _incoming)| panic!("incoming returned error: {}", e))
                 .map(|(client_opt, _incoming)| {
                     unwrap!(client_opt, "Failed to receive client connection")
                 })
@@ -471,6 +456,7 @@ mod tests {
                 })
                 .and_then(|client_stream: Framed<TcpStream>| {
                     client_stream.into_future()
+                        .map_err(|(e, _client_stream)| panic!("error receiving: {}", e))
                         .map(|(request_opt, _stream)| {
                             unwrap!(request_opt, "Failed to receive data from client connection")
                         })
@@ -480,15 +466,19 @@ mod tests {
                 })
                 // When server is running, let's make a query.
                 .join(query)
-                .map(|(request, _response)| request);
+                .map(|(request, ())| request);
 
             let request = unwrap!(evloop.run(make_query));
-            let request: Result<EncryptedRequest, _> = deserialise(&request);
-            assert!(request.is_err());
+            match serialisation::deserialise::<EchoRequest>(&request) {
+                Err(_e) => (),
+                Ok(msg) => panic!("unexpected success: {:?}", msg),
+            }
         }
 
         #[test]
         fn when_protocol_is_udp_it_sends_encrypted_echo_address_request() {
+            let _ = env_logger::init();
+
             let mut evloop = unwrap!(Core::new());
             let handle = evloop.handle();
 
@@ -498,18 +488,28 @@ mod tests {
             let server_info = PeerInfo::with_rand_key(server_addr);
             let query =
                 query_public_addr(Protocol::Udp, &addr!("0.0.0.0:0"), &server_info, &handle)
-                    .then(|_| Ok(()));
+                    .map(|x| panic!("unexpected success: {:?}", x))
+                    .or_else(|e| match e {
+                        QueryPublicAddrError::SendRequest(ref e)
+                            if e.kind() == io::ErrorKind::ConnectionRefused =>
+                        {
+                            Ok(())
+                        }
+                        e => panic!("unexpected error: {:?}", e),
+                    });
 
             let make_query = listener.recv_dgram(vec![0u8; 256])
-                .map_err(|e| panic!(e))
+                .map_err(|e| panic!("incoming returned error: {}", e))
                 .map(move |(_socket, data, len, _addr)| BytesMut::from_buf(&data[..len]))
                 // When server is running, let's make a query.
                 .join(query)
                 .map(|(request, _response)| request);
 
             let request = unwrap!(evloop.run(make_query));
-            let request: Result<EncryptedRequest, _> = deserialise(&request);
-            assert!(request.is_err());
+            match serialisation::deserialise::<EchoRequest>(&request) {
+                Err(_e) => (),
+                Ok(msg) => panic!("unexpected success: {:?}", msg),
+            }
         }
     }
 }
