@@ -33,8 +33,9 @@ extern crate void;
 
 use docopt::Docopt;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
-use p2p::{PeerInfo, TcpStreamExt};
-use rust_sodium::crypto::box_::PublicKey;
+use p2p::{
+    crypto::{P2pPublicId, P2pSecretId}, PeerInfo, TcpStreamExt,
+};
 use std::net::{Shutdown, SocketAddr};
 use std::{env, fmt};
 use tokio_core::net::TcpStream;
@@ -108,7 +109,7 @@ fn main() {
             .unwrap_or_else(|e| e.exit())
     };
 
-    let mc = p2p::P2p::default();
+    let mc = p2p::P2p::<P2pSecretId>::default();
     if args.flag_disable_igd {
         mc.disable_igd();
     }
@@ -118,7 +119,7 @@ fn main() {
             args.flag_traversal_server_key,
             "If echo address server is specified, it's public key must be given too.",
         );
-        let server_pub_key: PublicKey = unwrap!(serde_json::from_str(&server_pub_key));
+        let server_pub_key: P2pPublicId = unwrap!(serde_json::from_str(&server_pub_key));
         let server_info = PeerInfo::new(server_addr, server_pub_key);
         mc.add_tcp_traversal_server(&server_info);
     }

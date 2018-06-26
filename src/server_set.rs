@@ -3,19 +3,28 @@ use priv_prelude::*;
 use rand;
 
 /// Server list change event.
-enum ListChange {
+enum ListChange<P: PublicId> {
     Remove(SocketAddr),
-    Add(PeerInfo),
+    Add(PeerInfo<P>),
 }
 
-#[derive(Default, Clone)]
-pub struct ServerSet {
-    servers: HashMap<SocketAddr, PeerInfo>,
-    iterators: Vec<UnboundedSender<ListChange>>,
+#[derive(Clone)]
+pub struct ServerSet<P: PublicId> {
+    servers: HashMap<SocketAddr, PeerInfo<P>>,
+    iterators: Vec<UnboundedSender<ListChange<P>>>,
 }
 
-impl ServerSet {
-    pub fn add_server(&mut self, peer: &PeerInfo) {
+impl<P: PublicId> Default for ServerSet<P> {
+    fn default() -> ServerSet<P> {
+        ServerSet {
+            servers: HashMap::new(),
+            iterators: Vec::new(),
+        }
+    }
+}
+
+impl<P: PublicId> ServerSet<P> {
+    pub fn add_server(&mut self, peer: &PeerInfo<P>) {
         self.iterators
             .retain(|sender| sender.unbounded_send(ListChange::Add(peer.clone())).is_ok());
 
@@ -29,7 +38,7 @@ impl ServerSet {
         let _ = self.servers.remove(&addr);
     }
 
-    pub fn iter_servers(&mut self) -> Servers {
+    pub fn iter_servers(&mut self) -> Servers<P> {
         let (tx, rx) = unbounded();
         self.iterators.push(tx);
         let servers = self.servers.clone();
@@ -43,14 +52,14 @@ impl ServerSet {
 
 /// A list of servers that observes for modifications: updates itself when someone notifies about
 /// new servers added or removed.
-pub struct Servers {
-    servers: HashMap<SocketAddr, PeerInfo>,
-    modifications: UnboundedReceiver<ListChange>,
+pub struct Servers<P: PublicId> {
+    servers: HashMap<SocketAddr, PeerInfo<P>>,
+    modifications: UnboundedReceiver<ListChange<P>>,
 }
 
-impl Servers {
+impl<P: PublicId> Servers<P> {
     /// Returns a snapshot of current server list.
-    pub fn snapshot(&self) -> HashSet<PeerInfo> {
+    pub fn snapshot(&self) -> HashSet<PeerInfo<P>> {
         self.servers.values().cloned().collect()
     }
 
@@ -60,11 +69,11 @@ impl Servers {
     }
 }
 
-impl Stream for Servers {
-    type Item = PeerInfo;
+impl<P: PublicId> Stream for Servers<P> {
+    type Item = PeerInfo<P>;
     type Error = Void;
 
-    fn poll(&mut self) -> Result<Async<Option<PeerInfo>>, Void> {
+    fn poll(&mut self) -> Result<Async<Option<PeerInfo<P>>>, Void> {
         while let Async::Ready(Some(event)) = self.modifications.poll().void_unwrap() {
             let _ = match event {
                 ListChange::Add(peer) => self.servers.insert(peer.addr, peer),

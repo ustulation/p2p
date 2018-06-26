@@ -9,13 +9,13 @@ extern crate tokio_core;
 extern crate unwrap;
 
 use futures::{Future, Stream};
-use p2p::TcpListenerExt;
+use p2p::{crypto::P2pSecretId, TcpListenerExt};
 use tokio_core::net::TcpListener;
 
 fn main() {
     let mut core = unwrap!(tokio_core::reactor::Core::new());
     let handle = core.handle();
-    let mc = p2p::P2p::default();
+    let mc = p2p::P2p::<P2pSecretId>::default();
     let res = core.run({
         TcpListener::bind_public(&addr!("0.0.0.0:0"), &handle, &mc)
             .map_err(|e| panic!("Error binding listener publicly: {}", e))

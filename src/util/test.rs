@@ -44,7 +44,8 @@ pub fn two_way_channel<T>() -> (TwoWayChannel<T>, TwoWayChannel<T>) {
 /// Usable in cases when public key is not used and we just want to get `PeerInfo`.
 macro_rules! peer_addr {
     ($addr:pat) => {{
-        PeerInfo::with_rand_key(addr!($addr))
+        use crypto::P2pSecretId;
+        PeerInfo::with_rand_key::<P2pSecretId>(addr!($addr))
     }};
 }
 

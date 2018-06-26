@@ -247,7 +247,7 @@ mod priv_prelude;
 #[macro_use]
 mod util;
 
-mod crypto;
+pub mod crypto;
 mod filter_addrs;
 mod igd_async;
 mod ip_addr;
