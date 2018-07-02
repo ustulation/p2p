@@ -1,14 +1,10 @@
-use bincode;
 use filter_addrs::filter_addrs;
 use futures::future::Loop;
 use futures::stream::FuturesUnordered;
+use maidsafe_utilities::serialisation;
 use open_addr::{open_addr, BindPublicError};
 use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
-use rust_sodium::crypto::box_::{gen_keypair, PublicKey, SecretKey};
-use secure_serialisation::{
-    self, deserialise as secure_deserialise, serialise as secure_serialise,
-};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
 use udp::msg::UdpRendezvousMsg;
@@ -34,14 +30,18 @@ pub enum UdpRendezvousConnectError<Ei, Eo> {
     ChannelRead(Ei),
     /// Failure to write to rendezvous connection info exchange channel.
     ChannelWrite(Eo),
-    /// Failure to serialise a message
-    SerialiseMsg(secure_serialisation::Error),
-    /// Failure to deserialize message received from rendezvous connection info exchange channel.
-    DeserializeMsg(bincode::Error),
     /// Failure to send packets to the socket.
     SocketWrite(io::Error),
     /// Failure to set socket TTL.
     SetTtl(io::Error),
+    /// Failure to serialize message to send via rendezvous channel
+    SerializeMsg(SerialisationError),
+    /// Failure to deserialize message received via rendezvous channel
+    DeserializeMsg(SerialisationError),
+    /// Failture to encrypt message to send to remote peer
+    Encrypt(EncryptionError),
+    /// Failture to decrypt message received from remote peer
+    Decrypt(EncryptionError),
     /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(
         Vec<HolePunchError>,
@@ -104,8 +104,10 @@ where
             }
             ChannelRead(ref e) => Some(e),
             ChannelWrite(ref e) => Some(e),
-            SerialiseMsg(ref e) => Some(e),
+            SerializeMsg(ref e) => Some(e),
             DeserializeMsg(ref e) => Some(e),
+            Encrypt(ref e) => Some(e),
+            Decrypt(ref e) => Some(e),
             ChannelClosed | ChannelTimedOut | AllAttemptsFailed(..) => None,
         }
     }
@@ -121,10 +123,12 @@ where
             ChannelRead(..) => "error reading from rendezvous channel",
             ChannelWrite(..) => "error writing to rendezvous channel",
             ChannelTimedOut => "timedout waiting for message via rendezvous channel",
-            SerialiseMsg(..) => "error serialising a message",
-            DeserializeMsg(..) => "error deserializing message from rendezvous channel",
             SocketWrite(..) => "error writing to socket",
             SetTtl(..) => "error setting ttl value on socket",
+            SerializeMsg(..) => "error serializing message to send via rendezvous channel",
+            DeserializeMsg(..) => "error deserializing message received via rendezvous channel",
+            Encrypt(..) => "error encrypting message to send to remote peer",
+            Decrypt(..) => "error decrypting message received from remote peer",
             AllAttemptsFailed(..) => "all attempts to contact the remote peer failed",
         }
     }
@@ -242,9 +246,12 @@ impl UdpSocketExt for UdpSocket {
         let handle0 = handle.clone();
         let handle1 = handle.clone();
         let mc0 = mc.clone();
-        let (our_pk, our_sk) = gen_keypair();
+        let our_sk = SecretId::new();
+        let our_pk = our_sk.public_id().clone();
         let our_sk0 = our_sk.clone();
         let our_sk1 = our_sk.clone();
+        let our_pk0 = our_pk.clone();
+        let our_pk1 = our_pk.clone();
 
         trace!("starting rendezvous connect");
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
@@ -281,11 +288,11 @@ impl UdpSocketExt for UdpSocket {
                             );
                             trace!("their open addresses are: {:#?}", their_open_addrs);
 
+                            let shared_secret = our_sk0.shared_secret(&their_pk);
                             let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
                             let incoming = open_connect(
                                 &handle0,
-                                their_pk,
-                                our_sk0,
+                                shared_secret,
                                 socket,
                                 their_open_addrs,
                                 true,
@@ -318,7 +325,7 @@ impl UdpSocketExt for UdpSocket {
                                     trace!("our rendezvous addresses are: {:#?}", rendezvous_addrs);
                                     trace!("our open addresses are: {:#?}", our_addrs);
                                     let msg = UdpRendezvousMsg::Init {
-                                        enc_pk: our_pk,
+                                        enc_pk: our_pk0,
                                         open_addrs: our_addrs.clone(),
                                         rendezvous_addrs,
                                     };
@@ -339,6 +346,8 @@ impl UdpSocketExt for UdpSocket {
                                                 "their open addresses are: {:#?}",
                                                 their_open_addrs
                                             );
+
+                                            let shared_secret = our_sk1.shared_secret(&their_pk);
                                             let mut punchers = FuturesUnordered::new();
                                             let iter = {
                                                 sockets
@@ -359,8 +368,7 @@ impl UdpSocketExt for UdpSocket {
                                                 punchers.push(HolePunching::new_ttl_incrementer(
                                                     &handle2,
                                                     with_addr,
-                                                    their_pk,
-                                                    our_sk1.clone(),
+                                                    shared_secret.clone(),
                                                     duration,
                                                 ));
                                             }
@@ -375,8 +383,7 @@ impl UdpSocketExt for UdpSocket {
                                             let incoming = {
                                                 open_connect(
                                                     &handle2,
-                                                    their_pk,
-                                                    our_sk1,
+                                                    shared_secret,
                                                     listen_socket,
                                                     their_open_addrs,
                                                     false,
@@ -400,7 +407,8 @@ impl UdpSocketExt for UdpSocket {
             })
             .and_then(
                 move |(their_pk, incoming, bind_public_error_opt, rendezvous_error_opt)| {
-                    if our_pk > their_pk {
+                    let shared_secret = our_sk.shared_secret(&their_pk);
+                    if our_pk1 > their_pk {
                         trace!("we are choosing the connection");
                         incoming
                             .and_then(|(socket, chosen)| {
@@ -419,7 +427,7 @@ impl UdpSocketExt for UdpSocket {
                                     rendezvous_error_opt.map(Box::new),
                                 )
                             })
-                            .and_then(move |socket| choose(&handle1, their_pk, our_sk, socket, 0))
+                            .and_then(move |socket| choose(&handle1, shared_secret, socket, 0))
                             .into_boxed()
                     } else {
                         trace!("they are choosing the connection");
@@ -428,7 +436,7 @@ impl UdpSocketExt for UdpSocket {
                                 if chosen {
                                     return future::ok(got_chosen(socket)).into_boxed();
                                 }
-                                take_chosen(&handle1, their_pk, our_sk.clone(), socket)
+                                take_chosen(&handle1, shared_secret.clone(), socket)
                             })
                             .buffer_unordered(256)
                             .filter_map(|opt| opt)
@@ -550,11 +558,6 @@ quick_error! {
     /// Error resulting from a single failed hole-punching attempt.
     #[derive(Debug)]
     pub enum HolePunchError {
-        SerialiseMsg(e: secure_serialisation::Error) {
-            description("error serialising message")
-            display("error serialising message: {}", e)
-            cause(e)
-        }
         SendMessage(e: io::Error) {
             description("error sending message to peer")
             display("error sending message to peer: {}", e)
@@ -584,6 +587,11 @@ quick_error! {
         TimedOut {
             description("hole punching timed out without making a connection")
         }
+        Encrypt(e: EncryptionError) {
+            description("error encrypting message to be sent to peer")
+            display("error encrypting message to be sent to peer: {}", e)
+            cause(e)
+        }
     }
 }
 
@@ -594,8 +602,7 @@ struct HolePunching {
     socket: Option<WithAddress>,
     sending_msg: Option<Bytes>,
     timeout: Timeout,
-    their_pk: PublicKey,
-    our_sk: SecretKey,
+    shared_secret: SharedSecretKey,
     phase: HolePunchingPhase,
 }
 
@@ -615,15 +622,13 @@ impl HolePunching {
     pub fn new_for_open_peer(
         handle: &Handle,
         socket: WithAddress,
-        their_pk: PublicKey,
-        our_sk: SecretKey,
+        shared_secret: SharedSecretKey,
     ) -> HolePunching {
         HolePunching {
             socket: Some(socket),
             sending_msg: None,
             timeout: Timeout::new(Duration::new(0, 0), handle),
-            their_pk,
-            our_sk,
+            shared_secret,
             phase: HolePunchingPhase::Syn {
                 time_of_last_ttl_increment: Instant::now(),
                 ttl_increment_duration: Duration::new(u64::max_value(), 0),
@@ -634,16 +639,14 @@ impl HolePunching {
     pub fn new_ttl_incrementer(
         handle: &Handle,
         socket: WithAddress,
-        their_pk: PublicKey,
-        our_sk: SecretKey,
+        shared_secret: SharedSecretKey,
         duration_to_reach_max_ttl: Duration,
     ) -> HolePunching {
         HolePunching {
             socket: Some(socket),
             sending_msg: None,
             timeout: Timeout::new(Duration::new(0, 0), handle),
-            their_pk,
-            our_sk,
+            shared_secret,
             phase: HolePunchingPhase::Syn {
                 time_of_last_ttl_increment: Instant::now(),
                 ttl_increment_duration: {
@@ -677,8 +680,10 @@ impl HolePunching {
     }
 
     fn send_msg(&mut self, msg: &HolePunchMsg) -> Result<(), HolePunchError> {
-        let encrypted = secure_serialise(msg, &self.their_pk, &self.our_sk)
-            .map_err(HolePunchError::SerialiseMsg)?;
+        let encrypted = self
+            .shared_secret
+            .encrypt(msg)
+            .map_err(HolePunchError::Encrypt)?;
         let bytes = Bytes::from(encrypted);
         debug_assert!(self.sending_msg.is_none());
         self.sending_msg = Some(bytes);
@@ -693,11 +698,11 @@ impl HolePunching {
                 Ok(Async::Ready(None)) => return Err(HolePunchError::SocketStolen),
                 Ok(Async::Ready(Some(bytes))) => bytes,
             };
-            match secure_deserialise(&bytes, &self.their_pk, &self.our_sk) {
+            match self.shared_secret.decrypt(&bytes) {
                 Ok(msg) => return Ok(Async::Ready(msg)),
                 Err(e) => {
                     warn!(
-                        "unreceived unrecognisable data on hole punching socket: {}",
+                        "received unrecognisable data on hole punching socket: {}",
                         e
                     );
                 }
@@ -836,8 +841,7 @@ impl Future for HolePunching {
 // Perform a connect where one of the peers has an open port.
 fn open_connect(
     handle: &Handle,
-    their_pk: PublicKey,
-    our_sk: SecretKey,
+    shared_secret: SharedSecretKey,
     socket: UdpSocket,
     their_addrs: HashSet<SocketAddr>,
     we_are_open: bool,
@@ -849,8 +853,7 @@ fn open_connect(
         punchers.push(HolePunching::new_for_open_peer(
             handle,
             with_addr,
-            their_pk,
-            our_sk.clone(),
+            shared_secret.clone(),
         ));
     }
 
@@ -871,8 +874,7 @@ fn open_connect(
                     punchers.push(HolePunching::new_for_open_peer(
                         &handle,
                         with_addr,
-                        their_pk,
-                        our_sk.clone(),
+                        shared_secret.clone(),
                     ));
                 }
                 Ok(Async::Ready(None)) => {
@@ -915,8 +917,7 @@ fn open_connect(
 // choose the given socket+address to be the socket+address we return successfully with.
 fn choose<Ei, Eo>(
     handle: &Handle,
-    their_pk: PublicKey,
-    our_sk: SecretKey,
+    shared_secret: SharedSecretKey,
     socket: WithAddress,
     chooses_sent: u32,
 ) -> BoxFuture<(UdpSocket, SocketAddr), UdpRendezvousConnectError<Ei, Eo>>
@@ -937,10 +938,11 @@ where
     );
 
     let handle = handle.clone();
-    let encrypted = match secure_serialise(&HolePunchMsg::Choose, &their_pk, &our_sk) {
-        Ok(encrypted) => encrypted,
-        Err(e) => return future::err(UdpRendezvousConnectError::SerialiseMsg(e)).into_boxed(),
-    };
+    let encrypted = try_bfut!(
+        shared_secret
+            .encrypt(&HolePunchMsg::Choose)
+            .map_err(UdpRendezvousConnectError::Encrypt)
+    );
 
     let msg = Bytes::from(encrypted);
     socket
@@ -949,7 +951,7 @@ where
         .and_then(move |socket| {
             Timeout::new(Duration::from_millis(200), &handle)
                 .infallible()
-                .and_then(move |()| choose(&handle, their_pk, our_sk, socket, chooses_sent + 1))
+                .and_then(move |()| choose(&handle, shared_secret, socket, chooses_sent + 1))
         })
         .into_boxed()
 }
@@ -958,8 +960,7 @@ where
 // choosing this socket+address to communicate with us.
 fn take_chosen(
     handle: &Handle,
-    their_pk: PublicKey,
-    our_sk: SecretKey,
+    shared_secret: SharedSecretKey,
     socket: WithAddress,
 ) -> BoxFuture<Option<(UdpSocket, SocketAddr)>, HolePunchError> {
     let handle = handle.clone();
@@ -968,13 +969,13 @@ fn take_chosen(
         .map_err(|(e, _)| HolePunchError::ReadMessage(e))
         .and_then(move |(msg_opt, socket)| match msg_opt {
             None => future::ok(None).into_boxed(),
-            Some(msg) => match secure_deserialise(&msg, &their_pk, &our_sk) {
+            Some(msg) => match shared_secret.decrypt(&msg) {
                 Err(e) => {
                     warn!("error deserializing packet from peer: {:?}", e);
-                    take_chosen(&handle, their_pk, our_sk, socket)
+                    take_chosen(&handle, shared_secret, socket)
                 }
                 Ok(HolePunchMsg::Choose) => future::ok(got_chosen(socket)).into_boxed(),
-                Ok(..) => take_chosen(&handle, their_pk, our_sk, socket),
+                Ok(..) => take_chosen(&handle, shared_secret, socket),
             },
         })
         .into_boxed()
@@ -1001,7 +1002,9 @@ where
     C: 'static,
 {
     let handle = handle.clone();
-    let msg = unwrap!(bincode::serialize(&msg, bincode::Infinite));
+    let msg =
+        try_bfut!(serialisation::serialise(&msg).map_err(UdpRendezvousConnectError::SerializeMsg));
+
     channel
         .send(Bytes::from(msg))
         .map_err(UdpRendezvousConnectError::ChannelWrite)
@@ -1015,7 +1018,8 @@ where
                 )
                 .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
                 .and_then(|(msg, _channel)| {
-                    bincode::deserialize(&msg).map_err(UdpRendezvousConnectError::DeserializeMsg)
+                    serialisation::deserialise(&msg)
+                        .map_err(UdpRendezvousConnectError::DeserializeMsg)
                 })
         })
         .into_boxed()
@@ -1096,29 +1100,27 @@ mod test {
         let recv_sock = SharedUdpSocket::share(recv_sock).with_address(sock_addr);
         let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
-        let (sock_pk, sock_sk) = gen_keypair();
-        let (recv_sock_pk, recv_sock_sk) = gen_keypair();
-        let hole_punching = HolePunching::new_for_open_peer(&handle, sock, recv_sock_pk, sock_sk);
+        let sock_sk = SecretId::new();
+        let recv_sock_sk = SecretId::new();
+        let sock_shared_secret = sock_sk.shared_secret(recv_sock_sk.public_id());
+        let recv_shared_secret = recv_sock_sk.shared_secret(sock_sk.public_id());
+        let hole_punching = HolePunching::new_for_open_peer(&handle, sock, sock_shared_secret);
 
         let recv_side = {
             recv_sock
                 .into_future()
                 .map_err(|(e, _)| panic!("recv error: {}", e))
                 .and_then({
-                    let recv_sock_sk = recv_sock_sk.clone();
+                    let recv_shared_secret = recv_shared_secret.clone();
                     move |(msg_opt, recv_sock)| {
                         let msg = unwrap!(msg_opt);
-                        let msg = unwrap!(secure_deserialise(&msg, &sock_pk, &recv_sock_sk));
+                        let msg = unwrap!(recv_shared_secret.decrypt(&msg));
                         match msg {
                             HolePunchMsg::Syn => (),
                             _ => panic!("unexpected msg {:?}", msg),
                         };
 
-                        let msg = unwrap!(secure_serialise(
-                            &HolePunchMsg::Ack,
-                            &sock_pk,
-                            &recv_sock_sk,
-                        ));
+                        let msg = unwrap!(recv_shared_secret.encrypt(&HolePunchMsg::Ack));
                         let msg = Bytes::from(msg);
                         recv_sock.send(msg).map_err(|e| panic!("send error: {}", e))
                     }
@@ -1130,20 +1132,16 @@ mod test {
                         .map_err(|(e, _)| panic!("recv error: {}", e))
                 })
                 .and_then({
-                    let recv_sock_sk = recv_sock_sk.clone();
+                    let recv_shared_secret = recv_shared_secret.clone();
                     move |(msg_opt, recv_sock)| {
                         let msg = unwrap!(msg_opt);
-                        let msg = unwrap!(secure_deserialise(&msg, &sock_pk, &recv_sock_sk));
+                        let msg = unwrap!(recv_shared_secret.decrypt(&msg));
                         match msg {
                             HolePunchMsg::AckAck => (),
                             _ => panic!("unexpected msg {:?}", msg),
                         };
 
-                        let msg = unwrap!(secure_serialise(
-                            &HolePunchMsg::AckAck,
-                            &sock_pk,
-                            &recv_sock_sk,
-                        ));
+                        let msg = unwrap!(recv_shared_secret.encrypt(&HolePunchMsg::AckAck));
                         let msg = Bytes::from(msg);
                         recv_sock.send(msg).map_err(|e| panic!("send error: {}", e))
                     }
@@ -1156,12 +1154,12 @@ mod test {
                         .map_err(|e| panic!("recv error: {}", e))
                 })
                 .map({
-                    let recv_sock_sk = recv_sock_sk.clone();
+                    let recv_shared_secret = recv_shared_secret.clone();
                     move |collected| {
                         trace!("read until end of stream: {:#?}", collected);
                         assert_eq!(collected.len(), 5);
                         for msg in &collected[..4] {
-                            let msg = unwrap!(secure_deserialise(msg, &sock_pk, &recv_sock_sk));
+                            let msg = unwrap!(recv_shared_secret.decrypt(msg));
                             match msg {
                                 HolePunchMsg::AckAck => (),
                                 _ => panic!("unexpected msg {:?}", msg),
@@ -1178,13 +1176,13 @@ mod test {
                 .and_then(|(sock, received_choose)| {
                     assert!(!received_choose);
                     sock.send(Bytes::from(&b"the end"[..]))
+                        .map_err(|e| panic!("error sending: {}", e))
                 })
                 .map(|_sock| ())
         };
 
-        let res = core.run({ recv_side.join(send_side).map(|((), ())| ()) });
-
-        unwrap!(res)
+        core.run(recv_side.join(send_side).map(|((), ())| ()))
+            .void_unwrap()
     }
 
     #[test]
@@ -1261,8 +1259,8 @@ mod netsim_test {
 
             let mut server_drop_txs_0 = Vec::new();
             let mut server_drop_txs_1 = Vec::new();
-            let (server_info_tx_0, server_info_rx_0) = futures::sync::mpsc::unbounded();
-            let (server_info_tx_1, server_info_rx_1) = futures::sync::mpsc::unbounded();
+            let (server_querier_tx_0, server_querier_rx_0) = futures::sync::mpsc::unbounded();
+            let (server_querier_tx_1, server_querier_rx_1) = futures::sync::mpsc::unbounded();
             let mut server_nodes = Vec::new();
             for _ in 0..num_servers {
                 let (server_drop_tx_0, server_drop_rx_0) = drop_notify();
@@ -1270,8 +1268,8 @@ mod netsim_test {
                 server_drop_txs_0.push(server_drop_tx_0);
                 server_drop_txs_1.push(server_drop_tx_1);
 
-                let server_info_tx_0 = server_info_tx_0.clone();
-                let server_info_tx_1 = server_info_tx_1.clone();
+                let server_querier_tx_0 = server_querier_tx_0.clone();
+                let server_querier_tx_1 = server_querier_tx_1.clone();
 
                 let server_node = node::ipv4::machine(move |ip| {
                     let mut core = unwrap!(Core::new());
@@ -1282,13 +1280,13 @@ mod netsim_test {
                             unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
                         let server_port = server.local_addr().port();
                         let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
-                        let server_info = PeerInfo {
-                            addr: server_addr,
-                            pub_key: server.public_key(),
-                        };
+                        let server_querier = RemoteUdpRendezvousServer::new(
+                            server_addr,
+                            server.public_key().clone(),
+                        );
 
-                        unwrap!(server_info_tx_0.unbounded_send(server_info.clone()));
-                        unwrap!(server_info_tx_1.unbounded_send(server_info));
+                        unwrap!(server_querier_tx_0.unbounded_send(server_querier.clone()));
+                        unwrap!(server_querier_tx_1.unbounded_send(server_querier));
 
                         server_drop_rx_0
                             .and_then(|()| server_drop_rx_1)
@@ -1309,13 +1307,13 @@ mod netsim_test {
                     let handle = core.handle();
 
                     let res = core.run(future::lazy(|| {
-                        server_info_rx_0
+                        server_querier_rx_0
                             .collect()
                             .map_err(|()| panic!("error getting server addr"))
-                            .map(|server_infos| {
+                            .map(|server_queriers| {
                                 let p2p = P2p::default();
-                                for server_info in server_infos {
-                                    p2p.add_udp_traversal_server(&server_info);
+                                for server_querier in server_queriers {
+                                    p2p.add_udp_addr_querier(server_querier);
                                 }
                                 p2p
                             })
@@ -1340,12 +1338,12 @@ mod netsim_test {
                     let res = core.run(future::lazy(|| {
                         Timeout::new(start_delay, &handle)
                             .infallible()
-                            .and_then(|()| server_info_rx_1.collect())
+                            .and_then(|()| server_querier_rx_1.collect())
                             .map_err(|()| panic!("error getting server addr"))
-                            .map(|server_infos| {
+                            .map(|server_queriers| {
                                 let p2p = P2p::default();
-                                for server_info in server_infos {
-                                    p2p.add_udp_traversal_server(&server_info);
+                                for server_querier in server_queriers {
+                                    p2p.add_udp_addr_querier(server_querier);
                                 }
                                 p2p
                             })

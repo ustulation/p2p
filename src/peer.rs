@@ -1,5 +1,4 @@
 use priv_prelude::*;
-use rust_sodium::crypto::box_::{gen_keypair, PublicKey};
 
 /// Information necessary to connect to peer.
 // NOTE: this structure is very similar to the one in Crust. Except the one in Crust stores
@@ -9,19 +8,21 @@ pub struct PeerInfo {
     /// Peer IP address.
     pub addr: SocketAddr,
     /// Peer public key.
-    pub pub_key: PublicKey,
+    pub pub_key: PublicId,
 }
 
 impl PeerInfo {
     /// Constructs peer info.
-    pub fn new(addr: SocketAddr, pub_key: PublicKey) -> Self {
+    pub fn new(addr: SocketAddr, pub_key: PublicId) -> Self {
         Self { addr, pub_key }
     }
 
     /// Constructs peer info with random generated public key.
+    #[cfg(test)]
     pub fn with_rand_key(addr: SocketAddr) -> Self {
-        let (pub_key, _) = gen_keypair();
-        Self::new(addr, pub_key)
+        let sk = SecretId::new();
+        let pk = sk.public_id().clone();
+        Self::new(addr, pk)
     }
 }
 

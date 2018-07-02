@@ -1,6 +1,6 @@
+use future_utils::mpsc::UnboundedReceiver;
 use igd_async::{self, GetAnyAddressError};
 use priv_prelude::*;
-use server_set::Servers;
 use std::error::Error;
 
 quick_error! {
@@ -61,7 +61,7 @@ quick_error! {
                      a0, a1)
         }
         /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
-        HitErrorLimit(v: Vec<QueryPublicAddrError>) {
+        HitErrorLimit(v: Vec<Box<Error>>) {
             description("hit error limit contacting traversal servers")
             display("hit error limit contacting traversal servers. {} errors: {:#?}",
                      v.len(), v)
@@ -110,15 +110,17 @@ pub fn open_addr(
     let bind_addr = *bind_addr;
     let handle = handle.clone();
 
-    let mc0 = mc.clone();
+    let addr_queriers = match protocol {
+        Protocol::Tcp => Queriers::Tcp(mc.tcp_addr_queriers()),
+        Protocol::Udp => Queriers::Udp(mc.udp_addr_queriers()),
+    };
     igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
         .or_else(move |igd_err| OpenAddr {
-            protocol,
             igd_err: Some(igd_err),
             handle,
             bind_addr,
             known_addr_opt: None,
-            traversal_servers: mc0.iter_servers(protocol),
+            addr_queriers,
             active_queries: stream::FuturesUnordered::new(),
             errors: Vec::new(),
             more_servers_timeout: None,
@@ -127,15 +129,19 @@ pub fn open_addr(
 }
 
 struct OpenAddr {
-    protocol: Protocol,
     igd_err: Option<GetAnyAddressError>,
     handle: Handle,
     bind_addr: SocketAddr,
     known_addr_opt: Option<SocketAddr>,
-    traversal_servers: Servers,
-    active_queries: stream::FuturesUnordered<BoxFuture<SocketAddr, QueryPublicAddrError>>,
-    errors: Vec<QueryPublicAddrError>,
+    active_queries: stream::FuturesUnordered<BoxFuture<SocketAddr, Box<Error>>>,
+    errors: Vec<Box<Error>>,
     more_servers_timeout: Option<Timeout>,
+    addr_queriers: Queriers,
+}
+
+enum Queriers {
+    Tcp(UnboundedReceiver<Arc<TcpAddrQuerier>>),
+    Udp(UnboundedReceiver<Arc<UdpAddrQuerier>>),
 }
 
 impl Future for OpenAddr {
@@ -182,16 +188,36 @@ impl Future for OpenAddr {
             }
 
             trace!("polling for new servers");
-            match self.traversal_servers.poll().void_unwrap() {
-                Async::Ready(Some(server_info)) => {
-                    trace!("new server to query: {}", server_info);
-                    let active_query = query_public_addr(
-                        self.protocol,
-                        &self.bind_addr,
-                        &server_info,
-                        &self.handle,
-                    );
-                    self.active_queries.push(active_query);
+            let maybe_query = match self.addr_queriers {
+                Queriers::Tcp(ref mut tcp_addr_queriers) => {
+                    match tcp_addr_queriers.poll().void_unwrap() {
+                        Async::Ready(Some(addr_querier)) => {
+                            let query = addr_querier
+                                .query(&self.bind_addr, &self.handle)
+                                .into_boxed();
+                            Async::Ready(Some(query))
+                        }
+                        Async::Ready(None) => Async::Ready(None),
+                        Async::NotReady => Async::NotReady,
+                    }
+                }
+                Queriers::Udp(ref mut udp_addr_queriers) => {
+                    match udp_addr_queriers.poll().void_unwrap() {
+                        Async::Ready(Some(addr_querier)) => {
+                            let query = addr_querier
+                                .query(&self.bind_addr, &self.handle)
+                                .into_boxed();
+                            Async::Ready(Some(query))
+                        }
+                        Async::Ready(None) => Async::Ready(None),
+                        Async::NotReady => Async::NotReady,
+                    }
+                }
+            };
+            match maybe_query {
+                Async::Ready(Some(query)) => {
+                    trace!("new server to query");
+                    self.active_queries.push(query);
                     self.more_servers_timeout = None;
                 }
                 Async::Ready(None) => {
