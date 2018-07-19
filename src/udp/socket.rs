@@ -246,8 +246,8 @@ impl UdpSocketExt for UdpSocket {
         let handle0 = handle.clone();
         let handle1 = handle.clone();
         let mc0 = mc.clone();
-        let our_sk = SecretId::new();
-        let our_pk = our_sk.public_id().clone();
+        let our_sk = SecretKeys::new();
+        let our_pk = our_sk.public_keys().clone();
         let our_sk0 = our_sk.clone();
         let our_sk1 = our_sk.clone();
         let our_pk0 = our_pk.clone();
@@ -1100,10 +1100,10 @@ mod test {
         let recv_sock = SharedUdpSocket::share(recv_sock).with_address(sock_addr);
         let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
-        let sock_sk = SecretId::new();
-        let recv_sock_sk = SecretId::new();
-        let sock_shared_secret = sock_sk.shared_secret(recv_sock_sk.public_id());
-        let recv_shared_secret = recv_sock_sk.shared_secret(sock_sk.public_id());
+        let sock_sk = SecretKeys::new();
+        let recv_sock_sk = SecretKeys::new();
+        let sock_shared_secret = sock_sk.shared_secret(recv_sock_sk.public_keys());
+        let recv_shared_secret = recv_sock_sk.shared_secret(sock_sk.public_keys());
         let hole_punching = HolePunching::new_for_open_peer(&handle, sock, sock_shared_secret);
 
         let recv_side = {

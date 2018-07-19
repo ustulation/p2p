@@ -5,12 +5,12 @@ use tokio_io::codec::length_delimited::Framed;
 /// A remote `TcpRendezvousServer` that we can query for our external address.
 pub struct RemoteTcpRendezvousServer {
     addr: SocketAddr,
-    pub_key: PublicId,
+    pub_key: PublicKeys,
 }
 
 impl RemoteTcpRendezvousServer {
     /// Define a new remote server.
-    pub fn new(addr: SocketAddr, pub_key: PublicId) -> RemoteTcpRendezvousServer {
+    pub fn new(addr: SocketAddr, pub_key: PublicKeys) -> RemoteTcpRendezvousServer {
         RemoteTcpRendezvousServer { addr, pub_key }
     }
 }
@@ -29,8 +29,8 @@ impl TcpAddrQuerier for RemoteTcpRendezvousServer {
             })
             .and_then(move |stream_opt| {
                 let stream = try_bfut!(stream_opt.ok_or(QueryPublicAddrError::ConnectTimeout));
-                let client_sk = SecretId::new();
-                let client_pk = client_sk.public_id().clone();
+                let client_sk = SecretKeys::new();
+                let client_pk = client_sk.public_keys().clone();
                 let msg = EchoRequest { client_pk };
                 let msg = try_bfut!(
                     server_pk

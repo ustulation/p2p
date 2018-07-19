@@ -4,12 +4,12 @@ use priv_prelude::*;
 /// A remote `UdpRendezvousServer` that we can query for our external address.
 pub struct RemoteUdpRendezvousServer {
     addr: SocketAddr,
-    pub_key: PublicId,
+    pub_key: PublicKeys,
 }
 
 impl RemoteUdpRendezvousServer {
     /// Define a new remote server.
-    pub fn new(addr: SocketAddr, pub_key: PublicId) -> RemoteUdpRendezvousServer {
+    pub fn new(addr: SocketAddr, pub_key: PublicKeys) -> RemoteUdpRendezvousServer {
         RemoteUdpRendezvousServer { addr, pub_key }
     }
 }
@@ -24,8 +24,8 @@ impl UdpAddrQuerier for RemoteUdpRendezvousServer {
 
         let server_addr = self.addr;
         let server_pk = self.pub_key.clone();
-        let client_sk = SecretId::new();
-        let client_pk = client_sk.public_id().clone();
+        let client_sk = SecretKeys::new();
+        let client_pk = client_sk.public_keys().clone();
         let shared_secret = client_sk.shared_secret(&server_pk);
 
         let msg = EchoRequest { client_pk };

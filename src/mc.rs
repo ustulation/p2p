@@ -127,7 +127,7 @@ impl P2p {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EchoRequest {
-    pub client_pk: PublicId,
+    pub client_pk: PublicKeys,
 }
 
 quick_error! {
@@ -221,11 +221,11 @@ mod tests {
             fn it_returns_tcp_addr_queriers() {
                 let p2p = P2p::default();
 
-                let server_sk0 = SecretId::new();
-                let server_pk0 = server_sk0.public_id().clone();
+                let server_sk0 = SecretKeys::new();
+                let server_pk0 = server_sk0.public_keys().clone();
                 let server_addr0 = addr!("1.2.3.4:5000");
-                let server_sk1 = SecretId::new();
-                let server_pk1 = server_sk1.public_id().clone();
+                let server_sk1 = SecretKeys::new();
+                let server_pk1 = server_sk1.public_keys().clone();
                 let server_addr1 = addr!("5.6.7.8:9000");
 
                 let mut core = unwrap!(Core::new());
