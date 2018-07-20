@@ -8,20 +8,20 @@ pub struct PeerInfo {
     /// Peer IP address.
     pub addr: SocketAddr,
     /// Peer public key.
-    pub pub_key: PublicId,
+    pub pub_key: PublicKeys,
 }
 
 impl PeerInfo {
     /// Constructs peer info.
-    pub fn new(addr: SocketAddr, pub_key: PublicId) -> Self {
+    pub fn new(addr: SocketAddr, pub_key: PublicKeys) -> Self {
         Self { addr, pub_key }
     }
 
     /// Constructs peer info with random generated public key.
     #[cfg(test)]
     pub fn with_rand_key(addr: SocketAddr) -> Self {
-        let sk = SecretId::new();
-        let pk = sk.public_id().clone();
+        let sk = SecretKeys::new();
+        let pk = sk.public_keys().clone();
         Self::new(addr, pk)
     }
 }

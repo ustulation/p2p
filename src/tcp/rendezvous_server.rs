@@ -28,7 +28,7 @@ where
 /// hole-punching.
 pub struct TcpRendezvousServer {
     local_addr: SocketAddr,
-    our_pk: PublicId,
+    our_pk: PublicKeys,
     _drop_tx: DropNotify,
 }
 
@@ -89,7 +89,7 @@ impl TcpRendezvousServer {
 
     /// Returns server public key.
     /// Server expects incoming messages to be encrypted with this public key.
-    pub fn public_key(&self) -> &PublicId {
+    pub fn public_key(&self) -> &PublicKeys {
         &self.our_pk
     }
 }
@@ -100,8 +100,8 @@ fn from_listener_inner(
     handle: &Handle,
 ) -> TcpRendezvousServer {
     let (drop_tx, drop_rx) = drop_notify();
-    let our_sk = SecretId::new();
-    let our_pk = our_sk.public_id().clone();
+    let our_sk = SecretKeys::new();
+    let our_pk = our_sk.public_keys().clone();
     let handle_connections = {
         let handle = handle.clone();
         listener
@@ -171,7 +171,7 @@ fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     handle: &Handle,
-    our_sk: SecretId,
+    our_sk: SecretKeys,
 ) -> BoxFuture<(), RendezvousServerError> {
     let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
     stream
@@ -214,10 +214,10 @@ mod tests {
             let mut event_loop = unwrap!(Core::new());
             let handle = event_loop.handle();
 
-            let server_sk = SecretId::new();
-            let server_pk = server_sk.public_id().clone();
-            let client_sk = SecretId::new();
-            let client_pk = client_sk.public_id().clone();
+            let server_sk = SecretKeys::new();
+            let server_pk = server_sk.public_keys().clone();
+            let client_sk = SecretKeys::new();
+            let client_pk = client_sk.public_keys().clone();
 
             let listener = unwrap!(TcpListener::bind(&addr!("127.0.0.1:0"), &handle));
             let listener_addr = unwrap!(listener.local_addr());
@@ -271,9 +271,9 @@ mod tests {
             let handle = evloop.handle();
             let server = unwrap!(TcpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
-            let client_sk = SecretId::new();
+            let client_sk = SecretKeys::new();
             let request = EchoRequest {
-                client_pk: client_sk.public_id().clone(),
+                client_pk: client_sk.public_keys().clone(),
             };
             let unencrypted_request = BytesMut::from(unwrap!(serialisation::serialise(&request)));
 
@@ -305,13 +305,13 @@ mod tests {
             let server = unwrap!(TcpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_pk = server.public_key();
-            let client_sk = SecretId::new();
+            let client_sk = SecretKeys::new();
 
             let request = EchoRequest {
-                client_pk: client_sk.public_id().clone(),
+                client_pk: client_sk.public_keys().clone(),
             };
             let encrypted_request = BytesMut::from(unwrap!(server_pk.encrypt_anonymous(&request)));
-            let invalid_shared_secret = SecretId::new().shared_secret(&server_pk);
+            let invalid_shared_secret = SecretKeys::new().shared_secret(&server_pk);
 
             let f = {
                 TcpStream::connect(&server_addr, &handle)
