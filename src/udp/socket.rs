@@ -574,6 +574,11 @@ quick_error! {
         UnexpectedMessage {
             description("received unexpected hole-punch message type")
         }
+        Decrypt(e: EncryptionError) {
+            description("received undecryptable message from peer")
+            display("received undecryptable message from peer: {}", e)
+            cause(e)
+        }
         GetTtl(e: io::Error) {
             description("error getting ttl of socket")
             display("error getting ttl of socket: {}", e)
@@ -691,22 +696,15 @@ impl HolePunching {
     }
 
     fn recv_msg(&mut self) -> Result<Async<HolePunchMsg>, HolePunchError> {
-        loop {
-            let bytes = match unwrap!(self.socket.as_mut()).poll() {
-                Err(e) => return Err(HolePunchError::ReadMessage(e)),
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Ok(Async::Ready(None)) => return Err(HolePunchError::SocketStolen),
-                Ok(Async::Ready(Some(bytes))) => bytes,
-            };
-            match self.shared_secret.decrypt(&bytes) {
-                Ok(msg) => return Ok(Async::Ready(msg)),
-                Err(e) => {
-                    warn!(
-                        "received unrecognisable data on hole punching socket: {}",
-                        e
-                    );
-                }
-            }
+        let bytes = match unwrap!(self.socket.as_mut()).poll() {
+            Err(e) => return Err(HolePunchError::ReadMessage(e)),
+            Ok(Async::NotReady) => return Ok(Async::NotReady),
+            Ok(Async::Ready(None)) => return Err(HolePunchError::SocketStolen),
+            Ok(Async::Ready(Some(bytes))) => bytes,
+        };
+        match self.shared_secret.decrypt(&bytes) {
+            Ok(msg) => Ok(Async::Ready(msg)),
+            Err(e) => Err(HolePunchError::Decrypt(e)),
         }
     }
 
@@ -1386,7 +1384,7 @@ mod netsim_test {
     }
 
     #[test]
-    fn udp_rendezvous_connect_between_natted_hosts_with_no_delay() {
+    fn udp_rendezvous_connect_between_natted_hosts_with_no_delay_one_server() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
             Ipv4NatBuilder::default()
@@ -1400,9 +1398,37 @@ mod netsim_test {
     }
 
     #[test]
-    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_no_delay() {
+    fn udp_rendezvous_connect_between_natted_hosts_with_no_delay_many_servers() {
+        udp_rendezvous_connect_between_natted_hosts(
+            20,
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Duration::from_secs(0),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_no_delay_one_server() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
+            Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .randomize_port_allocation()
+                .symmetric(),
+            Duration::from_secs(0),
+        );
+    }
+
+    #[ignore] // currently fails :(
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_no_delay_many_servers() {
+        udp_rendezvous_connect_between_natted_hosts(
+            20,
             Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
             Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
@@ -1428,7 +1454,7 @@ mod netsim_test {
     }
 
     #[test]
-    fn udp_rendezvous_connect_between_natted_hosts_with_short_delay() {
+    fn udp_rendezvous_connect_between_natted_hosts_with_short_delay_one_server() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
             Ipv4NatBuilder::default()
@@ -1442,7 +1468,21 @@ mod netsim_test {
     }
 
     #[test]
-    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_short_delay() {
+    fn udp_rendezvous_connect_between_natted_hosts_with_short_delay_many_servers() {
+        udp_rendezvous_connect_between_natted_hosts(
+            1,
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Duration::from_secs(5),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_short_delay_one_server() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
             Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
@@ -1454,8 +1494,22 @@ mod netsim_test {
         );
     }
 
+    #[ignore] // currently fails :(
     #[test]
-    fn udp_rendezvous_connect_between_natted_hosts_with_long_delay() {
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_short_delay_many_servers() {
+        udp_rendezvous_connect_between_natted_hosts(
+            20,
+            Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .randomize_port_allocation()
+                .symmetric(),
+            Duration::from_secs(5),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_with_long_delay_one_server() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
             Ipv4NatBuilder::default()
@@ -1469,9 +1523,37 @@ mod netsim_test {
     }
 
     #[test]
-    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_long_delay() {
+    fn udp_rendezvous_connect_between_natted_hosts_with_long_delay_many_servers() {
+        udp_rendezvous_connect_between_natted_hosts(
+            20,
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .restrict_endpoints(),
+            Duration::from_secs(60),
+        );
+    }
+
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_long_delay_one_server() {
         udp_rendezvous_connect_between_natted_hosts(
             1,
+            Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
+            Ipv4NatBuilder::default()
+                .blacklist_unrecognized_addrs()
+                .randomize_port_allocation()
+                .symmetric(),
+            Duration::from_secs(60),
+        );
+    }
+
+    #[ignore] // currently fails :(
+    #[test]
+    fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_long_delay_many_servers() {
+        udp_rendezvous_connect_between_natted_hosts(
+            20,
             Ipv4NatBuilder::default().blacklist_unrecognized_addrs(),
             Ipv4NatBuilder::default()
                 .blacklist_unrecognized_addrs()
