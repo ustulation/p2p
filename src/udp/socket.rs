@@ -1424,7 +1424,6 @@ mod netsim_test {
         );
     }
 
-    #[ignore] // currently fails :(
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_no_delay_many_servers() {
         udp_rendezvous_connect_between_natted_hosts(
@@ -1438,7 +1437,6 @@ mod netsim_test {
         );
     }
 
-    #[ignore] // currently fails :(
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_both_symmetric_with_no_delay() {
         udp_rendezvous_connect_between_natted_hosts(
@@ -1494,7 +1492,6 @@ mod netsim_test {
         );
     }
 
-    #[ignore] // currently fails :(
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_short_delay_many_servers() {
         udp_rendezvous_connect_between_natted_hosts(
@@ -1549,7 +1546,6 @@ mod netsim_test {
         );
     }
 
-    #[ignore] // currently fails :(
     #[test]
     fn udp_rendezvous_connect_between_natted_hosts_one_symmetric_with_long_delay_many_servers() {
         udp_rendezvous_connect_between_natted_hosts(
