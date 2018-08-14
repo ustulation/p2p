@@ -600,7 +600,18 @@ quick_error! {
     }
 }
 
-const MAX_TTL: u32 = 16;
+/// This is the maximum possible TTL. TTL runners never exceed this TTL.
+/// It could be possible to set this as high as 255, but some OSes could plausibly have restrictions
+/// against setting TTLs that high. Plus, 128 is already a huge value.
+const MAX_TTL: u32 = 128;
+
+/// This is the default TTL used on Linux. Other OSes use anything from 30 to 128, but 64 is the
+/// most common and the median value.
+const SANE_DEFAULT_TTL: u32 = 64;
+
+/// How many hops we expect it to take, at most, to reach the peer. The slowest TTL runner will
+/// reach this value over the course of HOLE_PUNCH_DELAY_TOLERANCE.
+const REALISTIC_MAX_TTL: u32 = 16;
 const HOLE_PUNCH_MSG_PERIOD_MS: u64 = 200;
 
 struct HolePunching {
@@ -655,7 +666,7 @@ impl HolePunching {
             phase: HolePunchingPhase::Syn {
                 time_of_last_ttl_increment: Instant::now(),
                 ttl_increment_duration: {
-                    duration_to_reach_max_ttl / (MAX_TTL - HOLE_PUNCH_INITIAL_TTL)
+                    duration_to_reach_max_ttl / (REALISTIC_MAX_TTL - HOLE_PUNCH_INITIAL_TTL)
                 },
             },
         }
@@ -754,7 +765,7 @@ impl HolePunching {
                 HolePunchingPhase::Syn { .. } => {
                     self.phase = HolePunchingPhase::Ack;
                     unwrap!(self.socket.as_mut())
-                        .set_ttl(MAX_TTL)
+                        .set_ttl(SANE_DEFAULT_TTL)
                         .map_err(HolePunchError::SetTtl)?;
                     self.timeout.reset(Instant::now());
                 }
@@ -1223,6 +1234,14 @@ mod test {
             f0.join(f1).map(|((), ())| ())
         });
         unwrap!(result)
+    }
+
+    #[test]
+    fn allow_setting_max_ttl() {
+        let core = unwrap!(Core::new());
+        let handle = core.handle();
+        let socket = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
+        unwrap!(socket.set_ttl(MAX_TTL));
     }
 }
 
