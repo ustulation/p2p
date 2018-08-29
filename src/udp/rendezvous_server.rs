@@ -31,7 +31,7 @@ where
 /// Acts much like STUN server except doesn't implement the standard protocol - RFC 5389.
 pub struct UdpRendezvousServer {
     local_addr: SocketAddr,
-    our_pk: PublicKeys,
+    our_pk: PublicEncryptKey,
     _drop_tx: DropNotify,
 }
 
@@ -82,7 +82,7 @@ impl UdpRendezvousServer {
 
     /// Returns server public key.
     /// Server expects incoming messages to be encrypted with this public key.
-    pub fn public_key(&self) -> &PublicKeys {
+    pub fn public_key(&self) -> &PublicEncryptKey {
         &self.our_pk
     }
 }
@@ -96,8 +96,7 @@ fn from_socket_inner(
     handle: &Handle,
 ) -> UdpRendezvousServer {
     let (drop_tx, drop_rx) = drop_notify();
-    let our_sk = SecretKeys::new();
-    let our_pk = our_sk.public_keys().clone();
+    let (our_pk, our_sk) = gen_encrypt_keypair();
 
     let f = {
         let socket = SharedUdpSocket::share(socket);
@@ -116,7 +115,7 @@ fn from_socket_inner(
                     .into_future()
                     .map_err(|(e, _with_addr)| RendezvousServerError::ReadError(e))
                     .and_then(move |(msg_opt, with_addr)| match msg_opt {
-                        Some(msg) => on_addr_echo_request(&msg, with_addr, &our_sk),
+                        Some(msg) => on_addr_echo_request(&msg, with_addr, &our_sk, &our_pk),
                         None => future::ok(()).into_boxed(),
                     })
             }).buffer_unordered(1024)
@@ -142,13 +141,14 @@ fn from_socket_inner(
 fn on_addr_echo_request(
     msg: &[u8],
     with_addr: WithAddress,
-    our_sk: &SecretKeys,
+    our_sk: &SecretEncryptKey,
+    our_pk: &PublicEncryptKey,
 ) -> BoxFuture<(), RendezvousServerError> {
     let addr = with_addr.remote_addr();
     trace!("udp rendezvous server received message from {}", addr);
     let request: EchoRequest = try_bfut!(
         our_sk
-            .decrypt_anonymous(msg)
+            .anonymously_decrypt(msg, our_pk)
             .map_err(RendezvousServerError::Decrypt)
     );
 
@@ -175,10 +175,8 @@ mod test {
             let handle = evloop.handle();
             let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
-            let client_sk = SecretKeys::new();
-            let request = EchoRequest {
-                client_pk: client_sk.public_keys().clone(),
-            };
+            let (client_pk, _) = gen_encrypt_keypair();
+            let request = EchoRequest { client_pk };
             let unencrypted_request = BytesMut::from(unwrap!(serialisation::serialise(&request)));
 
             let socket = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
@@ -208,12 +206,12 @@ mod test {
             let server = unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_pk = server.public_key();
-            let client_sk = SecretKeys::new();
-            let request = EchoRequest {
-                client_pk: client_sk.public_keys().clone(),
-            };
-            let encrypted_request = BytesMut::from(unwrap!(server_pk.encrypt_anonymous(&request)));
-            let invalid_shared_secret = SecretKeys::new().shared_secret(&server_pk);
+            let (client_pk, _) = gen_encrypt_keypair();
+            let request = EchoRequest { client_pk };
+            let encrypted_request =
+                BytesMut::from(unwrap!(server_pk.anonymously_encrypt(&request)));
+            let (_, sk) = gen_encrypt_keypair();
+            let invalid_shared_secret = sk.shared_secret(&server_pk);
 
             let socket = unwrap!(UdpSocket::bind(&addr!("0.0.0.0:0"), &handle));
 

@@ -246,12 +246,9 @@ impl UdpSocketExt for UdpSocket {
         let handle0 = handle.clone();
         let handle1 = handle.clone();
         let mc0 = mc.clone();
-        let our_sk = SecretKeys::new();
-        let our_pk = our_sk.public_keys().clone();
+        let (our_pk, our_sk) = gen_encrypt_keypair();
         let our_sk0 = our_sk.clone();
         let our_sk1 = our_sk.clone();
-        let our_pk0 = our_pk.clone();
-        let our_pk1 = our_pk.clone();
 
         trace!("starting rendezvous connect");
         UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
@@ -324,7 +321,7 @@ impl UdpSocketExt for UdpSocket {
                                     trace!("our rendezvous addresses are: {:#?}", rendezvous_addrs);
                                     trace!("our open addresses are: {:#?}", our_addrs);
                                     let msg = UdpRendezvousMsg::Init {
-                                        enc_pk: our_pk0,
+                                        enc_pk: our_pk,
                                         open_addrs: our_addrs.clone(),
                                         rendezvous_addrs,
                                     };
@@ -406,7 +403,7 @@ impl UdpSocketExt for UdpSocket {
             }).and_then(
                 move |(their_pk, incoming, bind_public_error_opt, rendezvous_error_opt)| {
                     let shared_secret = our_sk.shared_secret(&their_pk);
-                    if our_pk1 > their_pk {
+                    if our_pk > their_pk {
                         trace!("we are choosing the connection");
                         incoming
                             .and_then(|(socket, chosen)| {
@@ -1097,10 +1094,10 @@ mod test {
         let recv_sock = SharedUdpSocket::share(recv_sock).with_address(sock_addr);
         let sock = SharedUdpSocket::share(sock).with_address(recv_sock_addr);
 
-        let sock_sk = SecretKeys::new();
-        let recv_sock_sk = SecretKeys::new();
-        let sock_shared_secret = sock_sk.shared_secret(recv_sock_sk.public_keys());
-        let recv_shared_secret = recv_sock_sk.shared_secret(sock_sk.public_keys());
+        let (sock_pk, sock_sk) = gen_encrypt_keypair();
+        let (recv_sock_pk, recv_sock_sk) = gen_encrypt_keypair();
+        let sock_shared_secret = sock_sk.shared_secret(&recv_sock_pk);
+        let recv_shared_secret = recv_sock_sk.shared_secret(&sock_pk);
         let hole_punching = HolePunching::new_for_open_peer(&handle, sock, sock_shared_secret);
 
         let recv_side = {
@@ -1278,10 +1275,8 @@ mod netsim_test {
                             unwrap!(UdpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
                         let server_port = server.local_addr().port();
                         let server_addr = SocketAddr::new(IpAddr::V4(ip), server_port);
-                        let server_querier = RemoteUdpRendezvousServer::new(
-                            server_addr,
-                            server.public_key().clone(),
-                        );
+                        let server_querier =
+                            RemoteUdpRendezvousServer::new(server_addr, *server.public_key());
 
                         unwrap!(server_querier_tx_0.unbounded_send(server_querier.clone()));
                         unwrap!(server_querier_tx_1.unbounded_send(server_querier));

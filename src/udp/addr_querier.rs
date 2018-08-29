@@ -4,12 +4,12 @@ use priv_prelude::*;
 /// A remote `UdpRendezvousServer` that we can query for our external address.
 pub struct RemoteUdpRendezvousServer {
     addr: SocketAddr,
-    pub_key: PublicKeys,
+    pub_key: PublicEncryptKey,
 }
 
 impl RemoteUdpRendezvousServer {
     /// Define a new remote server.
-    pub fn new(addr: SocketAddr, pub_key: PublicKeys) -> RemoteUdpRendezvousServer {
+    pub fn new(addr: SocketAddr, pub_key: PublicEncryptKey) -> RemoteUdpRendezvousServer {
         RemoteUdpRendezvousServer { addr, pub_key }
     }
 }
@@ -23,15 +23,13 @@ impl UdpAddrQuerier for RemoteUdpRendezvousServer {
         );
 
         let server_addr = self.addr;
-        let server_pk = self.pub_key.clone();
-        let client_sk = SecretKeys::new();
-        let client_pk = client_sk.public_keys().clone();
-        let shared_secret = client_sk.shared_secret(&server_pk);
+        let (client_pk, client_sk) = gen_encrypt_keypair();
+        let shared_secret = client_sk.shared_secret(&self.pub_key);
 
         let msg = EchoRequest { client_pk };
         let msg = try_bfut!(
-            server_pk
-                .encrypt_anonymous(&msg)
+            self.pub_key
+                .anonymously_encrypt(&msg)
                 .map_err(|e| Box::new(QueryPublicAddrError::Encrypt(e)) as Box<Error>)
         );
 

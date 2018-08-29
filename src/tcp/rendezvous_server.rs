@@ -28,7 +28,7 @@ where
 /// hole-punching.
 pub struct TcpRendezvousServer {
     local_addr: SocketAddr,
-    our_pk: PublicKeys,
+    our_pk: PublicEncryptKey,
     _drop_tx: DropNotify,
 }
 
@@ -88,7 +88,7 @@ impl TcpRendezvousServer {
 
     /// Returns server public key.
     /// Server expects incoming messages to be encrypted with this public key.
-    pub fn public_key(&self) -> &PublicKeys {
+    pub fn public_key(&self) -> &PublicEncryptKey {
         &self.our_pk
     }
 }
@@ -99,15 +99,15 @@ fn from_listener_inner(
     handle: &Handle,
 ) -> TcpRendezvousServer {
     let (drop_tx, drop_rx) = drop_notify();
-    let our_sk = SecretKeys::new();
-    let our_pk = our_sk.public_keys().clone();
+    let (our_pk, our_sk) = gen_encrypt_keypair();
     let handle_connections = {
         let handle = handle.clone();
         listener
             .incoming()
             .map_err(RendezvousServerError::AcceptError)
-            .map(move |(stream, addr)| handle_connection(stream, addr, &handle, our_sk.clone()))
-            .buffer_unordered(1024)
+            .map(move |(stream, addr)| {
+                handle_connection(stream, addr, &handle, our_sk.clone(), our_pk)
+            }).buffer_unordered(1024)
             .log_errors(LogLevel::Info, "processing echo request")
             .until(drop_rx)
             .for_each(|()| Ok(()))
@@ -170,7 +170,8 @@ fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     handle: &Handle,
-    our_sk: SecretKeys,
+    our_sk: SecretEncryptKey,
+    our_pk: PublicEncryptKey,
 ) -> BoxFuture<(), RendezvousServerError> {
     let stream: Framed<_, BytesMut> = length_delimited::Builder::new().new_framed(stream);
     stream
@@ -183,7 +184,7 @@ fn handle_connection(
         }).and_then(move |(req, stream)| {
             let req: EchoRequest = try_bfut!(
                 our_sk
-                    .decrypt_anonymous(&req,)
+                    .anonymously_decrypt(&req, &our_pk)
                     .map_err(RendezvousServerError::Decrypt,)
             );
             let shared_secret = our_sk.shared_secret(&req.client_pk);
@@ -211,10 +212,8 @@ mod tests {
             let mut event_loop = unwrap!(Core::new());
             let handle = event_loop.handle();
 
-            let server_sk = SecretKeys::new();
-            let server_pk = server_sk.public_keys().clone();
-            let client_sk = SecretKeys::new();
-            let client_pk = client_sk.public_keys().clone();
+            let (server_pk, server_sk) = gen_encrypt_keypair();
+            let (client_pk, client_sk) = gen_encrypt_keypair();
 
             let listener = unwrap!(TcpListener::bind(&addr!("127.0.0.1:0"), &handle));
             let listener_addr = unwrap!(listener.local_addr());
@@ -266,10 +265,8 @@ mod tests {
             let handle = evloop.handle();
             let server = unwrap!(TcpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
-            let client_sk = SecretKeys::new();
-            let request = EchoRequest {
-                client_pk: client_sk.public_keys().clone(),
-            };
+            let (client_pk, _) = gen_encrypt_keypair();
+            let request = EchoRequest { client_pk };
             let unencrypted_request = BytesMut::from(unwrap!(serialisation::serialise(&request)));
 
             let f = {
@@ -300,13 +297,13 @@ mod tests {
             let server = unwrap!(TcpRendezvousServer::bind(&addr!("0.0.0.0:0"), &handle));
             let server_addr = server.local_addr().unspecified_to_localhost();
             let server_pk = server.public_key();
-            let client_sk = SecretKeys::new();
+            let (client_pk, _) = gen_encrypt_keypair();
 
-            let request = EchoRequest {
-                client_pk: client_sk.public_keys().clone(),
-            };
-            let encrypted_request = BytesMut::from(unwrap!(server_pk.encrypt_anonymous(&request)));
-            let invalid_shared_secret = SecretKeys::new().shared_secret(&server_pk);
+            let request = EchoRequest { client_pk };
+            let encrypted_request =
+                BytesMut::from(unwrap!(server_pk.anonymously_encrypt(&request)));
+            let (_, tmp_sk) = gen_encrypt_keypair();
+            let invalid_shared_secret = tmp_sk.shared_secret(&server_pk);
 
             let f = {
                 TcpStream::connect(&server_addr, &handle)

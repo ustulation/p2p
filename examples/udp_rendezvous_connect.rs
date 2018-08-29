@@ -35,7 +35,7 @@ use docopt::Docopt;
 use futures::future::Loop;
 use futures::{future, Async, AsyncSink, Future, Sink, Stream};
 use p2p::{RemoteUdpRendezvousServer, UdpSocketExt};
-use safe_crypto::PublicKeys;
+use safe_crypto::PublicEncryptKey;
 use std::net::SocketAddr;
 use std::{env, fmt};
 use tokio_core::net::{TcpStream, UdpSocket};
@@ -119,7 +119,7 @@ fn main() {
             args.flag_traversal_server_key,
             "If echo address server is specified, it's public key must be given too.",
         );
-        let server_pub_key: PublicKeys = unwrap!(serde_json::from_str(&server_pub_key));
+        let server_pub_key: PublicEncryptKey = unwrap!(serde_json::from_str(&server_pub_key));
         let addr_querier = RemoteUdpRendezvousServer::new(server_addr, server_pub_key);
         mc.add_udp_addr_querier(addr_querier);
     }
