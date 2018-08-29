@@ -124,8 +124,7 @@ pub fn open_addr(
             active_queries: stream::FuturesUnordered::new(),
             errors: Vec::new(),
             more_servers_timeout: None,
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 struct OpenAddr {

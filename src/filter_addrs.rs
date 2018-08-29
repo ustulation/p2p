@@ -69,8 +69,7 @@ pub fn filter_addrs(
             their_filtered_private_addrs
                 .into_iter()
                 .chain(their_filtered_loopback_addr)
-        })
-        .collect()
+        }).collect()
 }
 
 #[test]

@@ -11,8 +11,8 @@ pub fn search_gateway_from_timeout(
         let res = igd::search_gateway_from_timeout(ipv4, timeout);
         res.map(|gateway| Gateway { inner: gateway })
     }).infallible()
-        .and_then(|r| r)
-        .into_boxed()
+    .and_then(|r| r)
+    .into_boxed()
 }
 
 #[derive(Debug)]
@@ -45,8 +45,8 @@ impl Gateway {
                         .map_err(GetAnyAddressError::RequestPort)
                 })
         }).infallible()
-            .and_then(|r| r)
-            .into_boxed()
+        .and_then(|r| r)
+        .into_boxed()
     }
 
     /// Same as `get_any_address` except that we manually implement a timeout on the port. Used for
@@ -71,8 +71,7 @@ impl Gateway {
                         .infallible()
                 });
                 addr
-            })
-            .into_boxed()
+            }).into_boxed()
     }
 
     pub fn remove_port(
@@ -204,8 +203,7 @@ fn get_any_address(
                                 }
                             }
                             future::err(e).into_boxed()
-                        })
-                        .map(|addr| {
+                        }).map(|addr| {
                             trace!("igd returned address {}", addr);
                             SocketAddr::V4(addr)
                         })

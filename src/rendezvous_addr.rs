@@ -81,8 +81,7 @@ pub fn rendezvous_addr(
                         addr
                     }
                 })
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 fn public_addrs_from_stun(

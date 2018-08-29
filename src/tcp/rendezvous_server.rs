@@ -71,8 +71,7 @@ impl TcpRendezvousServer {
                     from_listener_inner(listener, &bind_addr, &handle),
                     public_addr,
                 )
-            })
-            .into_boxed()
+            }).into_boxed()
     }
 
     /// Returns the local address that this rendezvous server is bound to.
@@ -181,8 +180,7 @@ fn handle_connection(
             req_opt
                 .map(|req| (req, stream))
                 .ok_or(RendezvousServerError::ConnectionClosed)
-        })
-        .and_then(move |(req, stream)| {
+        }).and_then(move |(req, stream)| {
             let req: EchoRequest = try_bfut!(
                 our_sk
                     .decrypt_anonymous(&req,)
@@ -192,8 +190,7 @@ fn handle_connection(
             respond_with_addr(stream, addr, &shared_secret)
                 .map(|_stream| ())
                 .into_boxed()
-        })
-        .with_timeout(Duration::from_secs(2), handle)
+        }).with_timeout(Duration::from_secs(2), handle)
         .and_then(|opt| opt.ok_or(RendezvousServerError::Timeout))
         .into_boxed()
 }
@@ -253,11 +250,9 @@ mod tests {
                                 );
                                     assert_eq!(received_addr, actual_addr);
                                 })
-                        })
-                        .join(handle_conns)
+                        }).join(handle_conns)
                         .map(|((), ())| ())
-                })
-                .void_unwrap()
+                }).void_unwrap()
         }
     }
 

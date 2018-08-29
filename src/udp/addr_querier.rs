@@ -80,8 +80,8 @@ impl UdpAddrQuerier for RemoteUdpRendezvousServer {
                 }
             }
         }).with_timeout(Duration::from_secs(3), &handle)
-            .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
-            .map_err(|e| Box::new(e) as Box<Error>)
-            .into_boxed()
+        .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
+        .map_err(|e| Box::new(e) as Box<Error>)
+        .into_boxed()
     }
 }
