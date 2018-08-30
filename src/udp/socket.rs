@@ -298,8 +298,7 @@ impl UdpSocketExt for UdpSocket {
                                 true,
                             );
                             (their_pk, incoming, None, None)
-                        })
-                        .into_boxed()
+                        }).into_boxed()
                 }
                 Err(bind_public_error) => {
                     trace!("public bind failed: {}", bind_public_error);
@@ -388,7 +387,7 @@ impl UdpSocketExt for UdpSocket {
                                                     their_open_addrs,
                                                     false,
                                                 ).select(punchers)
-                                                    .into_boxed()
+                                                .into_boxed()
                                             };
                                             Ok((
                                                 their_pk,
@@ -404,8 +403,7 @@ impl UdpSocketExt for UdpSocket {
                     };
                     future::result(try()).flatten().into_boxed()
                 }
-            })
-            .and_then(
+            }).and_then(
                 move |(their_pk, incoming, bind_public_error_opt, rendezvous_error_opt)| {
                     let shared_secret = our_sk.shared_secret(&their_pk);
                     if our_pk1 > their_pk {
@@ -417,8 +415,7 @@ impl UdpSocketExt for UdpSocket {
                                 }
                                 trace!("successful connection found!");
                                 Ok(socket)
-                            })
-                            .first_ok()
+                            }).first_ok()
                             .map_err(|v| {
                                 trace!("all attempts failed (us)");
                                 UdpRendezvousConnectError::AllAttemptsFailed(
@@ -426,8 +423,7 @@ impl UdpSocketExt for UdpSocket {
                                     bind_public_error_opt.map(Box::new),
                                     rendezvous_error_opt.map(Box::new),
                                 )
-                            })
-                            .and_then(move |socket| choose(&handle1, shared_secret, socket, 0))
+                            }).and_then(move |socket| choose(&handle1, shared_secret, socket, 0))
                             .into_boxed()
                     } else {
                         trace!("they are choosing the connection");
@@ -437,8 +433,7 @@ impl UdpSocketExt for UdpSocket {
                                     return future::ok(got_chosen(socket)).into_boxed();
                                 }
                                 take_chosen(&handle1, shared_secret.clone(), socket)
-                            })
-                            .buffer_unordered(256)
+                            }).buffer_unordered(256)
                             .filter_map(|opt| opt)
                             .first_ok()
                             .map_err(|v| {
@@ -448,12 +443,10 @@ impl UdpSocketExt for UdpSocket {
                                     bind_public_error_opt.map(Box::new),
                                     rendezvous_error_opt.map(Box::new),
                                 )
-                            })
-                            .into_boxed()
+                            }).into_boxed()
                     }
                 },
-            )
-            .into_boxed()
+            ).into_boxed()
     }
 
     /// Send a datagram to the address previously bound via connect().
@@ -961,8 +954,7 @@ where
             Timeout::new(Duration::from_millis(200), &handle)
                 .infallible()
                 .and_then(move |()| choose(&handle, shared_secret, socket, chooses_sent + 1))
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 // listen on the socket to if the peer sends us a HolePunchMsg::Choose to indicate that they're
@@ -986,8 +978,7 @@ fn take_chosen(
                 Ok(HolePunchMsg::Choose) => future::ok(got_chosen(socket)).into_boxed(),
                 Ok(..) => take_chosen(&handle, shared_secret, socket),
             },
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 // this socket got chosen by the remote peer. Return success with it.
@@ -1024,14 +1015,12 @@ where
                 .with_timeout(
                     Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
                     &handle,
-                )
-                .and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
+                ).and_then(|opt| opt.ok_or(UdpRendezvousConnectError::ChannelTimedOut))
                 .and_then(|(msg, _channel)| {
                     serialisation::deserialise(&msg)
                         .map_err(UdpRendezvousConnectError::DeserializeMsg)
                 })
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1082,8 +1071,7 @@ mod test {
                     assert_eq!(len, DGRAM_LEN);
                     assert_eq!(addr, sock_addr);
                     v
-                })
-                .map_err(|e| panic!("error receiving: {}", e))
+                }).map_err(|e| panic!("error receiving: {}", e))
         };
 
         let res = core.run({
@@ -1133,14 +1121,12 @@ mod test {
                         let msg = Bytes::from(msg);
                         recv_sock.send(msg).map_err(|e| panic!("send error: {}", e))
                     }
-                })
-                .and_then(|recv_sock| {
+                }).and_then(|recv_sock| {
                     trace!("sent ack");
                     recv_sock
                         .into_future()
                         .map_err(|(e, _)| panic!("recv error: {}", e))
-                })
-                .and_then({
+                }).and_then({
                     let recv_shared_secret = recv_shared_secret.clone();
                     move |(msg_opt, recv_sock)| {
                         let msg = unwrap!(msg_opt);
@@ -1154,15 +1140,13 @@ mod test {
                         let msg = Bytes::from(msg);
                         recv_sock.send(msg).map_err(|e| panic!("send error: {}", e))
                     }
-                })
-                .and_then(|recv_sock| {
+                }).and_then(|recv_sock| {
                     trace!("sent ack-ack");
                     recv_sock
                         .take(5)
                         .collect()
                         .map_err(|e| panic!("recv error: {}", e))
-                })
-                .map({
+                }).map({
                     let recv_shared_secret = recv_shared_secret.clone();
                     move |collected| {
                         trace!("read until end of stream: {:#?}", collected);
@@ -1186,8 +1170,7 @@ mod test {
                     assert!(!received_choose);
                     sock.send(Bytes::from(&b"the end"[..]))
                         .map_err(|e| panic!("error sending: {}", e))
-                })
-                .map(|_sock| ())
+                }).map(|_sock| ())
         };
 
         core.run(recv_side.join(send_side).map(|((), ())| ()))
@@ -1213,8 +1196,7 @@ mod test {
                         trace!("rendezvous connect successful! connected to {}", addr);
                         let socket = SharedUdpSocket::share(socket).with_address(addr);
                         socket.send(Bytes::from(&b"hello"[..]))
-                    })
-                    .map_err(|e| panic!("writing failed: {:?}", e))
+                    }).map_err(|e| panic!("writing failed: {:?}", e))
                     .map(|_| ())
             };
             let f1 = {
@@ -1226,8 +1208,7 @@ mod test {
                         socket
                             .filter_map(|data| if data == b"hello"[..] { Some(()) } else { None })
                             .next_or_else(|| panic!("Didn't receive a message"))
-                    })
-                    .map_err(|e| panic!("reading failed: {:?}", e))
+                    }).map_err(|e| panic!("reading failed: {:?}", e))
                     .map(|((), _socket)| ())
             };
 
@@ -1333,12 +1314,10 @@ mod netsim_test {
                                     p2p.add_udp_addr_querier(server_querier);
                                 }
                                 p2p
-                            })
-                            .and_then(|p2p| {
+                            }).and_then(|p2p| {
                                 UdpSocket::rendezvous_connect(ch0, &handle, &p2p)
                                     .map_err(|e| panic!("rendezvous connect error: {}", e))
-                            })
-                            .map(|_socket| {
+                            }).map(|_socket| {
                                 trace!("connected peer 0");
                                 drop(server_drop_txs_0);
                             })
@@ -1363,12 +1342,10 @@ mod netsim_test {
                                     p2p.add_udp_addr_querier(server_querier);
                                 }
                                 p2p
-                            })
-                            .and_then(|p2p| {
+                            }).and_then(|p2p| {
                                 UdpSocket::rendezvous_connect(ch1, &handle, &p2p)
                                     .map_err(|e| panic!("rendezvous connect error: {}", e))
-                            })
-                            .map(|_socket| {
+                            }).map(|_socket| {
                                 trace!("connected peer 1");
                                 drop(server_drop_txs_1);
                             })

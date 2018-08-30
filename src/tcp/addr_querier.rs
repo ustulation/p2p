@@ -26,8 +26,7 @@ impl TcpAddrQuerier for RemoteTcpRendezvousServer {
             .map_err(|e| match e {
                 ConnectReusableError::Bind(e) => QueryPublicAddrError::Bind(e),
                 ConnectReusableError::Connect(e) => QueryPublicAddrError::Connect(e),
-            })
-            .and_then(move |stream_opt| {
+            }).and_then(move |stream_opt| {
                 let stream = try_bfut!(stream_opt.ok_or(QueryPublicAddrError::ConnectTimeout));
                 let client_sk = SecretKeys::new();
                 let client_pk = client_sk.public_keys().clone();
@@ -55,10 +54,8 @@ impl TcpAddrQuerier for RemoteTcpRendezvousServer {
                                     .decrypt(&msg)
                                     .map_err(QueryPublicAddrError::Decrypt)
                             })
-                    })
-                    .into_boxed()
-            })
-            .map_err(|e| Box::new(e) as Box<Error>)
+                    }).into_boxed()
+            }).map_err(|e| Box::new(e) as Box<Error>)
             .into_boxed()
     }
 }

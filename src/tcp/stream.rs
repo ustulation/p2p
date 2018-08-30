@@ -265,8 +265,7 @@ impl TcpStreamExt for TcpStream {
                     .then(|res| match res {
                         Ok(addr) => Ok((Some(addr), None)),
                         Err(e) => Ok((None, Some(e))),
-                    })
-                    .and_then(move |(rendezvous_addr_opt, map_error)| {
+                    }).and_then(move |(rendezvous_addr_opt, map_error)| {
                         trace!("got rendezvous address: {:?}", rendezvous_addr_opt);
                         let msg = TcpRendezvousMsg::Init {
                             enc_pk: our_sk.public_keys().clone(),
@@ -299,8 +298,7 @@ impl TcpStreamExt for TcpStream {
                                     .map(|addr| {
                                         TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
                                             .map_err(SingleRendezvousAttemptError::Connect)
-                                    })
-                                    .collect::<Vec<_>>()
+                                    }).collect::<Vec<_>>()
                             };
                             let incoming = {
                                 listener
@@ -355,14 +353,12 @@ where
                 .with_timeout(
                     Duration::from_secs(RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC),
                     &handle,
-                )
-                .and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
+                ).and_then(|opt| opt.ok_or(TcpRendezvousConnectError::ChannelTimedOut))
                 .and_then(|(msg, _channel)| {
                     serialisation::deserialise(&msg)
                         .map_err(TcpRendezvousConnectError::DeserializeMsg)
                 })
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -399,8 +395,7 @@ fn choose_connections<Ei: 'static, Eo: 'static>(
                     .send(encrypted_msg.clone())
                     .map_err(SingleRendezvousAttemptError::Write)
                     .map(|framed| unwrap!(framed.into_inner()))
-            })
-            .into_boxed()
+            }).into_boxed()
     } else {
         all_incoming
             .and_then(move |stream| {
@@ -411,12 +406,11 @@ fn choose_connections<Ei: 'static, Eo: 'static>(
                 );
                 let framed = FramedUnbuffered::new(stream);
                 recv_choose_conn_msg(framed, shared_secret.clone())
-            })
-            .filter_map(|stream_opt| stream_opt)
+            }).filter_map(|stream_opt| stream_opt)
             .into_boxed()
     }.first_ok()
-        .map_err(|v| TcpRendezvousConnectError::AllAttemptsFailed(v, map_error))
-        .into_boxed()
+    .map_err(|v| TcpRendezvousConnectError::AllAttemptsFailed(v, map_error))
+    .into_boxed()
 }
 
 /// Receives incoming data stream and check's if it's connection choose message.
@@ -439,8 +433,7 @@ fn recv_choose_conn_msg(
                     .map_err(SingleRendezvousAttemptError::Decrypt)
             );
             future::ok(Some(unwrap!(framed.into_inner()))).into_boxed()
-        })
-        .into_boxed()
+        }).into_boxed()
 }
 
 pub struct TcpRendezvousConnect<C>

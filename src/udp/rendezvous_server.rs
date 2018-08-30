@@ -66,8 +66,7 @@ impl UdpRendezvousServer {
         socket::bind_public_with_addr(addr, &handle, mc)
             .map(move |(socket, bind_addr, public_addr)| {
                 (from_socket_inner(socket, &bind_addr, &handle), public_addr)
-            })
-            .into_boxed()
+            }).into_boxed()
     }
 
     /// Returns the local address that this rendezvous server is bound to.
@@ -120,16 +119,14 @@ fn from_socket_inner(
                         Some(msg) => on_addr_echo_request(&msg, with_addr, &our_sk),
                         None => future::ok(()).into_boxed(),
                     })
-            })
-            .buffer_unordered(1024)
+            }).buffer_unordered(1024)
             .log_errors(LogLevel::Info, "processing echo request")
             .until(drop_rx)
             .for_each(|()| Ok(()))
             .map(|x| {
                 trace!("rendezvous server exiting");
                 x
-            })
-            .infallible()
+            }).infallible()
     };
     handle.spawn(f);
     UdpRendezvousServer {
