@@ -5,12 +5,12 @@ use tokio_io::codec::length_delimited::Framed;
 /// A remote `TcpRendezvousServer` that we can query for our external address.
 pub struct RemoteTcpRendezvousServer {
     addr: SocketAddr,
-    pub_key: PublicKeys,
+    pub_key: PublicEncryptKey,
 }
 
 impl RemoteTcpRendezvousServer {
     /// Define a new remote server.
-    pub fn new(addr: SocketAddr, pub_key: PublicKeys) -> RemoteTcpRendezvousServer {
+    pub fn new(addr: SocketAddr, pub_key: PublicEncryptKey) -> RemoteTcpRendezvousServer {
         RemoteTcpRendezvousServer { addr, pub_key }
     }
 }
@@ -18,7 +18,7 @@ impl RemoteTcpRendezvousServer {
 impl TcpAddrQuerier for RemoteTcpRendezvousServer {
     #[allow(trivial_casts)] // needed for as Box<Error>
     fn query(&self, bind_addr: &SocketAddr, handle: &Handle) -> BoxFuture<SocketAddr, Box<Error>> {
-        let server_pk = self.pub_key.clone();
+        let server_pk = self.pub_key;
         let handle = handle.clone();
 
         TcpStream::connect_reusable(bind_addr, &self.addr, &handle)
@@ -28,12 +28,11 @@ impl TcpAddrQuerier for RemoteTcpRendezvousServer {
                 ConnectReusableError::Connect(e) => QueryPublicAddrError::Connect(e),
             }).and_then(move |stream_opt| {
                 let stream = try_bfut!(stream_opt.ok_or(QueryPublicAddrError::ConnectTimeout));
-                let client_sk = SecretKeys::new();
-                let client_pk = client_sk.public_keys().clone();
+                let (client_pk, client_sk) = gen_encrypt_keypair();
                 let msg = EchoRequest { client_pk };
                 let msg = try_bfut!(
                     server_pk
-                        .encrypt_anonymous(&msg)
+                        .anonymously_encrypt(&msg)
                         .map_err(QueryPublicAddrError::Encrypt)
                 );
                 let framed = Framed::new(stream);

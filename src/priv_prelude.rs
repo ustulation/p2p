@@ -13,7 +13,10 @@ pub use protocol::Protocol;
 pub use querier_set::{TcpAddrQuerierSet, UdpAddrQuerierSet};
 pub use query::{TcpAddrQuerier, UdpAddrQuerier};
 pub use rand::Rng;
-pub use safe_crypto::{Error as EncryptionError, PublicKeys, SecretKeys, SharedSecretKey};
+pub use safe_crypto::{
+    gen_encrypt_keypair, Error as EncryptionError, PublicEncryptKey, SecretEncryptKey,
+    SharedSecretKey,
+};
 pub use std::collections::{HashMap, HashSet};
 pub use std::error::Error;
 pub use std::hash::Hash;

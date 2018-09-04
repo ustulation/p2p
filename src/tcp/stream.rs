@@ -238,7 +238,7 @@ impl TcpStreamExt for TcpStream {
         // anything other than the first message to the other peer.
 
         let handle0 = handle.clone();
-        let our_sk = SecretKeys::new();
+        let (our_pk, our_sk) = gen_encrypt_keypair();
 
         let try = || {
             trace!("starting tcp rendezvous connect");
@@ -268,7 +268,7 @@ impl TcpStreamExt for TcpStream {
                     }).and_then(move |(rendezvous_addr_opt, map_error)| {
                         trace!("got rendezvous address: {:?}", rendezvous_addr_opt);
                         let msg = TcpRendezvousMsg::Init {
-                            enc_pk: our_sk.public_keys().clone(),
+                            enc_pk: our_pk,
                             open_addrs: addrs,
                             rendezvous_addr: rendezvous_addr_opt,
                         };
@@ -315,7 +315,7 @@ impl TcpStreamExt for TcpStream {
                             let all_incoming = stream::futures_unordered(connectors)
                                 .select(incoming)
                                 .into_boxed();
-                            choose_connections(all_incoming, &their_pk, &our_sk, map_error)
+                            choose_connections(all_incoming, &their_pk, &our_sk, &our_pk, map_error)
                         })
                     })
             })
@@ -369,8 +369,9 @@ struct ChooseMessage;
 /// determined by public keys.
 fn choose_connections<Ei: 'static, Eo: 'static>(
     all_incoming: BoxStream<TcpStream, SingleRendezvousAttemptError>,
-    their_pk: &PublicKeys,
-    our_sk: &SecretKeys,
+    their_pk: &PublicEncryptKey,
+    our_sk: &SecretEncryptKey,
+    our_pk: &PublicEncryptKey,
     map_error: Option<RendezvousAddrError>,
 ) -> BoxFuture<TcpStream, TcpRendezvousConnectError<Ei, Eo>> {
     let shared_secret = our_sk.shared_secret(&their_pk);
@@ -380,7 +381,6 @@ fn choose_connections<Ei: 'static, Eo: 'static>(
             .map_err(TcpRendezvousConnectError::Encrypt)
     );
 
-    let our_pk = our_sk.public_keys();
     if our_pk > their_pk {
         all_incoming
             .and_then(move |stream| {
