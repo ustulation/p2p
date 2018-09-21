@@ -286,7 +286,7 @@ mod udp;
 pub use prelude::*;
 
 /// Network Address Translation type
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum NatType {
     /// We failed to detect NAT type.
     Unknown,

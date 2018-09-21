@@ -4,7 +4,7 @@ pub use open_addr::{BindPublicError, OpenAddrError, OpenAddrErrorKind};
 pub use peer::PeerInfo;
 pub use protocol::Protocol;
 pub use query::{TcpAddrQuerier, UdpAddrQuerier};
-pub use rendezvous_addr::{RendezvousAddrError, RendezvousAddrErrorKind};
+pub use rendezvous_addr::{rendezvous_addr, RendezvousAddrError, RendezvousAddrErrorKind};
 pub use socket_addr::{SocketAddrExt, SocketAddrV4Ext, SocketAddrV6Ext};
 pub use tcp::addr_querier::RemoteTcpRendezvousServer;
 pub use tcp::builder::TcpBuilderExt;

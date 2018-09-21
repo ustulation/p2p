@@ -57,6 +57,8 @@ quick_error! {
     }
 }
 
+/// When we are behind NAT, try to guess an address we could use for hole punching.
+/// In addition NAT type is also returned.
 pub fn rendezvous_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
