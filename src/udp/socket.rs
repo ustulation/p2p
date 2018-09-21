@@ -45,7 +45,7 @@ pub enum UdpRendezvousConnectError<Ei, Eo> {
     /// Used when all rendezvous connection attempts failed.
     AllAttemptsFailed(
         Vec<HolePunchError>,
-        Option<Box<BindPublicError>>,
+        Option<Box<RendezvousAddrError>>,
         Option<Box<RendezvousAddrError>>,
     ),
 }
@@ -251,9 +251,15 @@ impl UdpSocketExt for UdpSocket {
         let our_sk1 = our_sk.clone();
 
         trace!("starting rendezvous connect");
-        UdpSocket::bind_public(&addr!("0.0.0.0:0"), handle, mc)
+        let socket = try_bfut!(
+            UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), handle)
+                .map_err(UdpRendezvousConnectError::Bind)
+        );
+        let bind_addr = try_bfut!(socket.local_addr().map_err(UdpRendezvousConnectError::Bind));
+
+        rendezvous_addr(Protocol::Udp, &bind_addr, handle, mc)
             .then(move |res| match res {
-                Ok((socket, public_addr)) => {
+                Ok(public_addr) => {
                     let mut our_addrs = try_bfut!(
                         socket
                             .expanded_local_addrs()
