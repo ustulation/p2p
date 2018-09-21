@@ -259,7 +259,7 @@ impl UdpSocketExt for UdpSocket {
 
         rendezvous_addr(Protocol::Udp, &bind_addr, handle, mc)
             .then(move |res| match res {
-                Ok(public_addr) => {
+                Ok((public_addr, _nat_type)) => {
                     let mut our_addrs = try_bfut!(
                         socket
                             .expanded_local_addrs()
@@ -515,7 +515,7 @@ where
             Ok({
                 rendezvous_addr(Protocol::Udp, &bind_addr, &handle, &p2p).then(move |res| match res
                 {
-                    Ok(addr) => {
+                    Ok((addr, _nat_type)) => {
                         sockets.push((socket, addr));
                         trace!("generated {} rendezvous sockets", sockets.len());
                         Ok(Loop::Continue(sockets))
