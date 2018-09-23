@@ -61,7 +61,7 @@ quick_error! {
                      a0, a1)
         }
         /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
-        HitErrorLimit(v: Vec<Box<Error>>) {
+        HitErrorLimit(v: Vec<Box<Error + Send>>) {
             description("hit error limit contacting traversal servers")
             display("hit error limit contacting traversal servers. {} errors: {:#?}",
                      v.len(), v)
@@ -132,8 +132,8 @@ struct OpenAddr {
     handle: Handle,
     bind_addr: SocketAddr,
     known_addr_opt: Option<SocketAddr>,
-    active_queries: stream::FuturesUnordered<BoxFuture<SocketAddr, Box<Error>>>,
-    errors: Vec<Box<Error>>,
+    active_queries: stream::FuturesUnordered<BoxFuture<SocketAddr, Box<Error + Send>>>,
+    errors: Vec<Box<Error + Send>>,
     more_servers_timeout: Option<Timeout>,
     addr_queriers: Queriers,
 }

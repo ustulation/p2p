@@ -45,7 +45,7 @@ quick_error! {
                     Got {}, then {}, then {}", p0, p1, p2)
         }
         /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
-        HitErrorLimit(v: Vec<Box<Error>>) {
+        HitErrorLimit(v: Vec<Box<Error + Send>>) {
             description("hit error limit trying to contact traversal servers")
             display("hit error limit trying to contact traversal servers. \
                     Got {} errors: {:#?}", v.len(), v)
@@ -147,8 +147,9 @@ fn public_addrs_from_stun(
     )
 }
 
-type QueryFuture = BoxFuture<SocketAddr, Box<Error>>;
-type GuessPortResult = Result<(SocketAddr, NatType), (BoxStream<QueryFuture, Void>, Box<Error>)>;
+type QueryFuture = BoxFuture<SocketAddr, Box<Error + Send>>;
+type GuessPortResult =
+    Result<(SocketAddr, NatType), (BoxStream<QueryFuture, Void>, Box<Error + Send>)>;
 
 struct GuessPort {
     known_ip_opt: Option<IpAddr>,
@@ -159,7 +160,9 @@ struct GuessPort {
 }
 
 impl GuessPort {
-    fn start(querier_stream: BoxStream<BoxFuture<SocketAddr, Box<Error>>, Void>) -> GuessPort {
+    fn start(
+        querier_stream: BoxStream<BoxFuture<SocketAddr, Box<Error + Send>>, Void>,
+    ) -> GuessPort {
         GuessPort {
             known_ip_opt: None,
             known_ports: Vec::new(),
