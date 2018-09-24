@@ -248,7 +248,6 @@ impl UdpSocketExt for UdpSocket {
         let mc0 = mc.clone();
         let (our_pk, our_sk) = gen_encrypt_keypair();
         let our_sk0 = our_sk.clone();
-        let our_sk1 = our_sk.clone();
 
         trace!("starting rendezvous connect");
         let socket = try_bfut!(
@@ -306,105 +305,14 @@ impl UdpSocketExt for UdpSocket {
                 Err(bind_public_error) => {
                     trace!("public bind failed: {}", bind_public_error);
                     trace!("generating rendezvous sockets");
-                    let try = || {
-                        let listen_socket = {
-                            UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle0)
-                                .map_err(UdpRendezvousConnectError::Bind)?
-                        };
-                        let our_addrs = {
-                            listen_socket
-                                .expanded_local_addrs()
-                                .map_err(UdpRendezvousConnectError::IfAddrs)?
-                        };
-                        let our_addrs = our_addrs.into_iter().collect::<HashSet<_>>();
-
-                        Ok({
-                            let handle2 = handle0.clone();
-                            hole_punching_sockets(&handle0, &mc0).and_then(
-                                move |(sockets, rendezvous_error_opt)| {
-                                    let (sockets, rendezvous_addrs) =
-                                        { sockets.into_iter().unzip::<_, _, Vec<_>, _>() };
-                                    trace!("our rendezvous addresses are: {:#?}", rendezvous_addrs);
-                                    trace!("our open addresses are: {:#?}", our_addrs);
-                                    let msg = UdpRendezvousMsg::Init {
-                                        enc_pk: our_pk,
-                                        open_addrs: our_addrs.clone(),
-                                        rendezvous_addrs,
-                                    };
-                                    trace!("exchanging rendezvous info with peer");
-                                    exchange_msgs(&handle2, channel, &msg).and_then(
-                                        move |their_msg| {
-                                            let UdpRendezvousMsg::Init {
-                                                enc_pk: their_pk,
-                                                open_addrs: their_open_addrs,
-                                                rendezvous_addrs: their_rendezvous_addrs,
-                                            } = their_msg;
-
-                                            trace!(
-                                                "their rendezvous addresses are: {:#?}",
-                                                their_rendezvous_addrs
-                                            );
-                                            trace!(
-                                                "their open addresses are: {:#?}",
-                                                their_open_addrs
-                                            );
-
-                                            let shared_secret = our_sk1.shared_secret(&their_pk);
-                                            let mut punchers = FuturesUnordered::new();
-                                            let iter = {
-                                                sockets
-                                                    .into_iter()
-                                                    .zip(their_rendezvous_addrs)
-                                                    .enumerate()
-                                            };
-                                            for (i, (socket, their_addr)) in iter {
-                                                socket
-                                                    .set_ttl(HOLE_PUNCH_INITIAL_TTL)
-                                                    .map_err(UdpRendezvousConnectError::SetTtl)?;
-                                                let shared = SharedUdpSocket::share(socket);
-                                                let with_addr = shared.with_address(their_addr);
-                                                let delay_tolerance = Duration::from_secs(
-                                                    HOLE_PUNCH_DELAY_TOLERANCE_SEC,
-                                                );
-                                                let duration = delay_tolerance / (1 << i);
-                                                punchers.push(HolePunching::new_ttl_incrementer(
-                                                    &handle2,
-                                                    with_addr,
-                                                    shared_secret.clone(),
-                                                    duration,
-                                                ));
-                                            }
-
-                                            let their_open_addrs =
-                                                filter_addrs(&our_addrs, &their_open_addrs);
-
-                                            trace!(
-                                                "their (filtered) open addresses are: {:#?}",
-                                                their_open_addrs
-                                            );
-                                            let incoming = {
-                                                open_connect(
-                                                    &handle2,
-                                                    shared_secret,
-                                                    listen_socket,
-                                                    their_open_addrs,
-                                                    false,
-                                                ).select(punchers)
-                                                .into_boxed()
-                                            };
-                                            Ok((
-                                                their_pk,
-                                                incoming,
-                                                Some(bind_public_error),
-                                                rendezvous_error_opt,
-                                            ))
-                                        },
-                                    )
-                                },
-                            )
-                        })
-                    };
-                    future::result(try()).flatten().into_boxed()
+                    try_hole_punching(
+                        &handle0,
+                        &mc0,
+                        &our_sk0,
+                        &our_pk,
+                        channel,
+                        bind_public_error,
+                    )
                 }
             }).and_then(
                 move |(their_pk, incoming, bind_public_error_opt, rendezvous_error_opt)| {
@@ -479,6 +387,120 @@ impl UdpSocketExt for UdpSocket {
             }
         }).into_boxed()
     }
+}
+
+type HolePunchingResult = (
+    PublicEncryptKey,
+    BoxStream<(WithAddress, bool), HolePunchError>,
+    Option<RendezvousAddrError>,
+    Option<RendezvousAddrError>,
+);
+
+/// Hole punching is attempted when we fail to receive a public address: either via IGD
+/// or if we are behind a full cone NAT.
+fn try_hole_punching<C>(
+    handle: &Handle,
+    p2p: &P2p,
+    our_sk: &SecretEncryptKey,
+    our_pk: &PublicEncryptKey,
+    conn_info_channel: C,
+    bind_public_error: RendezvousAddrError,
+) -> BoxFuture<HolePunchingResult, UdpRendezvousConnectError<C::Error, C::SinkError>>
+where
+    C: Stream<Item = Bytes>,
+    C: Sink<SinkItem = Bytes>,
+    <C as Stream>::Error: fmt::Debug,
+    <C as Sink>::SinkError: fmt::Debug,
+    C: 'static,
+{
+    let handle = handle.clone();
+    let p2p = p2p.clone();
+    let our_sk = our_sk.clone();
+    let our_pk = *our_pk;
+
+    let try = || {
+        let listen_socket = {
+            UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle)
+                .map_err(UdpRendezvousConnectError::Bind)?
+        };
+        let our_addrs = {
+            listen_socket
+                .expanded_local_addrs()
+                .map_err(UdpRendezvousConnectError::IfAddrs)?
+        };
+        let our_addrs = our_addrs.into_iter().collect::<HashSet<_>>();
+
+        Ok({
+            hole_punching_sockets(&handle, &p2p).and_then(move |(sockets, rendezvous_error_opt)| {
+                let (sockets, rendezvous_addrs) =
+                    { sockets.into_iter().unzip::<_, _, Vec<_>, _>() };
+                trace!("our rendezvous addresses are: {:#?}", rendezvous_addrs);
+                trace!("our open addresses are: {:#?}", our_addrs);
+                let msg = UdpRendezvousMsg::Init {
+                    enc_pk: our_pk,
+                    open_addrs: our_addrs.clone(),
+                    rendezvous_addrs,
+                };
+                trace!("exchanging rendezvous info with peer");
+                exchange_msgs(&handle, conn_info_channel, &msg).and_then(move |their_msg| {
+                    let UdpRendezvousMsg::Init {
+                        enc_pk: their_pk,
+                        open_addrs: their_open_addrs,
+                        rendezvous_addrs: their_rendezvous_addrs,
+                    } = their_msg;
+
+                    trace!(
+                        "their rendezvous addresses are: {:#?}",
+                        their_rendezvous_addrs
+                    );
+                    trace!("their open addresses are: {:#?}", their_open_addrs);
+
+                    let shared_secret = our_sk.shared_secret(&their_pk);
+                    let mut punchers = FuturesUnordered::new();
+                    let iter = { sockets.into_iter().zip(their_rendezvous_addrs).enumerate() };
+                    for (i, (socket, their_addr)) in iter {
+                        socket
+                            .set_ttl(HOLE_PUNCH_INITIAL_TTL)
+                            .map_err(UdpRendezvousConnectError::SetTtl)?;
+                        let shared = SharedUdpSocket::share(socket);
+                        let with_addr = shared.with_address(their_addr);
+                        let delay_tolerance = Duration::from_secs(HOLE_PUNCH_DELAY_TOLERANCE_SEC);
+                        let duration = delay_tolerance / (1 << i);
+                        punchers.push(HolePunching::new_ttl_incrementer(
+                            &handle,
+                            with_addr,
+                            shared_secret.clone(),
+                            duration,
+                        ));
+                    }
+
+                    let their_open_addrs = filter_addrs(&our_addrs, &their_open_addrs);
+
+                    trace!(
+                        "their (filtered) open addresses are: {:#?}",
+                        their_open_addrs
+                    );
+                    let incoming = {
+                        open_connect(
+                            &handle,
+                            shared_secret,
+                            listen_socket,
+                            their_open_addrs,
+                            false,
+                        ).select(punchers)
+                        .into_boxed()
+                    };
+                    Ok((
+                        their_pk,
+                        incoming,
+                        Some(bind_public_error),
+                        rendezvous_error_opt,
+                    ))
+                })
+            })
+        })
+    };
+    future::result(try()).flatten().into_boxed()
 }
 
 // Note that ths type is here just to make clippy and rust fmt happy. Although, it also might
