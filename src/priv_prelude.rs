@@ -1,3 +1,4 @@
+pub use super::NatType;
 pub use bytes::{Bytes, BytesMut};
 pub use future_utils::FramedUnbuffered;
 pub use future_utils::Timeout;

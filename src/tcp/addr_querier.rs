@@ -17,7 +17,11 @@ impl RemoteTcpRendezvousServer {
 
 impl TcpAddrQuerier for RemoteTcpRendezvousServer {
     #[allow(trivial_casts)] // needed for as Box<Error>
-    fn query(&self, bind_addr: &SocketAddr, handle: &Handle) -> BoxFuture<SocketAddr, Box<Error>> {
+    fn query(
+        &self,
+        bind_addr: &SocketAddr,
+        handle: &Handle,
+    ) -> BoxFuture<SocketAddr, Box<Error + Send>> {
         let server_pk = self.pub_key;
         let handle = handle.clone();
 
@@ -54,7 +58,7 @@ impl TcpAddrQuerier for RemoteTcpRendezvousServer {
                                     .map_err(QueryPublicAddrError::Decrypt)
                             })
                     }).into_boxed()
-            }).map_err(|e| Box::new(e) as Box<Error>)
+            }).map_err(|e| Box::new(e) as Box<Error + Send>)
             .into_boxed()
     }
 }

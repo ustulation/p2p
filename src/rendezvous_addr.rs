@@ -45,7 +45,7 @@ quick_error! {
                     Got {}, then {}, then {}", p0, p1, p2)
         }
         /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
-        HitErrorLimit(v: Vec<Box<Error>>) {
+        HitErrorLimit(v: Vec<Box<Error + Send>>) {
             description("hit error limit trying to contact traversal servers")
             display("hit error limit trying to contact traversal servers. \
                     Got {} errors: {:#?}", v.len(), v)
@@ -57,12 +57,14 @@ quick_error! {
     }
 }
 
+/// When we are behind NAT, try to guess an address we could use for hole punching.
+/// In addition NAT type is also returned.
 pub fn rendezvous_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,
     handle: &Handle,
     p2p: &P2p,
-) -> BoxFuture<SocketAddr, RendezvousAddrError> {
+) -> BoxFuture<(SocketAddr, NatType), RendezvousAddrError> {
     let bind_addr = *bind_addr;
     let handle = handle.clone();
     let p2p = p2p.clone();
@@ -70,15 +72,16 @@ pub fn rendezvous_addr(
     trace!("creating rendezvous addr");
     let timeout = Duration::from_secs(300);
     igd_async::get_any_address_rendezvous(protocol, bind_addr, timeout, &handle, &p2p)
+        .map(|public_addr| (public_addr, NatType::None))
         .or_else(move |igd_error| {
             trace!("failed to open port with igd: {}", igd_error);
             public_addrs_from_stun(&handle, &p2p, protocol, bind_addr)
                 .map_err(|kind| RendezvousAddrError { igd_error, kind })
-                .map(move |addr| {
+                .map(move |(addr, nat_type)| {
                     if p2p.force_use_local_port() {
-                        SocketAddr::new(addr.ip(), bind_addr.port())
+                        (SocketAddr::new(addr.ip(), bind_addr.port()), nat_type)
                     } else {
-                        addr
+                        (addr, nat_type)
                     }
                 })
         }).into_boxed()
@@ -89,7 +92,7 @@ fn public_addrs_from_stun(
     p2p: &P2p,
     protocol: Protocol,
     bind_addr: SocketAddr,
-) -> impl Future<Item = SocketAddr, Error = RendezvousAddrErrorKind> {
+) -> impl Future<Item = (SocketAddr, NatType), Error = RendezvousAddrErrorKind> {
     let querier_stream = {
         let mut next_query_time = Timeout::new_at(Instant::now(), handle);
         let mut querier_stream = match protocol {
@@ -144,8 +147,9 @@ fn public_addrs_from_stun(
     )
 }
 
-type QueryFuture = BoxFuture<SocketAddr, Box<Error>>;
-type GuessPortResult = Result<SocketAddr, (BoxStream<QueryFuture, Void>, Box<Error>)>;
+type QueryFuture = BoxFuture<SocketAddr, Box<Error + Send>>;
+type GuessPortResult =
+    Result<(SocketAddr, NatType), (BoxStream<QueryFuture, Void>, Box<Error + Send>)>;
 
 struct GuessPort {
     known_ip_opt: Option<IpAddr>,
@@ -156,7 +160,9 @@ struct GuessPort {
 }
 
 impl GuessPort {
-    fn start(querier_stream: BoxStream<BoxFuture<SocketAddr, Box<Error>>, Void>) -> GuessPort {
+    fn start(
+        querier_stream: BoxStream<BoxFuture<SocketAddr, Box<Error + Send>>, Void>,
+    ) -> GuessPort {
         GuessPort {
             known_ip_opt: None,
             known_ports: Vec::new(),
@@ -182,7 +188,7 @@ impl GuessPort {
     fn handle_new_address(
         &mut self,
         addr: SocketAddr,
-    ) -> Result<Async<SocketAddr>, RendezvousAddrErrorKind> {
+    ) -> Result<Async<(SocketAddr, NatType)>, RendezvousAddrErrorKind> {
         let received_ip = addr.ip();
         let known_ip = match self.known_ip_opt {
             Some(known_ip) => known_ip,
@@ -200,7 +206,8 @@ impl GuessPort {
         self.known_ports.push(addr.port());
 
         if self.known_ports.len() == 2 && self.known_ports[0] == self.known_ports[1] {
-            return Ok(Async::Ready(addr));
+            // same port for multiple queries - endpoint independent mapping
+            return Ok(Async::Ready((addr, NatType::EIM)));
         }
 
         if self.known_ports.len() == 3 {
@@ -209,7 +216,8 @@ impl GuessPort {
             if diff0 == diff1 {
                 let next_port = self.known_ports[2].wrapping_add(diff0);
                 let addr = SocketAddr::new(known_ip, next_port);
-                return Ok(Async::Ready(addr));
+                // different port for different queries - endpoint dependent mapping
+                return Ok(Async::Ready((addr, NatType::EDM)));
             }
 
             if self.discarded_ports == 5 {
@@ -228,7 +236,7 @@ impl GuessPort {
         Ok(Async::NotReady)
     }
 
-    fn queriers_exhausted(&mut self) -> Result<SocketAddr, RendezvousAddrErrorKind> {
+    fn queriers_exhausted(&mut self) -> Result<(SocketAddr, NatType), RendezvousAddrErrorKind> {
         info!("Unable to contact enough query servers to hole-punch reliably.");
         let known_ip = match self.known_ip_opt {
             Some(known_ip) => known_ip,
@@ -241,13 +249,16 @@ impl GuessPort {
             0 => unreachable!(), // since we have known_ip we must have gotten a port
             1 => {
                 info!("Guessing port based on only one response.");
-                Ok(SocketAddr::new(known_ip, self.known_ports[0]))
+                Ok((
+                    SocketAddr::new(known_ip, self.known_ports[0]),
+                    NatType::Unknown,
+                ))
             }
             2 => {
                 info!("Guessing port based on only two responses.");
                 let diff = self.known_ports[1].wrapping_sub(self.known_ports[0]);
                 let next_port = self.known_ports[1].wrapping_add(diff);
-                Ok(SocketAddr::new(known_ip, next_port))
+                Ok((SocketAddr::new(known_ip, next_port), NatType::EIM))
             }
             3 => {
                 let err = RendezvousAddrErrorKind::UnpredictablePorts(
@@ -272,13 +283,13 @@ impl Future for GuessPort {
 
             match self.active_queriers.poll() {
                 Ok(Async::Ready(Some(addr))) => match self.handle_new_address(addr)? {
-                    Async::Ready(addr) => return Ok(Async::Ready(Ok(addr))),
+                    Async::Ready((addr, nat_type)) => return Ok(Async::Ready(Ok((addr, nat_type)))),
                     Async::NotReady => (),
                 },
                 Ok(Async::Ready(None)) => {
                     if querier_stream_exhausted {
-                        let addr = self.queriers_exhausted()?;
-                        return Ok(Async::Ready(Ok(addr)));
+                        let (addr, nat_type) = self.queriers_exhausted()?;
+                        return Ok(Async::Ready(Ok((addr, nat_type))));
                     }
                     return Ok(Async::NotReady);
                 }

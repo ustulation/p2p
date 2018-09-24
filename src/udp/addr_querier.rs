@@ -16,10 +16,14 @@ impl RemoteUdpRendezvousServer {
 
 impl UdpAddrQuerier for RemoteUdpRendezvousServer {
     #[allow(trivial_casts)] // needed for as Box<Error>
-    fn query(&self, bind_addr: &SocketAddr, handle: &Handle) -> BoxFuture<SocketAddr, Box<Error>> {
+    fn query(
+        &self,
+        bind_addr: &SocketAddr,
+        handle: &Handle,
+    ) -> BoxFuture<SocketAddr, Box<Error + Send>> {
         let socket = try_bfut!(
             UdpSocket::bind_connect_reusable(bind_addr, &self.addr, handle)
-                .map_err(|e| Box::new(QueryPublicAddrError::Bind(e)) as Box<Error>)
+                .map_err(|e| Box::new(QueryPublicAddrError::Bind(e)) as Box<Error + Send>)
         );
 
         let server_addr = self.addr;
@@ -30,7 +34,7 @@ impl UdpAddrQuerier for RemoteUdpRendezvousServer {
         let msg = try_bfut!(
             self.pub_key
                 .anonymously_encrypt(&msg)
-                .map_err(|e| Box::new(QueryPublicAddrError::Encrypt(e)) as Box<Error>)
+                .map_err(|e| Box::new(QueryPublicAddrError::Encrypt(e)) as Box<Error + Send>)
         );
 
         let mut timeout = Timeout::new(Duration::new(0, 0), &handle);
@@ -79,7 +83,7 @@ impl UdpAddrQuerier for RemoteUdpRendezvousServer {
             }
         }).with_timeout(Duration::from_secs(3), &handle)
         .and_then(|opt| opt.ok_or(QueryPublicAddrError::ResponseTimeout))
-        .map_err(|e| Box::new(e) as Box<Error>)
+        .map_err(|e| Box::new(e) as Box<Error + Send>)
         .into_boxed()
     }
 }

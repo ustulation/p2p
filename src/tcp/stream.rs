@@ -263,7 +263,7 @@ impl TcpStreamExt for TcpStream {
                 trace!("getting rendezvous address");
                 rendezvous_addr(Protocol::Tcp, &bind_addr, &handle0, mc)
                     .then(|res| match res {
-                        Ok(addr) => Ok((Some(addr), None)),
+                        Ok((addr, _nat_type)) => Ok((Some(addr), None)),
                         Err(e) => Ok((None, Some(e))),
                     }).and_then(move |(rendezvous_addr_opt, map_error)| {
                         trace!("got rendezvous address: {:?}", rendezvous_addr_opt);

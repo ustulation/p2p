@@ -284,3 +284,16 @@ mod tcp;
 mod udp;
 
 pub use prelude::*;
+
+/// Network Address Translation type
+#[derive(Debug, PartialEq)]
+pub enum NatType {
+    /// We failed to detect NAT type.
+    Unknown,
+    /// No NAT - direct connection is possible.
+    None,
+    /// Endpoint Independent Mapping
+    EIM,
+    /// Endpoint Dependent Mapping
+    EDM,
+}
