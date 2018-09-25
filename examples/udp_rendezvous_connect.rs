@@ -137,7 +137,7 @@ fn main() {
                     DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
                 UdpSocket::rendezvous_connect(relay_channel, &handle, &mc)
                     .map_err(|e| panic!("rendezvous connect failed: {}", e))
-                    .and_then(|(socket, addr)| {
+                    .and_then(|(socket, addr, _our_public_addr)| {
                         println!("connected!");
                         socket
                             .send_dgram(message, addr)
