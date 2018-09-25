@@ -299,3 +299,40 @@ impl Future for GuessPort {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::Protocol;
+    use tokio_core::reactor::Core;
+    use udp::addr_querier::RemoteUdpRendezvousServer;
+    use udp::rendezvous_server::UdpRendezvousServer;
+
+    mod rendezvous_addr {
+        use super::*;
+
+        #[test]
+        fn it_works_on_localhost() {
+            let mut evloop = unwrap!(Core::new());
+            let handle = evloop.handle();
+
+            let server = unwrap!(UdpRendezvousServer::bind_reusable(
+                &addr!("0.0.0.0:0"),
+                &handle
+            ));
+            let server_addr = server.local_addr().unspecified_to_localhost();
+            let server_pk = server.public_key();
+
+            let p2p = P2p::default();
+            p2p.disable_igd();
+            p2p.disable_igd_for_rendezvous();
+            p2p.add_udp_addr_querier(RemoteUdpRendezvousServer::new(server_addr, *server_pk));
+
+            let task = rendezvous_addr(Protocol::Udp, &addr!("0.0.0.0:0"), &handle, &p2p)
+                .map(|(our_addr, _nat_type)| our_addr);
+            let our_addr = unwrap!(evloop.run(task));
+
+            assert_eq!(our_addr.ip(), ipv4!("127.0.0.1"));
+        }
+    }
+}
