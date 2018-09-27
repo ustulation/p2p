@@ -316,6 +316,7 @@ impl TcpStreamExt for TcpStream {
                                 .select(incoming)
                                 .into_boxed();
                             choose_connections(all_incoming, &their_pk, &our_sk, &our_pk, map_error)
+                                .map(move |tcp_stream| (tcp_stream, rendezvous_addr_opt))
                         })
                     })
             })
@@ -436,13 +437,16 @@ fn recv_choose_conn_msg(
         }).into_boxed()
 }
 
+type RendezvousConnectResult = (TcpStream, Option<SocketAddr>);
+
+/// Future that yields `TcpStream` and our public address, if one was detected.
 pub struct TcpRendezvousConnect<C>
 where
     C: Stream<Item = Bytes>,
     C: Sink<SinkItem = Bytes>,
     C: 'static,
 {
-    inner: BoxFuture<TcpStream, TcpRendezvousConnectError<C::Error, C::SinkError>>,
+    inner: BoxFuture<RendezvousConnectResult, TcpRendezvousConnectError<C::Error, C::SinkError>>,
 }
 
 impl<C> Future for TcpRendezvousConnect<C>
@@ -451,12 +455,13 @@ where
     C: Sink<SinkItem = Bytes>,
     C: 'static,
 {
-    type Item = TcpStream;
+    type Item = (TcpStream, Option<SocketAddr>);
     type Error = TcpRendezvousConnectError<C::Error, C::SinkError>;
 
     fn poll(
         &mut self,
-    ) -> Result<Async<TcpStream>, TcpRendezvousConnectError<C::Error, C::SinkError>> {
+    ) -> Result<Async<RendezvousConnectResult>, TcpRendezvousConnectError<C::Error, C::SinkError>>
+    {
         self.inner.poll()
     }
 }
@@ -484,7 +489,7 @@ mod test {
             let f0 = {
                 TcpStream::rendezvous_connect(ch0, &handle, &mc0)
                     .map_err(|e| panic!("connect failed: {:?}", e))
-                    .and_then(|stream| tokio_io::io::write_all(stream, b"hello"))
+                    .and_then(|(stream, _our_pub_addr)| tokio_io::io::write_all(stream, b"hello"))
                     .map_err(|e| panic!("writing failed: {:?}", e))
                     .map(|_| ())
             };
@@ -492,8 +497,9 @@ mod test {
             let f1 = {
                 TcpStream::rendezvous_connect(ch1, &handle, &mc1)
                     .map_err(|e| panic!("connect failed: {:?}", e))
-                    .and_then(|stream| tokio_io::io::read_to_end(stream, Vec::new()))
-                    .map_err(|e| panic!("reading failed: {:?}", e))
+                    .and_then(|(stream, _our_pub_addr)| {
+                        tokio_io::io::read_to_end(stream, Vec::new())
+                    }).map_err(|e| panic!("reading failed: {:?}", e))
                     .map(|(_, data)| assert_eq!(data, b"hello"))
             };
 

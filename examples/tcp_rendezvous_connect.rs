@@ -136,7 +136,7 @@ fn main() {
                     DummyDebug(Framed::new(relay_stream).map(|bytes| bytes.freeze()));
                 TcpStream::rendezvous_connect(relay_channel, &handle, &mc)
                     .map_err(|e| panic!("rendezvous connect failed: {}", e))
-                    .and_then(|stream| {
+                    .and_then(|(stream, _our_pub_addr)| {
                         println!("connected!");
                         tokio_io::io::write_all(stream, message)
                             .map_err(|e| panic!("error writing to tcp stream: {}", e))
