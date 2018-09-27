@@ -258,7 +258,7 @@ impl GuessPort {
                 info!("Guessing port based on only two responses.");
                 let diff = self.known_ports[1].wrapping_sub(self.known_ports[0]);
                 let next_port = self.known_ports[1].wrapping_add(diff);
-                Ok((SocketAddr::new(known_ip, next_port), NatType::EIM))
+                Ok((SocketAddr::new(known_ip, next_port), NatType::EDM))
             }
             3 => {
                 let err = RendezvousAddrErrorKind::UnpredictablePorts(
