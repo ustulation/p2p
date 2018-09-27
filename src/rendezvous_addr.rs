@@ -156,7 +156,6 @@ struct GuessPort {
     known_ports: Vec<u16>,
     active_queriers: FuturesOrdered<QueryFuture>,
     querier_stream: Option<BoxStream<QueryFuture, Void>>,
-    discarded_ports: u32,
 }
 
 impl GuessPort {
@@ -168,11 +167,12 @@ impl GuessPort {
             known_ports: Vec::new(),
             active_queriers: FuturesOrdered::new(),
             querier_stream: Some(querier_stream),
-            discarded_ports: 0,
         }
     }
 
+    /// Returns `true` when queriers stream is exhausted.
     fn poll_for_more_queriers(&mut self) -> bool {
+        // keep max 3 responses
         while self.known_ports.len() + self.active_queriers.len() < 3 {
             match unwrap!(self.querier_stream.as_mut()).poll().void_unwrap() {
                 Async::Ready(Some(querier)) => {
@@ -197,14 +197,12 @@ impl GuessPort {
                 received_ip
             }
         };
-
         if received_ip != known_ip {
             let err = RendezvousAddrErrorKind::InconsistentIpAddrs(received_ip, known_ip);
             return Err(err);
         }
 
         self.known_ports.push(addr.port());
-
         if self.known_ports.len() == 2 && self.known_ports[0] == self.known_ports[1] {
             // same port for multiple queries - endpoint independent mapping
             return Ok(Async::Ready((addr, NatType::EIM)));
@@ -218,9 +216,7 @@ impl GuessPort {
                 let addr = SocketAddr::new(known_ip, next_port);
                 // different port for different queries - endpoint dependent mapping
                 return Ok(Async::Ready((addr, NatType::EDM)));
-            }
-
-            if self.discarded_ports == 5 {
+            } else {
                 let err = RendezvousAddrErrorKind::UnpredictablePorts(
                     self.known_ports[0],
                     self.known_ports[1],
@@ -228,9 +224,6 @@ impl GuessPort {
                 );
                 return Err(err);
             }
-
-            let _ = self.known_ports.remove(0);
-            self.discarded_ports += 1;
         }
 
         Ok(Async::NotReady)
