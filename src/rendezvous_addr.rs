@@ -11,6 +11,16 @@ pub struct RendezvousAddrError {
     kind: RendezvousAddrErrorKind,
 }
 
+impl RendezvousAddrError {
+    /// If the error kind is `UnpredictablePorts`, returns `NatType` with port details.
+    pub fn unpredictable_ports(&self) -> Option<NatType> {
+        match self.kind {
+            RendezvousAddrErrorKind::UnpredictablePorts(ref nat_type) => Some(nat_type.clone()),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for RendezvousAddrError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}. {}", self.igd_error, self.kind)
