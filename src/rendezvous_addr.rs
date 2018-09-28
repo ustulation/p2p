@@ -11,6 +11,16 @@ pub struct RendezvousAddrError {
     kind: RendezvousAddrErrorKind,
 }
 
+impl RendezvousAddrError {
+    /// If the error kind is `UnpredictablePorts`, returns `NatType` with port details.
+    pub fn unpredictable_ports(&self) -> Option<NatType> {
+        match self.kind {
+            RendezvousAddrErrorKind::UnpredictablePorts(ref nat_type) => Some(nat_type.clone()),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for RendezvousAddrError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}. {}", self.igd_error, self.kind)
@@ -39,10 +49,8 @@ quick_error! {
         }
         /// NAT assigns us ports in an unpredictable manner. Hence we don't know what our public
         /// port would be when remote peer connected to us.
-        UnpredictablePorts(p0: u16, p1: u16, p2: u16) {
-            description("NAT is not giving us consistent or predictable external ports")
-            display("NAT is not giving us consistent or predictable external ports. \
-                    Got {}, then {}, then {}", p0, p1, p2)
+        UnpredictablePorts(nat: NatType) {
+            display("NAT is not giving us consistent or predictable external ports.")
         }
         /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
         HitErrorLimit(v: Vec<Box<Error + Send>>) {
@@ -156,7 +164,6 @@ struct GuessPort {
     known_ports: Vec<u16>,
     active_queriers: FuturesOrdered<QueryFuture>,
     querier_stream: Option<BoxStream<QueryFuture, Void>>,
-    discarded_ports: u32,
 }
 
 impl GuessPort {
@@ -168,11 +175,12 @@ impl GuessPort {
             known_ports: Vec::new(),
             active_queriers: FuturesOrdered::new(),
             querier_stream: Some(querier_stream),
-            discarded_ports: 0,
         }
     }
 
+    /// Returns `true` when queriers stream is exhausted.
     fn poll_for_more_queriers(&mut self) -> bool {
+        // keep max 3 responses
         while self.known_ports.len() + self.active_queriers.len() < 3 {
             match unwrap!(self.querier_stream.as_mut()).poll().void_unwrap() {
                 Async::Ready(Some(querier)) => {
@@ -197,14 +205,12 @@ impl GuessPort {
                 received_ip
             }
         };
-
         if received_ip != known_ip {
             let err = RendezvousAddrErrorKind::InconsistentIpAddrs(received_ip, known_ip);
             return Err(err);
         }
 
         self.known_ports.push(addr.port());
-
         if self.known_ports.len() == 2 && self.known_ports[0] == self.known_ports[1] {
             // same port for multiple queries - endpoint independent mapping
             return Ok(Async::Ready((addr, NatType::EIM)));
@@ -218,19 +224,12 @@ impl GuessPort {
                 let addr = SocketAddr::new(known_ip, next_port);
                 // different port for different queries - endpoint dependent mapping
                 return Ok(Async::Ready((addr, NatType::EDM)));
-            }
-
-            if self.discarded_ports == 5 {
-                let err = RendezvousAddrErrorKind::UnpredictablePorts(
-                    self.known_ports[0],
-                    self.known_ports[1],
-                    self.known_ports[2],
-                );
+            } else {
+                let err = RendezvousAddrErrorKind::UnpredictablePorts(NatType::EDMRandomPorts(
+                    self.known_ports.clone(),
+                ));
                 return Err(err);
             }
-
-            let _ = self.known_ports.remove(0);
-            self.discarded_ports += 1;
         }
 
         Ok(Async::NotReady)
@@ -258,14 +257,12 @@ impl GuessPort {
                 info!("Guessing port based on only two responses.");
                 let diff = self.known_ports[1].wrapping_sub(self.known_ports[0]);
                 let next_port = self.known_ports[1].wrapping_add(diff);
-                Ok((SocketAddr::new(known_ip, next_port), NatType::EIM))
+                Ok((SocketAddr::new(known_ip, next_port), NatType::EDM))
             }
             3 => {
-                let err = RendezvousAddrErrorKind::UnpredictablePorts(
-                    self.known_ports[0],
-                    self.known_ports[1],
-                    self.known_ports[2],
-                );
+                let err = RendezvousAddrErrorKind::UnpredictablePorts(NatType::EDMRandomPorts(
+                    self.known_ports.clone(),
+                ));
                 Err(err)
             }
             _ => unreachable!(), // we never collect more than 3 ports,
@@ -296,6 +293,43 @@ impl Future for GuessPort {
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
                 Err(e) => return Ok(Async::Ready(Err((unwrap!(self.querier_stream.take()), e)))),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::Protocol;
+    use tokio_core::reactor::Core;
+    use udp::addr_querier::RemoteUdpRendezvousServer;
+    use udp::rendezvous_server::UdpRendezvousServer;
+
+    mod rendezvous_addr {
+        use super::*;
+
+        #[test]
+        fn it_works_on_localhost() {
+            let mut evloop = unwrap!(Core::new());
+            let handle = evloop.handle();
+
+            let server = unwrap!(UdpRendezvousServer::bind_reusable(
+                &addr!("0.0.0.0:0"),
+                &handle
+            ));
+            let server_addr = server.local_addr().unspecified_to_localhost();
+            let server_pk = server.public_key();
+
+            let p2p = P2p::default();
+            p2p.disable_igd();
+            p2p.disable_igd_for_rendezvous();
+            p2p.add_udp_addr_querier(RemoteUdpRendezvousServer::new(server_addr, *server_pk));
+
+            let task = rendezvous_addr(Protocol::Udp, &addr!("0.0.0.0:0"), &handle, &p2p)
+                .map(|(our_addr, _nat_type)| our_addr);
+            let our_addr = unwrap!(evloop.run(task));
+
+            assert_eq!(our_addr.ip(), ipv4!("127.0.0.1"));
         }
     }
 }
