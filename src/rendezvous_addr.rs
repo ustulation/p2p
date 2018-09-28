@@ -39,10 +39,8 @@ quick_error! {
         }
         /// NAT assigns us ports in an unpredictable manner. Hence we don't know what our public
         /// port would be when remote peer connected to us.
-        UnpredictablePorts(p0: u16, p1: u16, p2: u16) {
-            description("NAT is not giving us consistent or predictable external ports")
-            display("NAT is not giving us consistent or predictable external ports. \
-                    Got {}, then {}, then {}", p0, p1, p2)
+        UnpredictablePorts(nat: NatType) {
+            display("NAT is not giving us consistent or predictable external ports.")
         }
         /// *p2p* only tolerates specific number of errors. If that exceeds, *p2p* stops trying.
         HitErrorLimit(v: Vec<Box<Error + Send>>) {
@@ -217,11 +215,9 @@ impl GuessPort {
                 // different port for different queries - endpoint dependent mapping
                 return Ok(Async::Ready((addr, NatType::EDM)));
             } else {
-                let err = RendezvousAddrErrorKind::UnpredictablePorts(
-                    self.known_ports[0],
-                    self.known_ports[1],
-                    self.known_ports[2],
-                );
+                let err = RendezvousAddrErrorKind::UnpredictablePorts(NatType::EDMRandomPorts(
+                    self.known_ports.clone(),
+                ));
                 return Err(err);
             }
         }
@@ -254,11 +250,9 @@ impl GuessPort {
                 Ok((SocketAddr::new(known_ip, next_port), NatType::EDM))
             }
             3 => {
-                let err = RendezvousAddrErrorKind::UnpredictablePorts(
-                    self.known_ports[0],
-                    self.known_ports[1],
-                    self.known_ports[2],
-                );
+                let err = RendezvousAddrErrorKind::UnpredictablePorts(NatType::EDMRandomPorts(
+                    self.known_ports.clone(),
+                ));
                 Err(err)
             }
             _ => unreachable!(), // we never collect more than 3 ports,

@@ -294,6 +294,8 @@ pub enum NatType {
     None,
     /// Endpoint Independent Mapping
     EIM,
-    /// Endpoint Dependent Mapping
+    /// Endpoint Dependent Mapping where we can guess a next port.
     EDM,
+    /// Endpoint Dependent Mapping with unpredictable port allocation.
+    EDMRandomPorts(Vec<u16>),
 }
