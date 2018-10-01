@@ -49,7 +49,9 @@ pub enum UdpRendezvousConnectError<Ei, Eo> {
     /// Failture to decrypt message received from remote peer
     Decrypt(EncryptionError),
     /// Used when all rendezvous connection attempts failed.
-    AllAttemptsFailed(Vec<HolePunchError>, Option<Box<RendezvousAddrError>>),
+    AllAttemptsFailed(Vec<HolePunchError>, Vec<RendezvousAddrError>),
+    /// Failure to get rendezvous address.
+    RendezvousAddrErrors(Vec<RendezvousAddrError>),
 }
 
 impl<Ei, Eo> fmt::Display for UdpRendezvousConnectError<Ei, Eo>
@@ -60,10 +62,10 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.description())?;
         if let UdpRendezvousConnectError::AllAttemptsFailed(ref v, ref rendezvous) = *self {
-            if let Some(ref rendezvous) = *rendezvous {
+            if !rendezvous.is_empty() {
                 write!(
                     f,
-                    "attempt to create rendezvous socket gave: {}. ",
+                    "attempt to create rendezvous socket gave: {:?}. ",
                     rendezvous
                 )?;
             }
@@ -98,7 +100,9 @@ where
             DeserializeMsg(ref e) => Some(e),
             Encrypt(ref e) => Some(e),
             Decrypt(ref e) => Some(e),
-            ChannelClosed | ChannelTimedOut | AllAttemptsFailed(..) => None,
+            ChannelClosed | ChannelTimedOut | AllAttemptsFailed(..) | RendezvousAddrErrors(..) => {
+                None
+            }
         }
     }
 
@@ -120,11 +124,12 @@ where
             Encrypt(..) => "error encrypting message to send to remote peer",
             Decrypt(..) => "error decrypting message received from remote peer",
             AllAttemptsFailed(..) => "all attempts to contact the remote peer failed",
+            RendezvousAddrErrors(..) => "failed to find rendezvous address",
         }
     }
 }
 
-type RendezvousConnectResult = (UdpSocket, SocketAddr, Option<SocketAddr>);
+type RendezvousConnectResult = (UdpSocket, SocketAddr, SocketAddr);
 
 /// Extension methods for `UdpSocket`.
 pub trait UdpSocketExt {
@@ -250,7 +255,7 @@ impl UdpSocketExt for UdpSocket {
         trace!("starting rendezvous connect");
         try_hole_punching(&handle0, &mc0, &our_sk0, &our_pk, channel)
             .and_then(
-                move |(their_pk, incoming, our_public_addr_opt, rendezvous_error_opt)| {
+                move |(their_pk, incoming, our_public_addr, rendezvous_errors)| {
                     let shared_secret = our_sk.shared_secret(&their_pk);
                     if our_pk > their_pk {
                         trace!("we are choosing the connection");
@@ -264,14 +269,11 @@ impl UdpSocketExt for UdpSocket {
                             }).first_ok()
                             .map_err(|v| {
                                 trace!("all attempts failed (us)");
-                                UdpRendezvousConnectError::AllAttemptsFailed(
-                                    v,
-                                    rendezvous_error_opt.map(Box::new),
-                                )
+                                UdpRendezvousConnectError::AllAttemptsFailed(v, rendezvous_errors)
                             }).and_then(move |socket| {
                                 choose(&handle1, shared_secret, socket, 0).map(
                                     move |(socket, their_addr)| {
-                                        (socket, their_addr, our_public_addr_opt)
+                                        (socket, their_addr, our_public_addr)
                                     },
                                 )
                             }).into_boxed()
@@ -286,15 +288,12 @@ impl UdpSocketExt for UdpSocket {
                             }).buffer_unordered(256)
                             .filter_map(move |opt| {
                                 opt.map(move |(socket, their_addr)| {
-                                    (socket, their_addr, our_public_addr_opt)
+                                    (socket, their_addr, our_public_addr)
                                 })
                             }).first_ok()
                             .map_err(|v| {
                                 trace!("all attempts failed (them)");
-                                UdpRendezvousConnectError::AllAttemptsFailed(
-                                    v,
-                                    rendezvous_error_opt.map(Box::new),
-                                )
+                                UdpRendezvousConnectError::AllAttemptsFailed(v, rendezvous_errors)
                             }).into_boxed()
                     }
                 },
@@ -333,8 +332,8 @@ impl UdpSocketExt for UdpSocket {
 type HolePunchingResult = (
     PublicEncryptKey,
     BoxStream<(WithAddress, bool), HolePunchError>,
-    Option<SocketAddr>, // our public address, if one was found
-    Option<RendezvousAddrError>,
+    SocketAddr, // our public address
+    Vec<RendezvousAddrError>,
 );
 
 /// Hole punching is attempted when we fail to receive a public address: either via IGD
@@ -359,13 +358,21 @@ where
     let our_pk = *our_pk;
 
     hole_punching_sockets(&handle, &p2p)
-        .and_then(move |(sockets, rendezvous_error_opt)| {
+        .and_then(move |(sockets, rendezvous_errors)| {
+            // All hole punching sockets should have the same rendezvous IP address, so we'll just
+            // take the first one.
+            let pub_addr_opt = sockets.iter().map(|(_socket, addr)| addr).cloned().nth(0);
+            if let Some(pub_addr) = pub_addr_opt {
+                Ok((sockets, pub_addr, rendezvous_errors))
+            } else {
+                Err(UdpRendezvousConnectError::RendezvousAddrErrors(
+                    rendezvous_errors,
+                ))
+            }
+        }).and_then(move |(sockets, our_pub_addr, rendezvous_errors)| {
             let (sockets, rendezvous_addrs): (_, Vec<SocketAddr>) =
                 sockets.into_iter().unzip::<_, _, Vec<_>, _>();
             trace!("our rendezvous addresses are: {:#?}", rendezvous_addrs);
-            // All hole punching sockets should have the same rendezvous IP address, so we'll just
-            // take the first one.
-            let our_public_addr_opt = rendezvous_addrs.iter().cloned().nth(0);
             let msg = UdpRendezvousMsg::Init {
                 enc_pk: our_pk,
                 rendezvous_addrs,
@@ -403,12 +410,7 @@ where
                     }
 
                     let incoming = punchers.into_boxed();
-                    Ok((
-                        their_pk,
-                        incoming,
-                        our_public_addr_opt,
-                        rendezvous_error_opt,
-                    ))
+                    Ok((their_pk, incoming, our_pub_addr, rendezvous_errors))
                 }).into_boxed()
         }).into_boxed()
 }
@@ -417,11 +419,11 @@ where
 // indicate too complex types.
 type SocketsWithAddr = Vec<(UdpSocket, SocketAddr)>;
 
-/// Creates N sockets for hole punching.
+/// Tries to create N sockets for hole punching. If couldn't create at least 1 socket, fails.
 fn hole_punching_sockets<Ei, Eo>(
     handle: &Handle,
     p2p: &P2p,
-) -> BoxFuture<(SocketsWithAddr, Option<RendezvousAddrError>), UdpRendezvousConnectError<Ei, Eo>>
+) -> BoxFuture<(SocketsWithAddr, Vec<RendezvousAddrError>), UdpRendezvousConnectError<Ei, Eo>>
 where
     Ei: 'static,
     Eo: 'static,
@@ -429,40 +431,43 @@ where
     let p2p = p2p.clone();
     let handle = handle.clone();
 
-    future::loop_fn(Vec::new(), move |mut sockets| {
-        if sockets.len() == 6 {
-            return future::ok(Loop::Break((sockets, None))).into_boxed();
-        }
+    future::loop_fn(
+        (Vec::new(), Vec::new()),
+        move |(mut sockets, mut rendezvous_addr_errors)| {
+            if sockets.len() + rendezvous_addr_errors.len() == 6 {
+                return future::ok(Loop::Break((sockets, rendezvous_addr_errors))).into_boxed();
+            }
 
-        let socket = try_bfut!(
-            UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle)
-                .map_err(UdpRendezvousConnectError::Rebind)
-        );
-        let bind_addr = try_bfut!(
-            socket
-                .local_addr()
-                .map_err(UdpRendezvousConnectError::Rebind)
-        );
-        try_bfut!(
-            socket
-                .set_ttl(HOLE_PUNCH_INITIAL_TTL)
-                .map_err(UdpRendezvousConnectError::SetTtl)
-        );
+            let socket = try_bfut!(
+                UdpSocket::bind_reusable(&addr!("0.0.0.0:0"), &handle)
+                    .map_err(UdpRendezvousConnectError::Rebind)
+            );
+            let bind_addr = try_bfut!(
+                socket
+                    .local_addr()
+                    .map_err(UdpRendezvousConnectError::Rebind)
+            );
+            try_bfut!(
+                socket
+                    .set_ttl(HOLE_PUNCH_INITIAL_TTL)
+                    .map_err(UdpRendezvousConnectError::SetTtl)
+            );
 
-        rendezvous_addr(Protocol::Udp, &bind_addr, &handle, &p2p)
-            .then(move |res| match res {
-                Ok((addr, _nat_type)) => {
-                    sockets.push((socket, addr));
-                    trace!("generated {} rendezvous sockets", sockets.len());
-                    Ok(Loop::Continue(sockets))
-                }
-                Err(err) => {
-                    trace!("error generating rendezvous socket: {}", err);
-                    trace!("stopping after generating {} sockets", sockets.len());
-                    Ok(Loop::Break((sockets, Some(err))))
-                }
-            }).into_boxed()
-    }).into_boxed()
+            rendezvous_addr(Protocol::Udp, &bind_addr, &handle, &p2p)
+                .then(move |res| {
+                    match res {
+                        Ok((addr, _nat_type)) => {
+                            sockets.push((socket, addr));
+                            trace!("generated {} rendezvous sockets", sockets.len());
+                        }
+                        Err(err) => {
+                            rendezvous_addr_errors.push(err);
+                        }
+                    }
+                    Ok(Loop::Continue((sockets, rendezvous_addr_errors)))
+                }).into_boxed()
+        },
+    ).into_boxed()
 }
 
 pub fn bind_public_with_addr(
