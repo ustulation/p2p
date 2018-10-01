@@ -147,14 +147,6 @@ pub trait UdpSocketExt {
     /// Returns a list of local addresses this socket is bind to.
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
 
-    /// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
-    /// that can be used to message the socket from across the internet.
-    fn bind_public(
-        addr: &SocketAddr,
-        handle: &Handle,
-        mc: &P2p,
-    ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError>;
-
     /// Perform a UDP rendezvous connection to another peer. Both peers must call this
     /// simultaneously and `channel` must provide a channel through which the peers can communicate
     /// out-of-band.
@@ -222,16 +214,6 @@ impl UdpSocketExt for UdpSocket {
         let addr = self.local_addr()?;
         let addrs = addr.expand_local_unspecified()?;
         Ok(addrs)
-    }
-
-    fn bind_public(
-        addr: &SocketAddr,
-        handle: &Handle,
-        mc: &P2p,
-    ) -> BoxFuture<(UdpSocket, SocketAddr), BindPublicError> {
-        bind_public_with_addr(addr, handle, mc)
-            .map(|(socket, _bind_addr, public_addr)| (socket, public_addr))
-            .into_boxed()
     }
 
     fn rendezvous_connect<C>(
@@ -470,22 +452,22 @@ where
     ).into_boxed()
 }
 
+/// Returns a `UdpSocket` bound to the given address along with a public `SocketAddr`
+/// that can be used to send datagrams to the socket from across the internet.
+///
+/// This method will try to open a port on the local router (if there is one) and return the
+/// external address of the port if successful.
 pub fn bind_public_with_addr(
     addr: &SocketAddr,
     handle: &Handle,
-    mc: &P2p,
+    p2p: &P2p,
 ) -> BoxFuture<(UdpSocket, SocketAddr, SocketAddr), BindPublicError> {
-    let handle = handle.clone();
-    let try = || {
-        let socket = { UdpSocket::bind_reusable(addr, &handle).map_err(BindPublicError::Bind) }?;
-        let bind_addr = { socket.local_addr().map_err(BindPublicError::Bind) }?;
-        Ok({
-            open_addr(Protocol::Udp, &bind_addr, &handle, mc)
-                .map_err(BindPublicError::OpenAddr)
-                .map(move |public_addr| (socket, bind_addr, public_addr))
-        })
-    };
-    future::result(try()).flatten().into_boxed()
+    let socket = try_bfut!(UdpSocket::bind_reusable(addr, &handle).map_err(BindPublicError::Bind));
+    let bind_addr = try_bfut!(socket.local_addr().map_err(BindPublicError::Bind));
+    open_addr(Protocol::Udp, &bind_addr, &handle, p2p)
+        .map_err(BindPublicError::OpenAddr)
+        .map(move |public_addr| (socket, bind_addr, public_addr))
+        .into_boxed()
 }
 
 quick_error! {
