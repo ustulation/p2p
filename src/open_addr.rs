@@ -79,6 +79,12 @@ quick_error! {
     }
 }
 
+/// Attempts to get a public address others could contact us with.
+/// We have public address if:
+/// 1. one of our bind addresses is public
+/// 2. we have IGD enabled router
+/// 3. our router NAT is full cone
+// TODO(povilas): move this function to Crust crate? It has nothing to do with hole punching.
 pub fn open_addr(
     protocol: Protocol,
     bind_addr: &SocketAddr,

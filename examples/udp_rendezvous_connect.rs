@@ -1,3 +1,20 @@
+//! To use this, use a server with publicly accessible ports to act as a relay server between two
+//! connecting udp sockets. This relay server will act as the channel when negotiating the
+//! rendezvous connect.
+//!
+//! For example, log into a VPS and run:
+//! ```
+//! $ socat TCP-LISTEN:45666 TCP-LISTEN:45667
+//! ```
+//!
+//! The run this example on two machines, on seperate networks, both hidden behind NATs:
+//! ```
+//! $ cargo run --example udp_rendezvous_connect -- <address of your vps>:45666 blah blah blah
+//! $ cargo run --example udp_rendezvous_connect -- <address of your vps>:45667 blah blah blah
+//! ```
+//!
+//! If successful, the peers should be able to communicate directly with each other over UDP.
+
 extern crate bytes;
 extern crate docopt;
 extern crate env_logger;
@@ -11,22 +28,6 @@ extern crate safe_crypto;
 extern crate serde_json;
 extern crate tokio_core;
 extern crate tokio_io;
-/// To use this, use a server with publicly accessible ports to act as a relay server between two
-/// connecting udp sockets. This relay server will act as the channel when negotiating the
-/// rendezvous connect.
-///
-/// For example, log into a VPS and run:
-/// ```
-/// $ socat TCP-LISTEN:45666 TCP-LISTEN:45667
-/// ```
-///
-/// The run this example on two machines, on seperate networks, both hidden behind NATs:
-/// ```
-/// $ cargo run --example udp_rendezvous_connect -- <address of your vps>:45666 blah blah blah
-/// $ cargo run --example udp_rendezvous_connect -- <address of your vps>:45667 blah blah blah
-/// ```
-///
-/// If successful, the peers should be able to communicate directly with each other over UDP.
 #[macro_use]
 extern crate unwrap;
 extern crate void;
