@@ -1,4 +1,3 @@
-use filter_addrs::filter_addrs;
 use maidsafe_utilities::serialisation;
 use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
@@ -249,13 +248,6 @@ impl TcpStreamExt for TcpStream {
                     .map_err(TcpRendezvousConnectError::Bind)?
             };
 
-            let addrs = {
-                listener
-                    .expanded_local_addrs()
-                    .map_err(TcpRendezvousConnectError::IfAddrs)?
-            };
-            let our_addrs = addrs.iter().cloned().collect();
-
             Ok({
                 trace!("getting rendezvous address");
                 rendezvous_addr(Protocol::Tcp, &bind_addr, &handle0, mc)
@@ -264,7 +256,6 @@ impl TcpStreamExt for TcpStream {
                         trace!("got rendezvous address: {}", rendezvous_addr);
                         let msg = TcpRendezvousMsg::Init {
                             enc_pk: our_pk,
-                            open_addrs: addrs,
                             rendezvous_addr,
                         };
 
@@ -273,25 +264,12 @@ impl TcpStreamExt for TcpStream {
                         exchange_conn_info(channel, &handle0, &msg).and_then(move |msg| {
                             let TcpRendezvousMsg::Init {
                                 enc_pk: their_pk,
-                                open_addrs,
                                 rendezvous_addr,
                             } = msg;
 
-                            // filter our subnet and loopback addresess if they can't possibly be
-                            // useful.
-                            let their_addrs = open_addrs.into_iter().collect();
-                            let mut their_addrs = filter_addrs(&our_addrs, &their_addrs);
-                            let _ = their_addrs.insert(rendezvous_addr);
-                            trace!("their_addrs == {:?}", their_addrs);
-
-                            let connectors = {
-                                their_addrs
-                                    .into_iter()
-                                    .map(|addr| {
-                                        TcpStream::connect_reusable(&bind_addr, &addr, &handle0)
-                                            .map_err(SingleRendezvousAttemptError::Connect)
-                                    }).collect::<Vec<_>>()
-                            };
+                            let connector =
+                                TcpStream::connect_reusable(&bind_addr, &rendezvous_addr, &handle0)
+                                    .map_err(SingleRendezvousAttemptError::Connect);
                             let incoming = {
                                 listener
                                     .incoming()
@@ -304,9 +282,8 @@ impl TcpStreamExt for TcpStream {
                                         ).infallible()
                                     })
                             };
-                            let all_incoming = stream::futures_unordered(connectors)
-                                .select(incoming)
-                                .into_boxed();
+                            let all_incoming =
+                                connector.into_stream().select(incoming).into_boxed();
                             choose_connections(all_incoming, &their_pk, &our_sk, &our_pk)
                                 .map(move |tcp_stream| (tcp_stream, rendezvous_addr))
                         })
@@ -452,8 +429,7 @@ where
 
     fn poll(
         &mut self,
-    ) -> Result<Async<Self::Item>, TcpRendezvousConnectError<C::Error, C::SinkError>>
-    {
+    ) -> Result<Async<Self::Item>, TcpRendezvousConnectError<C::Error, C::SinkError>> {
         self.inner.poll()
     }
 }
