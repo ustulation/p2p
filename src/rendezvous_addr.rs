@@ -197,6 +197,7 @@ impl GuessPort {
         &mut self,
         addr: SocketAddr,
     ) -> Result<Async<(SocketAddr, NatType)>, RendezvousAddrErrorKind> {
+        trace!("Received addr from STUN server: {}", addr);
         let received_ip = addr.ip();
         let known_ip = match self.known_ip_opt {
             Some(known_ip) => known_ip,
