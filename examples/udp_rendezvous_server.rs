@@ -3,6 +3,7 @@
 //!
 //! Use `udp_reendezvous_client` example to test this server.
 
+extern crate env_logger;
 extern crate futures;
 #[macro_use]
 extern crate net_literals;
@@ -16,6 +17,8 @@ use futures::{future, Future};
 use p2p::UdpRendezvousServer;
 
 fn main() {
+    unwrap!(env_logger::init());
+
     let mut core = unwrap!(tokio_core::reactor::Core::new());
     let handle = core.handle();
     let mc = p2p::P2p::default();
