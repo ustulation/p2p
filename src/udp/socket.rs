@@ -6,11 +6,18 @@ use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
 use std::error::Error;
 use tokio_shared_udp_socket::{SharedUdpSocket, WithAddress};
-use udp::msg::UdpRendezvousMsg;
 
 const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
 const HOLE_PUNCH_DELAY_TOLERANCE_SEC: u64 = 120;
 const HOLE_PUNCH_INITIAL_TTL: u32 = 2;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum UdpRendezvousMsg {
+    Init {
+        enc_pk: PublicEncryptKey,
+        rendezvous_addrs: Vec<SocketAddr>,
+    },
+}
 
 /// Errors returned by `UdpSocketExt::rendezvous_connect`.
 #[derive(Debug)]
