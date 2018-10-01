@@ -3,10 +3,17 @@ use priv_prelude::*;
 use rendezvous_addr::{rendezvous_addr, RendezvousAddrError};
 use std::error::Error;
 use tcp::builder::TcpBuilderExt;
-use tcp::msg::TcpRendezvousMsg;
 
 const RENDEZVOUS_TIMEOUT_SEC: u64 = 10;
 const RENDEZVOUS_INFO_EXCHANGE_TIMEOUT_SEC: u64 = 120;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum TcpRendezvousMsg {
+    Init {
+        enc_pk: PublicEncryptKey,
+        rendezvous_addr: SocketAddr,
+    },
+}
 
 quick_error! {
     /// Errors returned by `TcpStreamExt::connect_reusable`.
