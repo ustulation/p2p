@@ -8,20 +8,10 @@ pub trait TcpListenerExt {
     /// Bind reusably to the given address. Multiple sockets can be bound to the same local address
     /// using this method.
     fn bind_reusable(addr: &SocketAddr, handle: &Handle) -> io::Result<TcpListener>;
+
     /// Returns all local addresses of this socket, expanding an unspecified address (eg `0.0.0.0`)
     /// into a vector of addresses, one for each network interface.
     fn expanded_local_addrs(&self) -> io::Result<Vec<SocketAddr>>;
-
-    /// Returns a `TcpListener` listening on the given address along with a public `SocketAddr`
-    /// that can be used to connect to the listener from across the internet.
-    ///
-    /// This method will try to open a port on the local router (if there is one) and return the
-    /// external address of the port if successful.
-    fn bind_public(
-        addr: &SocketAddr,
-        handle: &Handle,
-        mc: &P2p,
-    ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError>;
 }
 
 impl TcpListenerExt for TcpListener {
@@ -38,18 +28,13 @@ impl TcpListenerExt for TcpListener {
         let addrs = addr.expand_local_unspecified()?;
         Ok(addrs)
     }
-
-    fn bind_public(
-        addr: &SocketAddr,
-        handle: &Handle,
-        mc: &P2p,
-    ) -> BoxFuture<(TcpListener, SocketAddr), BindPublicError> {
-        bind_public_with_addr(addr, handle, mc)
-            .map(|(listener, _bind_addr, public_addr)| (listener, public_addr))
-            .into_boxed()
-    }
 }
 
+/// Returns a `TcpListener` listening on the given address along with a public `SocketAddr`
+/// that can be used to connect to the listener from across the internet.
+///
+/// This method will try to open a port on the local router (if there is one) and return the
+/// external address of the port if successful.
 pub fn bind_public_with_addr(
     addr: &SocketAddr,
     handle: &Handle,

@@ -1,13 +1,19 @@
+#[cfg(feature = "netsim")]
+#[cfg(target_os = "linux")]
 use future_utils::mpsc::{unbounded, SendError, UnboundedReceiver, UnboundedSender};
 use priv_prelude::*;
 use rand;
 
+#[cfg(feature = "netsim")]
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct TwoWayChannel<T> {
     tx: UnboundedSender<T>,
     rx: UnboundedReceiver<T>,
 }
 
+#[cfg(feature = "netsim")]
+#[cfg(target_os = "linux")]
 impl<T> Sink for TwoWayChannel<T> {
     type SinkItem = T;
     type SinkError = SendError<T>;
@@ -21,6 +27,8 @@ impl<T> Sink for TwoWayChannel<T> {
     }
 }
 
+#[cfg(feature = "netsim")]
+#[cfg(target_os = "linux")]
 impl<T> Stream for TwoWayChannel<T> {
     type Item = T;
     type Error = Void;
@@ -30,6 +38,8 @@ impl<T> Stream for TwoWayChannel<T> {
     }
 }
 
+#[cfg(feature = "netsim")]
+#[cfg(target_os = "linux")]
 pub fn two_way_channel<T>() -> (TwoWayChannel<T>, TwoWayChannel<T>) {
     let (tx0, rx0) = unbounded();
     let (tx1, rx1) = unbounded();

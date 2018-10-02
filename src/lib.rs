@@ -240,9 +240,6 @@ extern crate igd;
 #[macro_use]
 extern crate log;
 extern crate maidsafe_utilities;
-#[cfg(test)]
-#[macro_use]
-extern crate maplit;
 extern crate net2;
 #[macro_use]
 extern crate net_literals;
@@ -269,7 +266,6 @@ mod priv_prelude;
 #[macro_use]
 mod util;
 
-mod filter_addrs;
 mod igd_async;
 mod ip_addr;
 mod mc;
