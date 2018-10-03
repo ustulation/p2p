@@ -101,42 +101,7 @@ fn public_addrs_from_stun(
     protocol: Protocol,
     bind_addr: SocketAddr,
 ) -> impl Future<Item = (SocketAddr, NatType), Error = RendezvousAddrErrorKind> {
-    let querier_stream = {
-        let mut next_query_time = Timeout::new_at(Instant::now(), handle);
-        let mut querier_stream = match protocol {
-            Protocol::Tcp => {
-                let handle = handle.clone();
-                p2p.tcp_addr_queriers()
-                    .with_readiness_timeout(Duration::from_secs(2), &handle)
-                    .infallible()
-                    .map(move |addr_querier| addr_querier.query(&bind_addr, &handle))
-                    .into_boxed()
-            }
-            Protocol::Udp => {
-                let handle = handle.clone();
-                p2p.udp_addr_queriers()
-                    .with_readiness_timeout(Duration::from_secs(2), &handle)
-                    .infallible()
-                    .map(move |addr_querier| addr_querier.query(&bind_addr, &handle))
-                    .into_boxed()
-            }
-        };
-        stream::poll_fn(move || {
-            match next_query_time.poll().void_unwrap() {
-                Async::Ready(()) => (),
-                Async::NotReady => return Ok(Async::NotReady),
-            }
-            match querier_stream.poll().void_unwrap() {
-                Async::Ready(Some(querier)) => {
-                    next_query_time.reset(Instant::now() + Duration::from_millis(100));
-                    Ok(Async::Ready(Some(querier)))
-                }
-                Async::Ready(None) => Ok(Async::Ready(None)),
-                Async::NotReady => Ok(Async::NotReady),
-            }
-        }).into_boxed()
-    };
-
+    let querier_stream = addr_queriers(handle, p2p, protocol, bind_addr);
     let errors = Vec::new();
     future::loop_fn(
         (querier_stream, errors),
@@ -153,6 +118,49 @@ fn public_addrs_from_stun(
             })
         },
     )
+}
+
+/// Constructs a stream of STUN query futures.
+fn addr_queriers(
+    handle: &Handle,
+    p2p: &P2p,
+    protocol: Protocol,
+    bind_addr: SocketAddr,
+) -> BoxStream<BoxFuture<SocketAddr, Box<Error + Send>>, Void> {
+    let mut next_query_time = Timeout::new_at(Instant::now(), handle);
+    let mut querier_stream = match protocol {
+        Protocol::Tcp => {
+            let handle = handle.clone();
+            p2p.tcp_addr_queriers()
+                .with_readiness_timeout(Duration::from_secs(2), &handle)
+                .infallible()
+                .map(move |addr_querier| addr_querier.query(&bind_addr, &handle))
+                .into_boxed()
+        }
+        Protocol::Udp => {
+            let handle = handle.clone();
+            p2p.udp_addr_queriers()
+                .with_readiness_timeout(Duration::from_secs(2), &handle)
+                .infallible()
+                .map(move |addr_querier| addr_querier.query(&bind_addr, &handle))
+                .into_boxed()
+        }
+    };
+    stream::poll_fn(move || {
+        match next_query_time.poll().void_unwrap() {
+            Async::Ready(()) => (),
+            Async::NotReady => return Ok(Async::NotReady),
+        }
+        match querier_stream.poll().void_unwrap() {
+            Async::Ready(Some(querier)) => {
+                next_query_time.reset(Instant::now() + Duration::from_millis(100));
+                Ok(Async::Ready(Some(querier)))
+            }
+            Async::Ready(None) => Ok(Async::Ready(None)),
+            Async::NotReady => Ok(Async::NotReady),
+        }
+    }).infallible()
+    .into_boxed()
 }
 
 type QueryFuture = BoxFuture<SocketAddr, Box<Error + Send>>;
