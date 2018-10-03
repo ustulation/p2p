@@ -259,11 +259,11 @@ impl TcpStreamExt for TcpStream {
                 trace!("getting rendezvous address");
                 rendezvous_addr(Protocol::Tcp, &bind_addr, &handle0, mc)
                     .map_err(TcpRendezvousConnectError::RendezvousAddrError)
-                    .and_then(move |(rendezvous_addr, _nat_type)| {
-                        trace!("got rendezvous address: {}", rendezvous_addr);
+                    .and_then(move |(our_rendezvous_addr, _nat_type)| {
+                        trace!("got rendezvous address: {}", our_rendezvous_addr);
                         let msg = TcpRendezvousMsg::Init {
                             enc_pk: our_pk,
-                            rendezvous_addr,
+                            rendezvous_addr: our_rendezvous_addr,
                         };
 
                         trace!("exchanging rendezvous info with peer");
@@ -271,12 +271,14 @@ impl TcpStreamExt for TcpStream {
                         exchange_conn_info(channel, &handle0, &msg).and_then(move |msg| {
                             let TcpRendezvousMsg::Init {
                                 enc_pk: their_pk,
-                                rendezvous_addr,
+                                rendezvous_addr: their_rendezvous_addr,
                             } = msg;
 
-                            let connector =
-                                TcpStream::connect_reusable(&bind_addr, &rendezvous_addr, &handle0)
-                                    .map_err(SingleRendezvousAttemptError::Connect);
+                            let connector = TcpStream::connect_reusable(
+                                &bind_addr,
+                                &their_rendezvous_addr,
+                                &handle0,
+                            ).map_err(SingleRendezvousAttemptError::Connect);
                             let incoming = {
                                 listener
                                     .incoming()
@@ -292,7 +294,7 @@ impl TcpStreamExt for TcpStream {
                             let all_incoming =
                                 connector.into_stream().select(incoming).into_boxed();
                             choose_connections(all_incoming, &their_pk, &our_sk, &our_pk)
-                                .map(move |tcp_stream| (tcp_stream, rendezvous_addr))
+                                .map(move |tcp_stream| (tcp_stream, our_rendezvous_addr))
                         })
                     })
             })
