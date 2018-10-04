@@ -116,23 +116,14 @@ pub fn open_addr(
     let bind_addr = *bind_addr;
     let handle = handle.clone();
 
-    let addr_queriers = match protocol {
-        Protocol::Tcp => Queriers::Tcp(mc.tcp_addr_queriers()),
-        Protocol::Udp => Queriers::Udp(mc.udp_addr_queriers()),
-    };
     igd_async::get_any_address_open(protocol, bind_addr, &handle, mc)
-        .or_else(move |igd_err| OpenAddr {
-            igd_err: Some(igd_err),
-            handle,
-            bind_addr,
-            known_addr_opt: None,
-            addr_queriers,
-            active_queries: stream::FuturesUnordered::new(),
-            errors: Vec::new(),
-            more_servers_timeout: None,
+        .map_err(|e| OpenAddrError {
+            igd_err: Some(e),
+            kind: OpenAddrErrorKind::LackOfServers,
         }).into_boxed()
 }
 
+#[allow(unused)]
 struct OpenAddr {
     igd_err: Option<GetAnyAddressError>,
     handle: Handle,
@@ -144,6 +135,7 @@ struct OpenAddr {
     addr_queriers: Queriers,
 }
 
+#[allow(unused)]
 enum Queriers {
     Tcp(UnboundedReceiver<Arc<TcpAddrQuerier>>),
     Udp(UnboundedReceiver<Arc<UdpAddrQuerier>>),
