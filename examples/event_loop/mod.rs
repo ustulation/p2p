@@ -1,4 +1,4 @@
-use mio::{Events, Poll, PollOpt, Ready, Token};
+use mio::{Event, Events, Poll, PollOpt, Ready, Token};
 use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
@@ -12,6 +12,7 @@ use std::io::Read;
 use std::rc::Rc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use socket_collection::{Handle, Notifier, EpollLoop};
 
 pub struct Core {
     nat_states: HashMap<Token, Rc<RefCell<NatState>>>,
@@ -22,6 +23,7 @@ pub struct Core {
     enc_pk: box_::PublicKey,
     enc_sk: box_::SecretKey,
     tx: Sender<NatMsg>,
+    udt_epoll_handle: Handle,
 }
 
 impl Core {
@@ -38,6 +40,8 @@ impl Core {
             Err((state, "Token is already mapped".to_string()))
         }
     }
+
+    pub fn udt_epoll_handle(&self) -> Handle { self.udt_epoll_handle.clone() }
 
     #[allow(unused)]
     pub fn peer_state(&mut self, token: Token) -> Option<Rc<RefCell<CoreState>>> {
@@ -143,6 +147,15 @@ impl CoreMsg {
     }
 }
 
+pub struct Notify(Sender<CoreMsg>);
+impl Notifier for Notify {
+    fn notify(&self, event: Event) {
+        unwrap!(self.0.send(CoreMsg::new(move |core, poll| {
+            core.handle_readiness(poll, event.token(), event.kind());
+        })));
+    }
+}
+
 pub struct El {
     pub nat_tx: Sender<NatMsg>,
     pub core_tx: Sender<CoreMsg>,
@@ -161,6 +174,7 @@ pub fn spawn_event_loop() -> El {
     let (core_tx, core_rx) = channel::channel::<CoreMsg>();
     let (nat_tx, nat_rx) = channel::channel();
     let nat_tx_cloned = nat_tx.clone();
+    let core_tx_cloned = core_tx.clone();
 
     let joiner = thread::spawn(move || {
         const TIMER_TOKEN: usize = 0;
@@ -196,6 +210,10 @@ pub fn spawn_event_loop() -> El {
             PollOpt::edge(),
         ));
 
+        let notifier = Notify(core_tx);
+        let epoll_loop = unwrap!(EpollLoop::start_event_loop(notifier));
+        let udt_epoll_handle = epoll_loop.handle();
+
         let mut core = Core {
             nat_states: HashMap::with_capacity(10),
             peer_states: HashMap::with_capacity(5),
@@ -205,6 +223,7 @@ pub fn spawn_event_loop() -> El {
             enc_pk: enc_pk,
             enc_sk: enc_sk,
             tx: nat_tx,
+            udt_epoll_handle,
         };
 
         let mut events = Events::with_capacity(1024);
@@ -243,7 +262,7 @@ pub fn spawn_event_loop() -> El {
 
     El {
         nat_tx: nat_tx_cloned,
-        core_tx: core_tx,
+        core_tx: core_tx_cloned,
         joiner: Some(joiner),
     }
 }

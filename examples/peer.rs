@@ -6,6 +6,7 @@ extern crate rust_sodium as sodium;
 extern crate serde_json;
 #[macro_use]
 extern crate unwrap;
+extern crate socket_collection;
 
 use self::event_loop::{Core, CoreMsg, CoreState, El, spawn_event_loop};
 use mio::{Poll, PollOpt, Ready, Token};
@@ -19,6 +20,7 @@ use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::mpsc;
+use socket_collection::UdtSock;
 
 mod event_loop;
 
@@ -38,7 +40,7 @@ struct ChatEngine {
     token: Token,
     write_queue: VecDeque<Vec<u8>>,
     read_buf: [u8; 1024],
-    sock: UdpSocket,
+    sock: UdtSock,
     peer: SocketAddr,
     key: box_::PrecomputedKey,
 }
@@ -52,6 +54,8 @@ impl ChatEngine {
         peer: SocketAddr,
         peer_enc_pk: &box_::PublicKey,
     ) -> Token {
+        let sock = unwrap!(UdtSock::wrap_mio_sock(sock, core.udt_epoll_handle()));
+
         unwrap!(poll.reregister(
             &sock,
             token,
@@ -73,66 +77,29 @@ impl ChatEngine {
         token
     }
 
-    fn read(&mut self, _core: &mut Core, _poll: &Poll) {
-        let bytes_rxd = match self.sock.recv_from(&mut self.read_buf) {
-            Ok((bytes_rxd, _)) => bytes_rxd,
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
-                return
+    fn read(&mut self, core: &mut Core, poll: &Poll) {
+        loop {
+            match self.sock.read::<Vec<u8>>() {
+                Ok(Some(cipher_text)) => {
+                    let msg = unwrap!(String::from_utf8(unwrap!(
+                        p2p::msg_to_read(&cipher_text, &self.key)
+                    )));
+                    println!(
+                        "======================\nPEER: {}\n======================",
+                        msg
+                    );
+                }
+                Ok(None) => return,
+                Err(e) => panic!("Error in chat engine read: {:?}", e),
             }
-            Err(e) => panic!("Error in chat engine read: {:?}", e),
-
-        };
-
-        let msg = unwrap!(String::from_utf8(unwrap!(
-            p2p::msg_to_read(&self.read_buf[..bytes_rxd], &self.key)
-        )));
-        println!(
-            "======================\nPEER: {}\n======================",
-            msg
-        );
+        }
     }
 
     fn write(&mut self, _core: &mut Core, poll: &Poll, m: Option<String>) {
-        let m = match m {
-            Some(m) => {
-                let cipher_text = unwrap!(p2p::msg_to_send(m.as_bytes(), &self.key));
-                if self.write_queue.is_empty() {
-                    cipher_text
-                } else {
-                    self.write_queue.push_back(cipher_text);
-                    return;
-                }
-            }
-            None => {
-                match self.write_queue.pop_front() {
-                    Some(cipher_text) => cipher_text,
-                    None => return,
-                }
-            }
-        };
-
-        match self.sock.send_to(&m, &self.peer) {
-            Ok(bytes_txd) => assert_eq!(bytes_txd, m.len()),
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
-                self.write_queue.push_front(m)
-            }
-            Err(e) => panic!("Error in chat engine write: {:?}", e),
+        let cipher_text = m.map(|msg| (unwrap!(p2p::msg_to_send(msg.as_bytes(), &self.key)), 0));
+        if let Err(e) = self.sock.write(poll, self.token, cipher_text) {
+            panic!("Chat engine failed to write socket: {:?}", e);
         }
-
-        let interest = if self.write_queue.is_empty() {
-            Ready::readable() | Ready::error() | Ready::hup()
-        } else {
-            Ready::writable() | Ready::readable() | Ready::error() | Ready::hup()
-        };
-
-        unwrap!(poll.reregister(
-            &self.sock,
-            self.token,
-            interest,
-            PollOpt::edge(),
-        ));
     }
 }
 

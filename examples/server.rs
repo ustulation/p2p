@@ -6,6 +6,7 @@ extern crate serde_json;
 extern crate rust_sodium as sodium;
 #[macro_use]
 extern crate unwrap;
+extern crate socket_collection;
 
 use self::event_loop::spawn_event_loop;
 use p2p::{NatMsg, TcpRendezvousServer, UdpRendezvousServer};
