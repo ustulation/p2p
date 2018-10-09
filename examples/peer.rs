@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Sender, Receiver};
 use socket_collection::UdtSock;
 
 mod event_loop;
@@ -43,6 +43,8 @@ struct ChatEngine {
     sock: UdtSock,
     peer: SocketAddr,
     key: box_::PrecomputedKey,
+    waiting_for_connect: bool,
+    tx: mpsc::Sender<()>,
 }
 
 impl ChatEngine {
@@ -53,15 +55,21 @@ impl ChatEngine {
         sock: UdpSocket,
         peer: SocketAddr,
         peer_enc_pk: &box_::PublicKey,
+        tx: mpsc::Sender<()>,
     ) -> Token {
+        let _ = unwrap!(poll.deregister(&sock));
+
         let sock = unwrap!(UdtSock::wrap_mio_sock(sock, core.udt_epoll_handle()));
+
+        unwrap!(sock.connect(&peer));
 
         unwrap!(poll.reregister(
             &sock,
             token,
-            Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         ));
+
         let engine = Rc::new(RefCell::new(ChatEngine {
             token: token,
             write_queue: VecDeque::with_capacity(5),
@@ -69,6 +77,8 @@ impl ChatEngine {
             sock: sock,
             peer: peer,
             key: box_::precompute(peer_enc_pk, core.enc_sk()),
+            waiting_for_connect: true,
+            tx,
         }));
 
         if let Err(e) = core.insert_peer_state(token, engine) {
@@ -109,6 +119,19 @@ impl CoreState for ChatEngine {
         if event.is_readable() {
             self.read(core, poll)
         } else if event.is_writable() {
+            if self.waiting_for_connect {
+                self.waiting_for_connect = false;
+                unwrap!(poll.reregister(
+                    &self.sock,
+                    self.token,
+                    Ready::readable() | Ready::error() | Ready::hup(),
+                    PollOpt::edge(),
+                ));
+
+                println!("We are UDT connected !");
+                unwrap!(self.tx.send(()));
+                return;
+            }
             self.write(core, poll, None)
         } else {
             panic!("Unhandled event: {:?}", event);
@@ -125,7 +148,9 @@ impl CoreState for ChatEngine {
     }
 }
 
-fn start_chatting(el: &El, token: Token) {
+fn start_chatting(el: &El, token: Token, rx: mpsc::Receiver<()>) {
+    println!("Waiting for a UDT connection...");
+    unwrap!(rx.recv());
     println!("Begin chatting with peer (type \"quit\" to quit)");
 
     loop {
@@ -221,9 +246,10 @@ fn main() {
         }
     };
 
+    let (tx, rx) = mpsc::channel();
     unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
-        let _token = ChatEngine::start(core, poll, token, sock, peer, &enc_pk);
+        let _token = ChatEngine::start(core, poll, token, sock, peer, &enc_pk, tx);
     })));
 
-    start_chatting(&el, token);
+    start_chatting(&el, token, rx);
 }
