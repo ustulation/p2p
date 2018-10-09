@@ -1,5 +1,8 @@
 #![allow(deprecated)]
 
+extern crate env_logger;
+#[macro_use]
+extern crate log;
 extern crate mio;
 extern crate p2p;
 extern crate rust_sodium as sodium;
@@ -100,15 +103,19 @@ impl ChatEngine {
                     );
                 }
                 Ok(None) => return,
-                Err(e) => panic!("Error in chat engine read: {:?}", e),
+                Err(e) => {
+                    debug!("Error in chat engine read: {:?}", e);
+                    return self.terminate(core, poll);
+                }
             }
         }
     }
 
-    fn write(&mut self, _core: &mut Core, poll: &Poll, m: Option<String>) {
+    fn write(&mut self, core: &mut Core, poll: &Poll, m: Option<String>) {
         let cipher_text = m.map(|msg| (unwrap!(p2p::msg_to_send(msg.as_bytes(), &self.key)), 0));
         if let Err(e) = self.sock.write(poll, self.token, cipher_text) {
-            panic!("Chat engine failed to write socket: {:?}", e);
+            debug!("Chat engine failed to write socket: {:?}", e);
+            return self.terminate(core, poll);
         }
     }
 }
@@ -143,6 +150,7 @@ impl CoreState for ChatEngine {
     }
 
     fn terminate(&mut self, core: &mut Core, poll: &Poll) {
+        println!("\nTerminating Chat Engine!");
         let _ = core.remove_state(self.token);
         let _ = poll.deregister(&self.sock);
     }
@@ -170,6 +178,8 @@ fn start_chatting(el: &El, token: Token, rx: mpsc::Receiver<()>) {
 }
 
 fn main() {
+    env_logger::init();
+
     let el = spawn_event_loop();
     let (handle, rendezvous_info) = match get_rendezvous_info(&el) {
         Ok((h, r)) => (h, r),

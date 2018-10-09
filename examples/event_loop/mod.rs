@@ -167,6 +167,7 @@ impl Drop for El {
         let _ = self.core_tx.send(CoreMsg(None));
         let joiner = unwrap!(self.joiner.take());
         unwrap!(joiner.join());
+        println!("Gracefully shut down mio event loop");
     }
 }
 

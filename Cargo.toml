@@ -21,6 +21,8 @@ serde = "~1.0.11"
 serde_derive = "~1.0.11"
 
 [dev-dependencies]
+env_logger = "~0.5.13"
 serde_json = "~1.0.2"
-socket-collection = "~0.2.0"
+#socket-collection = "~0.2.0"
+socket-collection = { git = "https://github.com/ustulation/socket-collection" }
 unwrap = "~1.1.0"
