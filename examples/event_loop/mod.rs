@@ -1,18 +1,18 @@
-use mio::{Event, Events, Poll, PollOpt, Ready, Token};
 use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
+use mio::{Event, Events, Poll, PollOpt, Ready, Token};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
 use serde_json;
+use socket_collection::{EpollLoop, Handle, Notifier};
 use sodium::crypto::box_;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use socket_collection::{Handle, Notifier, EpollLoop};
 
 pub struct Core {
     nat_states: HashMap<Token, Rc<RefCell<NatState>>>,
@@ -41,7 +41,9 @@ impl Core {
         }
     }
 
-    pub fn udt_epoll_handle(&self) -> Handle { self.udt_epoll_handle.clone() }
+    pub fn udt_epoll_handle(&self) -> Handle {
+        self.udt_epoll_handle.clone()
+    }
 
     #[allow(unused)]
     pub fn peer_state(&mut self, token: Token) -> Option<Rc<RefCell<CoreState>>> {
@@ -51,11 +53,9 @@ impl Core {
     fn handle_nat_timer(&mut self, poll: &Poll) {
         while let Some(nat_timer) = self.timer.poll() {
             if let Some(nat_state) = self.state(nat_timer.associated_nat_state) {
-                nat_state.borrow_mut().timeout(
-                    self,
-                    poll,
-                    nat_timer.timer_id,
-                );
+                nat_state
+                    .borrow_mut()
+                    .timeout(self, poll, nat_timer.timer_id);
             }
         }
     }
@@ -137,13 +137,11 @@ impl CoreMsg {
     #[allow(unused)]
     pub fn new<F: FnOnce(&mut Core, &Poll) + Send + 'static>(f: F) -> Self {
         let mut f = Some(f);
-        CoreMsg(Some(Box::new(
-            move |core: &mut Core, poll: &Poll| if let Some(f) =
-                f.take()
-            {
+        CoreMsg(Some(Box::new(move |core: &mut Core, poll: &Poll| {
+            if let Some(f) = f.take() {
                 f(core, poll);
-            },
-        )))
+            }
+        })))
     }
 }
 
@@ -258,7 +256,6 @@ pub fn spawn_event_loop() -> El {
                 }
             }
         }
-
     });
 
     El {

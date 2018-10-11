@@ -1,7 +1,6 @@
-use {Interface, NatError, NatState, NatTimer};
-use mio::{Poll, PollOpt, Ready, Token};
 use mio::net::UdpSocket;
 use mio::timer::Timeout;
+use mio::{Poll, PollOpt, Ready, Token};
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -9,6 +8,7 @@ use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
+use {Interface, NatError, NatState, NatTimer};
 
 pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSocket, SocketAddr)>)>;
 
@@ -72,8 +72,7 @@ impl Puncher {
             token,
             Ready::writable() | Ready::readable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
-        )
-        {
+        ) {
             let _ = poll.deregister(&sock);
             return Err(From::from(e));
         }
@@ -114,7 +113,8 @@ impl Puncher {
         let bytes_rxd = match r {
             Ok((bytes, _)) => bytes,
             Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
+            {
                 return
             }
             Err(e) => {
@@ -186,7 +186,7 @@ impl Puncher {
                 if bytes_txd != msg.len() {
                     debug!(
                         "Partial datagram sent - datagram will be treated as corrupted. \
-                            Actual size: {} B, sent size: {} B.",
+                         Actual size: {} B, sent size: {} B.",
                         msg.len(),
                         bytes_txd
                     );
@@ -196,7 +196,10 @@ impl Puncher {
                 }
             }
             Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => false,
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
+            {
+                false
+            }
             Err(e) => return Err(From::from(e)),
         };
 
@@ -224,8 +227,7 @@ impl Puncher {
             Ok(poll.reregister(
                 self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
                 self.token,
-                Ready::readable() | Ready::writable() |
-                    Ready::error() | Ready::hup(),
+                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
                 PollOpt::edge(),
             )?)
         }
@@ -249,10 +251,12 @@ impl Puncher {
 impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
-            let e = match self.sock
+            let e = match self
+                .sock
                 .as_ref()
                 .ok_or(NatError::UnregisteredSocket)
-                .and_then(|s| s.take_error().map_err(From::from)) {
+                .and_then(|s| s.take_error().map_err(From::from))
+            {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
@@ -280,7 +284,6 @@ impl NatState for Puncher {
                 debug!("Error in setting timeout: {:?}", e);
                 return self.handle_err(ifc, poll);
             }
-
         };
         self.current_ttl += 1;
         if self.current_ttl >= self.os_ttl {

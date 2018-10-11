@@ -11,19 +11,19 @@ extern crate serde_json;
 extern crate unwrap;
 extern crate socket_collection;
 
-use self::event_loop::{Core, CoreMsg, CoreState, El, spawn_event_loop};
-use mio::{Poll, PollOpt, Ready, Token};
+use self::event_loop::{spawn_event_loop, Core, CoreMsg, CoreState, El};
 use mio::net::UdpSocket;
-use p2p::{Handle, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
+use mio::{Poll, PollOpt, Ready, Token};
 use p2p::HolePunchInfo;
+use p2p::{Handle, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
+use socket_collection::UdtSock;
 use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::sync::mpsc::{self, Sender, Receiver};
-use socket_collection::UdtSock;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 mod event_loop;
 
@@ -94,9 +94,10 @@ impl ChatEngine {
         loop {
             match self.sock.read::<Vec<u8>>() {
                 Ok(Some(cipher_text)) => {
-                    let msg = unwrap!(String::from_utf8(unwrap!(
-                        p2p::msg_to_read(&cipher_text, &self.key)
-                    )));
+                    let msg = unwrap!(String::from_utf8(unwrap!(p2p::msg_to_read(
+                        &cipher_text,
+                        &self.key
+                    ))));
                     println!(
                         "======================\nPEER: {}\n======================",
                         msg
@@ -187,7 +188,7 @@ fn main() {
             println!("Could not obtain rendezvous info: {:?}", e);
             println!(
                 "[Check if the rendezvous server addresses are correct and publicly \
-                      reachable and that they are running]."
+                 reachable and that they are running]."
             );
             return;
         }
@@ -197,10 +198,10 @@ fn main() {
 
     println!(
         "\n[NOTE: For unfriendlier routers/NATs, timming can play a big role. It's \
-              recommended that once the rendezvous info is exchanged, both parties hit \"Enter\" \
-              as closely in time as possible. Usually with an overlay network to exchange this \
-              info there won't be a problem, but when doing it manually it could be of benefit \
-              to do it as simultaneously as possible.]\n"
+         recommended that once the rendezvous info is exchanged, both parties hit \"Enter\" \
+         as closely in time as possible. Usually with an overlay network to exchange this \
+         info there won't be a problem, but when doing it manually it could be of benefit \
+         to do it as simultaneously as possible.]\n"
     );
 
     println!("Enter peer rendezvous info:");
@@ -242,18 +243,16 @@ fn main() {
         (None, Some(_)) => {
             println!(
                 "Connected only via TCP. This example only supports communicating via \
-                      udp-socket but it seems it's tcp hole punching that has succeeded instead. \
-                      It is trivial to implement tcp communication for the chat engine and is \
-                      left for future scope. Terminating for the moment."
+                 udp-socket but it seems it's tcp hole punching that has succeeded instead. \
+                 It is trivial to implement tcp communication for the chat engine and is \
+                 left for future scope. Terminating for the moment."
             );
             return;
         }
-        (None, None) => {
-            unreachable!(
-                "This condition should not have been passed over to the user \
-                                     code!"
-            )
-        }
+        (None, None) => unreachable!(
+            "This condition should not have been passed over to the user \
+             code!"
+        ),
     };
 
     let (tx, rx) = mpsc::channel();

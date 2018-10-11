@@ -4,8 +4,8 @@
 extern crate log;
 extern crate mio;
 extern crate p2p;
-extern crate serde_json;
 extern crate rust_sodium as sodium;
+extern crate serde_json;
 #[macro_use]
 extern crate unwrap;
 extern crate socket_collection;

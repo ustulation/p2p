@@ -1,4 +1,3 @@
-use {Interface, NatError, NatState};
 use mio::{Poll, PollOpt, Ready, Token};
 use sodium::crypto::sealedbox;
 use std::any::Any;
@@ -6,8 +5,9 @@ use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::str::{self, FromStr};
-use tcp::{TcpEchoReq, TcpEchoResp};
 use tcp::Socket;
+use tcp::{TcpEchoReq, TcpEchoResp};
+use {Interface, NatError, NatState};
 
 pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<SocketAddr>)>;
 
@@ -47,12 +47,10 @@ impl TcpRendezvousClient {
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
         let utf8 = match self.sock.read() {
-            Ok(Some(TcpEchoResp(r))) => {
-                match sealedbox::open(&r, ifc.enc_pk(), ifc.enc_sk()) {
-                    Ok(utf8) => utf8,
-                    Err(()) => return self.handle_err(ifc, poll),
-                }
-            }
+            Ok(Some(TcpEchoResp(r))) => match sealedbox::open(&r, ifc.enc_pk(), ifc.enc_sk()) {
+                Ok(utf8) => utf8,
+                Err(()) => return self.handle_err(ifc, poll),
+            },
             Ok(None) => return,
             Err(e) => {
                 debug!("Tcp Rendezvous client errored out in read: {:?}", e);
@@ -61,18 +59,16 @@ impl TcpRendezvousClient {
         };
 
         match str::from_utf8(&utf8) {
-            Ok(our_ext_addr_str) => {
-                match SocketAddr::from_str(our_ext_addr_str) {
-                    Ok(addr) => self.done(ifc, poll, addr),
-                    Err(e) => {
-                        debug!(
-                            "Error: UdpEchoResp which contained non-parsable address: {:?}",
-                            e
-                        );
-                        self.handle_err(ifc, poll)
-                    }
+            Ok(our_ext_addr_str) => match SocketAddr::from_str(our_ext_addr_str) {
+                Ok(addr) => self.done(ifc, poll, addr),
+                Err(e) => {
+                    debug!(
+                        "Error: UdpEchoResp which contained non-parsable address: {:?}",
+                        e
+                    );
+                    self.handle_err(ifc, poll)
                 }
-            }
+            },
             Err(e) => {
                 debug!(
                     "Error: UdpEchoResp which contained non-utf8 address: {:?}",

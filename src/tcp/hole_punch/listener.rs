@@ -1,12 +1,12 @@
 use super::puncher::{Finish, Puncher, Via};
-use {Interface, NatError, NatState};
-use mio::{Poll, PollOpt, Ready, Token};
 use mio::tcp::TcpListener;
+use mio::{Poll, PollOpt, Ready, Token};
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 use tcp::Socket;
+use {Interface, NatError, NatState};
 
 pub struct Listener {
     token: Token,

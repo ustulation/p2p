@@ -211,20 +211,51 @@
 
 // For explanation of lint checks, run `rustc -W help` or see
 // https://github.com/maidsafe/QA/blob/master/Documentation/Rust%20Lint%20Checks.md
-#![forbid(exceeding_bitshifts, mutable_transmutes, no_mangle_const_items,
-          unknown_crate_types, warnings)]
-#![deny(bad_style, deprecated, improper_ctypes, missing_docs,
-        non_shorthand_field_patterns, overflowing_literals, plugin_as_library,
-        private_no_mangle_fns, private_no_mangle_statics, stable_features,
-        unconditional_recursion, unknown_lints, unsafe_code, unused, unused_allocation,
-        unused_attributes, unused_comparisons, unused_features, unused_parens, while_true)]
-#![warn(trivial_casts, trivial_numeric_casts, unused_extern_crates, unused_import_braces,
-        unused_qualifications, unused_results)]
-#![allow(box_pointers, missing_copy_implementations,
-         missing_debug_implementations, variant_size_differences)]
-
-#![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
-#![recursion_limit="100"]
+#![forbid(
+    exceeding_bitshifts,
+    mutable_transmutes,
+    no_mangle_const_items,
+    unknown_crate_types,
+    warnings
+)]
+#![deny(
+    bad_style,
+    deprecated,
+    improper_ctypes,
+    missing_docs,
+    non_shorthand_field_patterns,
+    overflowing_literals,
+    plugin_as_library,
+    private_no_mangle_fns,
+    private_no_mangle_statics,
+    stable_features,
+    unconditional_recursion,
+    unknown_lints,
+    unsafe_code,
+    unused,
+    unused_allocation,
+    unused_attributes,
+    unused_comparisons,
+    unused_features,
+    unused_parens,
+    while_true
+)]
+#![warn(
+    trivial_casts,
+    trivial_numeric_casts,
+    unused_extern_crates,
+    unused_import_braces,
+    unused_qualifications,
+    unused_results
+)]
+#![allow(
+    box_pointers,
+    missing_copy_implementations,
+    missing_debug_implementations,
+    variant_size_differences
+)]
+#![cfg_attr(feature = "cargo-clippy", allow(too_many_arguments))]
+#![recursion_limit = "100"]
 #![allow(deprecated)]
 
 // Coding guidelines:
@@ -251,10 +282,10 @@ extern crate rand;
 extern crate rust_sodium as sodium;
 extern crate serde;
 
-use bincode::{Infinite, deserialize, serialize};
-use mio::{Poll, Ready, Token};
+use bincode::{deserialize, serialize, Infinite};
 use mio::channel::Sender;
 use mio::timer::{Timeout, TimerError};
+use mio::{Poll, Ready, Token};
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -270,8 +301,9 @@ mod udp;
 
 pub use config::Config;
 pub use error::NatError;
-pub use hole_punch::{GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator,
-                     RendezvousInfo};
+pub use hole_punch::{
+    GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator, RendezvousInfo,
+};
 pub use tcp::TcpRendezvousServer;
 pub use udp::UdpRendezvousServer;
 
@@ -320,13 +352,11 @@ impl NatMsg {
         F: FnOnce(&mut Interface, &Poll) + Send + 'static,
     {
         let mut f = Some(f);
-        NatMsg(Box::new(
-            move |ifc: &mut Interface, poll: &Poll| if let Some(f) =
-                f.take()
-            {
+        NatMsg(Box::new(move |ifc: &mut Interface, poll: &Poll| {
+            if let Some(f) = f.take() {
                 f(ifc, poll)
-            },
-        ))
+            }
+        }))
     }
 
     /// Execute the message (and thus the action).
@@ -406,7 +436,6 @@ pub struct CryptMsg {
     pub cipher_text: Vec<u8>,
 }
 
-
 /// Utility function to encrypt messages to peer
 pub fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
     let nonce = box_::gen_nonce();
@@ -421,6 +450,6 @@ pub fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u
 /// Utility function to decrypt messages from peer
 pub fn msg_to_read(raw: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
     let CryptMsg { nonce, cipher_text } = deserialize(raw)?;
-    box_::open_precomputed(&cipher_text, &box_::Nonce(nonce), key).
-        map_err(|()| NatError::AsymmetricDecipherFailed)
+    box_::open_precomputed(&cipher_text, &box_::Nonce(nonce), key)
+        .map_err(|()| NatError::AsymmetricDecipherFailed)
 }

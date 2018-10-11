@@ -1,14 +1,14 @@
 use self::exchange_msg::ExchangeMsg;
-use {Interface, NatError, NatState};
 use config::TCP_RENDEZVOUS_PORT;
-use mio::{Poll, PollOpt, Ready, Token};
 use mio::tcp::TcpListener;
+use mio::{Poll, PollOpt, Ready, Token};
 use net2::TcpBuilder;
 use std::any::Any;
 use std::cell::RefCell;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 use tcp::{Socket, TcpEchoReq, TcpEchoResp};
+use {Interface, NatError, NatState};
 
 mod exchange_msg;
 
@@ -31,9 +31,10 @@ impl TcpRendezvousServer {
     /// Boot the TCP Rendezvous server. This should normally be called only once.
     pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
         let listener = {
-            let port = ifc.config().tcp_rendezvous_port.unwrap_or(
-                TCP_RENDEZVOUS_PORT,
-            );
+            let port = ifc
+                .config()
+                .tcp_rendezvous_port
+                .unwrap_or(TCP_RENDEZVOUS_PORT);
             let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
             let builder = TcpBuilder::new_v4()?;
             let _ = builder.bind(addr)?;

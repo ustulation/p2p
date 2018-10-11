@@ -1,7 +1,6 @@
 use super::{TcpEchoReq, TcpEchoResp};
-use {Interface, NatError, NatState, NatTimer};
-use mio::{Poll, PollOpt, Ready, Token};
 use mio::timer::Timeout;
+use mio::{Poll, PollOpt, Ready, Token};
 use sodium::crypto::box_;
 use sodium::crypto::sealedbox;
 use std::any::Any;
@@ -10,6 +9,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 use tcp::Socket;
+use {Interface, NatError, NatState, NatTimer};
 
 const TIMER_ID: u8 = 0;
 const RENDEZVOUS_EXCHG_TIMEOUT_SEC: u64 = 10;

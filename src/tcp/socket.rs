@@ -1,14 +1,14 @@
-use NatError;
-use bincode::{Infinite, deserialize_from, serialize_into};
+use bincode::{deserialize_from, serialize_into, Infinite};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use mio::{Evented, Poll, PollOpt, Ready, Token};
 use mio::tcp::TcpStream;
+use mio::{Evented, Poll, PollOpt, Ready, Token};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use std::collections::VecDeque;
 use std::io::{self, Cursor, ErrorKind, Read, Write};
 use std::mem;
 use std::net::SocketAddr;
+use NatError;
 
 const MAX_PAYLOAD_SIZE: usize = 1024;
 
@@ -171,8 +171,8 @@ impl SockInner {
                     is_something_read = true;
                 }
                 Err(error) => {
-                    return if error.kind() == ErrorKind::WouldBlock ||
-                        error.kind() == ErrorKind::Interrupted
+                    return if error.kind() == ErrorKind::WouldBlock
+                        || error.kind() == ErrorKind::Interrupted
                     {
                         if is_something_read {
                             self.read_from_buffer()
@@ -254,8 +254,8 @@ impl SockInner {
                     }
                 }
                 Err(error) => {
-                    if error.kind() == ErrorKind::WouldBlock ||
-                        error.kind() == ErrorKind::Interrupted
+                    if error.kind() == ErrorKind::WouldBlock
+                        || error.kind() == ErrorKind::Interrupted
                     {
                         self.current_write = Some(data);
                     } else {

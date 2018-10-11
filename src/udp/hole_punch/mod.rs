@@ -1,9 +1,8 @@
 use self::puncher::Puncher;
 use self::rendezvous_client::UdpRendezvousClient;
-use {Interface, NatError, NatState};
+use mio::net::UdpSocket;
 use mio::Poll;
 use mio::Token;
-use mio::net::UdpSocket;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -12,6 +11,7 @@ use std::fmt::{self, Debug, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::{Rc, Weak};
+use {Interface, NatError, NatState};
 
 mod puncher;
 mod rendezvous_client;
@@ -73,12 +73,9 @@ impl UdpHolePunchMediator {
             let weak_cloned = weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, child, res| {
                 if let Some(mediator) = weak_cloned.upgrade() {
-                    mediator.borrow_mut().handle_rendezvous(
-                        ifc,
-                        poll,
-                        child,
-                        res,
-                    );
+                    mediator
+                        .borrow_mut()
+                        .handle_rendezvous(ifc, poll, child, res);
                 }
             };
 
@@ -137,7 +134,7 @@ impl UdpHolePunchMediator {
             ref x => {
                 warn!(
                     "Logic Error in state book-keeping - Pls report this as a bug. Expected \
-                       state: State::Rendezvous ;; Found: {:?}",
+                     state: State::Rendezvous ;; Found: {:?}",
                     x
                 );
                 Err(NatError::InvalidState)
@@ -184,7 +181,7 @@ impl UdpHolePunchMediator {
             ref x => {
                 trace!(
                     "Already proceeded to the next state. Invalid state for executing a \
-                        rendezvous timeout: {:?}",
+                     rendezvous timeout: {:?}",
                     x
                 );
                 Err(NatError::InvalidState)
@@ -197,8 +194,7 @@ impl UdpHolePunchMediator {
         });
 
         match r {
-            Ok(_) |
-            Err(NatError::InvalidState) => (),
+            Ok(_) | Err(NatError::InvalidState) => (),
             Err(ref e) => {
                 debug!("Terminating due to: {:?}", e);
                 self.terminate(ifc, poll);
@@ -228,21 +224,17 @@ impl UdpHolePunchMediator {
         let hole_punchers_cfg = ifc.config().udp_hole_punchers.clone();
 
         let mut children = HashSet::with_capacity(cap);
-        for (((sock, token), peer), puncher_config) in
-            info.into_iter().zip(peers.into_iter()).zip(
-                hole_punchers_cfg
-                    .into_iter(),
-            )
+        for (((sock, token), peer), puncher_config) in info
+            .into_iter()
+            .zip(peers.into_iter())
+            .zip(hole_punchers_cfg.into_iter())
         {
             let weak = self.self_weak.clone();
             let handler = move |ifc: &mut Interface, poll: &Poll, token, res| {
                 if let Some(mediator) = weak.upgrade() {
-                    mediator.borrow_mut().handle_hole_punch(
-                        ifc,
-                        poll,
-                        token,
-                        res,
-                    );
+                    mediator
+                        .borrow_mut()
+                        .handle_hole_punch(ifc, poll, token, res);
                 }
             };
             if Puncher::start(
@@ -301,7 +293,7 @@ impl UdpHolePunchMediator {
             ref x => {
                 warn!(
                     "Logic Error in state book-keeping - Pls report this as a bug. Expected \
-                       state: State::HolePunching ;; Found: {:?}",
+                     state: State::HolePunching ;; Found: {:?}",
                     x
                 );
                 Err(NatError::InvalidState)
@@ -354,7 +346,9 @@ impl NatState for UdpHolePunchMediator {
             State::ReadyToHolePunch(ref mut socks) => {
                 UdpHolePunchMediator::dereg_socks(poll, socks)
             }
-            State::HolePunching { ref mut children, .. } => {
+            State::HolePunching {
+                ref mut children, ..
+            } => {
                 UdpHolePunchMediator::terminate_children(ifc, poll, children);
             }
             State::None => (),

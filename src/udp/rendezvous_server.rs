@@ -1,9 +1,8 @@
 use super::{UdpEchoReq, UdpEchoResp};
-use {Interface, NatError, NatState};
-use bincode::{Infinite, deserialize, serialize};
+use bincode::{deserialize, serialize, Infinite};
 use config::UDP_RENDEZVOUS_PORT;
-use mio::{Poll, PollOpt, Ready, Token};
 use mio::net::UdpSocket;
+use mio::{Poll, PollOpt, Ready, Token};
 use sodium::crypto::box_::PublicKey;
 use sodium::crypto::sealedbox;
 use std::any::Any;
@@ -12,6 +11,7 @@ use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
+use {Interface, NatError, NatState};
 
 /// UDP Rendezvous server.
 ///
@@ -30,9 +30,10 @@ pub struct UdpRendezvousServer {
 impl UdpRendezvousServer {
     /// Boot the UDP Rendezvous server. This should normally be called only once.
     pub fn start(ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
-        let port = ifc.config().udp_rendezvous_port.unwrap_or(
-            UDP_RENDEZVOUS_PORT,
-        );
+        let port = ifc
+            .config()
+            .udp_rendezvous_port
+            .unwrap_or(UDP_RENDEZVOUS_PORT);
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
         let sock = UdpSocket::bind(&addr)?;
 
@@ -65,7 +66,8 @@ impl UdpRendezvousServer {
         let (bytes_rxd, peer) = match self.sock.recv_from(&mut buf) {
             Ok((bytes, peer)) => (bytes, peer),
             Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
+            {
                 return
             }
             Err(e) => {
@@ -116,14 +118,15 @@ impl UdpRendezvousServer {
                 if bytes_txd != resp.len() {
                     debug!(
                         "Partial datagram sent - datagram will be treated as corrupted. \
-                            Actual size: {} B, sent size: {} B.",
+                         Actual size: {} B, sent size: {} B.",
                         resp.len(),
                         bytes_txd
                     );
                 }
             }
             Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
+            {
                 self.write_queue.push_front((peer, resp))
             }
             Err(e) => return Err(From::from(e)),
@@ -140,8 +143,7 @@ impl UdpRendezvousServer {
             Ok(poll.reregister(
                 &self.sock,
                 self.token,
-                Ready::readable() | Ready::writable() |
-                    Ready::error() | Ready::hup(),
+                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
                 PollOpt::edge(),
             )?)
         }

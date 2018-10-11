@@ -1,7 +1,6 @@
-use {Interface, NatError, NatState, NatTimer};
-use mio::{Poll, PollOpt, Ready, Token};
 use mio::tcp::TcpStream;
 use mio::timer::Timeout;
+use mio::{Poll, PollOpt, Ready, Token};
 use net2::TcpStreamExt;
 use sodium::crypto::box_;
 use std::any::Any;
@@ -10,7 +9,8 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
-use tcp::{Socket, new_reusably_bound_tcp_sockets};
+use tcp::{new_reusably_bound_tcp_sockets, Socket};
+use {Interface, NatError, NatState, NatTimer};
 
 pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<TcpStream>)>;
 
@@ -60,8 +60,7 @@ impl Puncher {
                 our_addr,
                 peer_addr,
             } => {
-                let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0]
-                    .to_tcp_stream()?;
+                let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].to_tcp_stream()?;
                 stream.set_linger(Some(Duration::from_secs(0)))?;
                 let sock = Socket::wrap(TcpStream::connect_stream(stream, &peer_addr)?);
                 (sock, ifc.new_token(), false, our_addr, peer_addr)
@@ -71,8 +70,7 @@ impl Puncher {
         poll.register(
             &sock,
             token,
-            Ready::readable() | Ready::writable() |
-                Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         )?;
 
@@ -223,15 +221,13 @@ impl NatState for Puncher {
         let _ = mem::replace(&mut self.sock, Default::default());
 
         let r = || -> ::Res<Socket> {
-            let stream = new_reusably_bound_tcp_sockets(&self.our_addr, 1)?.0[0]
-                .to_tcp_stream()?;
+            let stream = new_reusably_bound_tcp_sockets(&self.our_addr, 1)?.0[0].to_tcp_stream()?;
             stream.set_linger(Some(Duration::from_secs(0)))?;
             let sock = Socket::wrap(TcpStream::connect_stream(stream, &self.peer_addr)?);
             poll.register(
                 &sock,
                 self.token,
-                Ready::readable() | Ready::writable() |
-                    Ready::error() | Ready::hup(),
+                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
                 PollOpt::edge(),
             )?;
             Ok(sock)
