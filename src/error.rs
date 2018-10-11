@@ -1,5 +1,6 @@
 use bincode;
 use mio::timer::TimerError;
+use socket_collection;
 use std::io;
 
 quick_error! {
@@ -35,9 +36,11 @@ quick_error! {
         PayloadSizeProhibitive {
             description("Payload size is too large")
         }
-        /// Zero bytes were read - usually indicates EOF (graceful shutdown)
-        ZeroByteRead {
-            description("Zero bytes were read - usually indicates EOF (graceful shutdown")
+        /// Socket Error
+        SocketError(e: socket_collection::SocketError) {
+            description(e.description())
+            display("{}", e)
+            from()
         }
 
         // =======================================

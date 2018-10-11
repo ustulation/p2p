@@ -114,7 +114,7 @@ impl ChatEngine {
 
     fn write(&mut self, core: &mut Core, poll: &Poll, m: Option<String>) {
         let cipher_text = m.map(|msg| (unwrap!(p2p::msg_to_send(msg.as_bytes(), &self.key)), 0));
-        if let Err(e) = self.sock.write(poll, self.token, cipher_text) {
+        if let Err(e) = self.sock.write(cipher_text) {
             debug!("Chat engine failed to write socket: {:?}", e);
             return self.terminate(core, poll);
         }

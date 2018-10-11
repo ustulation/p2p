@@ -1,11 +1,11 @@
 use mio::{Poll, PollOpt, Ready, Token};
+use socket_collection::{self, TcpSock};
 use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::str::{self, FromStr};
-use tcp::Socket;
 use tcp::{TcpEchoReq, TcpEchoResp};
 use {Interface, NatError, NatState};
 
@@ -13,27 +13,27 @@ pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<SocketAddr>)>;
 
 pub struct TcpRendezvousClient {
     token: Token,
-    sock: Socket,
+    sock: TcpSock,
     req: Option<TcpEchoReq>,
     f: Finish,
 }
 
 impl TcpRendezvousClient {
-    pub fn start(ifc: &mut Interface, poll: &Poll, sock: Socket, f: Finish) -> ::Res<Token> {
+    pub fn start(ifc: &mut Interface, poll: &Poll, sock: TcpSock, f: Finish) -> ::Res<Token> {
         let token = ifc.new_token();
 
         poll.register(
             &sock,
             token,
-            Ready::writable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         )?;
 
         let client = Rc::new(RefCell::new(TcpRendezvousClient {
-            token: token,
-            sock: sock,
+            token,
+            sock,
             req: Some(TcpEchoReq(ifc.enc_pk().0)),
-            f: f,
+            f,
         }));
 
         if ifc.insert_state(token, client.clone()).is_err() {
@@ -46,24 +46,45 @@ impl TcpRendezvousClient {
     }
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let utf8 = match self.sock.read() {
-            Ok(Some(TcpEchoResp(r))) => match sealedbox::open(&r, ifc.enc_pk(), ifc.enc_sk()) {
-                Ok(utf8) => utf8,
-                Err(()) => return self.handle_err(ifc, poll),
-            },
-            Ok(None) => return,
-            Err(e) => {
-                debug!("Tcp Rendezvous client errored out in read: {:?}", e);
-                return self.handle_err(ifc, poll);
+        let mut utf8 = Vec::new();
+
+        loop {
+            match self.sock.read() {
+                Ok(Some(TcpEchoResp(cipher_text))) => {
+                    match sealedbox::open(&cipher_text, ifc.enc_pk(), ifc.enc_sk()) {
+                        Ok(plain_text) => utf8 = plain_text,
+                        Err(()) => {
+                            debug!("Error: Failed to decrypt TcpIpEchoResp");
+                            return self.handle_err(ifc, poll);
+                        }
+                    };
+                }
+                Ok(None) => if utf8.is_empty() {
+                    return;
+                } else {
+                    break;
+                },
+                Err(socket_collection::SocketError::ZeroByteRead) => {
+                    if utf8.is_empty() {
+                        debug!("Error: Connection shutdown without getting TcpIpEchoResp");
+                        return self.handle_err(ifc, poll);
+                    } else {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    debug!("Tcp Rendezvous client errored out in read: {:?}", e);
+                    return self.handle_err(ifc, poll);
+                }
             }
-        };
+        }
 
         match str::from_utf8(&utf8) {
             Ok(our_ext_addr_str) => match SocketAddr::from_str(our_ext_addr_str) {
                 Ok(addr) => self.done(ifc, poll, addr),
                 Err(e) => {
                     debug!(
-                        "Error: UdpEchoResp which contained non-parsable address: {:?}",
+                        "Error: TcpIpEchoResp which contained non-parsable address: {:?}",
                         e
                     );
                     self.handle_err(ifc, poll)
@@ -71,7 +92,7 @@ impl TcpRendezvousClient {
             },
             Err(e) => {
                 debug!(
-                    "Error: UdpEchoResp which contained non-utf8 address: {:?}",
+                    "Error: TcpIpEchoResp which contained non-utf8 address: {:?}",
                     e
                 );
                 self.handle_err(ifc, poll)
@@ -80,7 +101,7 @@ impl TcpRendezvousClient {
     }
 
     fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<TcpEchoReq>) {
-        if let Err(e) = self.sock.write(poll, self.token, m) {
+        if let Err(e) = self.sock.write(m.map(|m| (m, 0))) {
             debug!("Tcp Rendezvous client errored out in write: {:?}", e);
             self.handle_err(ifc, poll);
         }

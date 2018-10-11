@@ -3,11 +3,13 @@ use config::TCP_RENDEZVOUS_PORT;
 use mio::tcp::TcpListener;
 use mio::{Poll, PollOpt, Ready, Token};
 use net2::TcpBuilder;
+use socket_collection::TcpSock;
 use std::any::Any;
 use std::cell::RefCell;
+use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
-use tcp::{Socket, TcpEchoReq, TcpEchoResp};
+use tcp::{TcpEchoReq, TcpEchoResp};
 use {Interface, NatError, NatState};
 
 mod exchange_msg;
@@ -51,10 +53,7 @@ impl TcpRendezvousServer {
             PollOpt::edge(),
         )?;
 
-        let server = Rc::new(RefCell::new(TcpRendezvousServer {
-            token: token,
-            listener: listener,
-        }));
+        let server = Rc::new(RefCell::new(TcpRendezvousServer { token, listener }));
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start TcpRendezvousServer!");
@@ -69,9 +68,14 @@ impl TcpRendezvousServer {
         loop {
             match self.listener.accept() {
                 Ok((socket, peer)) => {
-                    if let Err(e) = ExchangeMsg::start(ifc, poll, peer, Socket::wrap(socket)) {
+                    if let Err(e) = ExchangeMsg::start(ifc, poll, peer, TcpSock::wrap(socket)) {
                         debug!("Error accepting direct connection: {:?}", e);
                     }
+                }
+                Err(ref e)
+                    if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
+                {
+                    return;
                 }
                 Err(e) => {
                     debug!("Failed to accept new socket: {:?}", e);

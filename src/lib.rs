@@ -275,12 +275,11 @@ extern crate quick_error;
 extern crate serde_derive;
 
 extern crate bincode;
-extern crate byteorder;
 extern crate mio;
 extern crate net2;
 extern crate rand;
 extern crate rust_sodium as sodium;
-extern crate serde;
+extern crate socket_collection;
 
 use bincode::{deserialize, serialize, Infinite};
 use mio::channel::Sender;

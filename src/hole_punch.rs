@@ -1,9 +1,9 @@
 use config::{HOLE_PUNCH_TIMEOUT_SEC, HOLE_PUNCH_WAIT_FOR_OTHER, RENDEZVOUS_TIMEOUT_SEC};
 use mio::channel::Sender;
 use mio::net::UdpSocket;
-use mio::tcp::TcpStream;
 use mio::timer::Timeout;
 use mio::{Poll, Token};
+use socket_collection::TcpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -61,7 +61,7 @@ impl Default for RendezvousInfo {
 #[derive(Debug)]
 pub struct HolePunchInfo {
     /// TCP socket that successfully managed to hole punch
-    pub tcp: Option<(TcpStream, Token)>,
+    pub tcp: Option<(TcpSock, Token)>,
     /// UDP socket that successfully managed to hole punch
     pub udp: Option<(UdpSocket, SocketAddr, Token)>,
     /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
@@ -75,7 +75,7 @@ impl HolePunchInfo {
         HolePunchInfo {
             tcp: None,
             udp: None,
-            enc_pk: enc_pk,
+            enc_pk,
         }
     }
 }
@@ -144,7 +144,7 @@ impl HolePunchMediator {
         let timeout = ifc.set_timeout(Duration::from_secs(dur), NatTimer::new(token, TIMER_ID))?;
 
         let mediator = Rc::new(RefCell::new(HolePunchMediator {
-            token: token,
+            token,
             state: State::None,
             udp_child: None,
             tcp_child: None,
@@ -385,9 +385,9 @@ impl HolePunchMediator {
     ) {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.udp_child = None;
-            if let Ok(sock) = res {
+            if let Ok(sock_info) = res {
                 trace!("UDP has successfully hole punched");
-                info.udp = Some(sock);
+                info.udp = Some(sock_info);
             }
         }
 
@@ -398,13 +398,13 @@ impl HolePunchMediator {
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
-        res: ::Res<(TcpStream, Token)>,
+        res: ::Res<(TcpSock, Token)>,
     ) {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.tcp_child = None;
-            if let Ok(sock) = res {
+            if let Ok(sock_info) = res {
                 trace!("TCP has successfully hole punched");
-                info.tcp = Some(sock);
+                info.tcp = Some(sock_info);
             }
         }
 

@@ -1,6 +1,7 @@
 use super::{TcpEchoReq, TcpEchoResp};
 use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
+use socket_collection::TcpSock;
 use sodium::crypto::box_;
 use sodium::crypto::sealedbox;
 use std::any::Any;
@@ -8,7 +9,6 @@ use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
-use tcp::Socket;
 use {Interface, NatError, NatState, NatTimer};
 
 const TIMER_ID: u8 = 0;
@@ -16,13 +16,13 @@ const RENDEZVOUS_EXCHG_TIMEOUT_SEC: u64 = 10;
 
 pub struct ExchangeMsg {
     token: Token,
-    sock: Socket,
+    sock: TcpSock,
     peer: SocketAddr,
     timeout: Timeout,
 }
 
 impl ExchangeMsg {
-    pub fn start(ifc: &mut Interface, poll: &Poll, peer: SocketAddr, sock: Socket) -> ::Res<()> {
+    pub fn start(ifc: &mut Interface, poll: &Poll, peer: SocketAddr, sock: TcpSock) -> ::Res<()> {
         let token = ifc.new_token();
 
         let timeout = ifc.set_timeout(
@@ -33,15 +33,15 @@ impl ExchangeMsg {
         poll.register(
             &sock,
             token,
-            Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         )?;
 
         let exchg_msg = Rc::new(RefCell::new(ExchangeMsg {
-            token: token,
-            sock: sock,
-            peer: peer,
-            timeout: timeout,
+            token,
+            sock,
+            peer,
+            timeout,
         }));
 
         if ifc.insert_state(token, exchg_msg.clone()).is_err() {
@@ -54,21 +54,33 @@ impl ExchangeMsg {
     }
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let pk = match self.sock.read::<TcpEchoReq>() {
-            Ok(Some(TcpEchoReq(pk))) => box_::PublicKey(pk),
-            Ok(None) => return,
-            Err(e) => {
-                debug!("Error in read: {:?}", e);
-                return self.terminate(ifc, poll);
+        let mut pk = None;
+        loop {
+            match self.sock.read() {
+                Ok(Some(TcpEchoReq(raw))) => pk = Some(box_::PublicKey(raw)),
+                Ok(None) => if pk.is_some() {
+                    break;
+                } else {
+                    return;
+                },
+                Err(e) => {
+                    debug!("Error in read: {:?}", e);
+                    return self.terminate(ifc, poll);
+                }
             }
-        };
+        }
 
-        let resp = TcpEchoResp(sealedbox::seal(format!("{}", self.peer).as_bytes(), &pk));
-        self.write(ifc, poll, Some(resp))
+        if let Some(pk) = pk.take() {
+            let resp = TcpEchoResp(sealedbox::seal(format!("{}", self.peer).as_bytes(), &pk));
+            self.write(ifc, poll, Some(resp))
+        } else {
+            debug!("Error: Logic error in Tcp Rendezvous Server - Please report.");
+            return self.terminate(ifc, poll);
+        }
     }
 
     fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<TcpEchoResp>) {
-        match self.sock.write(poll, self.token, m) {
+        match self.sock.write(m.map(|m| (m, 0))) {
             Ok(true) => (),
             Ok(false) => return,
             Err(e) => debug!("Error in write for tcp exchanger: {:?}", e),

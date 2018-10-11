@@ -5,6 +5,7 @@ use mio::tcp::{TcpListener, TcpStream};
 use mio::Poll;
 use mio::Token;
 use rand::{self, Rng};
+use socket_collection::TcpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -13,7 +14,7 @@ use std::fmt::{self, Debug, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::{Rc, Weak};
-use tcp::{new_reusably_bound_tcp_sockets, Socket};
+use tcp::new_reusably_bound_tcp_sockets;
 use {Interface, NatError, NatState};
 
 mod listener;
@@ -21,7 +22,7 @@ mod puncher;
 mod rendezvous_client;
 
 pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<SocketAddr>)>;
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(TcpStream, Token)>)>;
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(TcpSock, Token)>)>;
 
 const LISTENER_BACKLOG: i32 = 100;
 
@@ -91,7 +92,7 @@ impl TcpHolePunchMediator {
         for (builder, server) in builders.iter().zip(servers.iter()) {
             let sock = {
                 let s = builder.to_tcp_stream()?;
-                Socket::wrap(TcpStream::connect_stream(s, server)?)
+                TcpSock::wrap(TcpStream::connect_stream(s, server)?)
             };
 
             let weak_cloned = weak.clone();
@@ -311,7 +312,7 @@ impl TcpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        res: ::Res<TcpStream>,
+        res: ::Res<TcpSock>,
     ) {
         let r = match self.state {
             State::HolePunching {

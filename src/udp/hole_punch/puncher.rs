@@ -13,9 +13,9 @@ use {Interface, NatError, NatState, NatTimer};
 pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSocket, SocketAddr)>)>;
 
 const TIMER_ID: u8 = 0;
-const SYN: &'static [u8] = b"SYN";
-const SYN_ACK: &'static [u8] = b"SYN-ACK";
-const ACK: &'static [u8] = b"ACK";
+const SYN: &[u8] = b"SYN";
+const SYN_ACK: &[u8] = b"SYN-ACK";
+const ACK: &[u8] = b"ACK";
 
 #[derive(Debug)]
 enum Sending {

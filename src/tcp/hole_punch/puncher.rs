@@ -2,6 +2,7 @@ use mio::tcp::TcpStream;
 use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
 use net2::TcpStreamExt;
+use socket_collection::TcpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -9,22 +10,22 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
-use tcp::{new_reusably_bound_tcp_sockets, Socket};
+use tcp::new_reusably_bound_tcp_sockets;
 use {Interface, NatError, NatState, NatTimer};
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<TcpStream>)>;
+pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<TcpSock>)>;
 
 pub enum Via {
     Connect {
         our_addr: SocketAddr,
         peer_addr: SocketAddr,
     },
-    Accept(Socket, Token),
+    Accept(TcpSock, Token),
 }
 
 const TIMER_ID: u8 = 0;
 const RE_CONNECT_MS: u64 = 100;
-const CHOOSE_CONN: &'static [u8] = b"Choose this connection";
+const CHOOSE_CONN: &[u8] = b"Choose this connection";
 
 enum ConnectionChooser {
     Choose(Option<Vec<u8>>),
@@ -33,7 +34,7 @@ enum ConnectionChooser {
 
 pub struct Puncher {
     token: Token,
-    sock: Socket,
+    sock: TcpSock,
     our_addr: SocketAddr,
     peer_addr: SocketAddr,
     via_accept: bool,
@@ -62,7 +63,7 @@ impl Puncher {
             } => {
                 let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].to_tcp_stream()?;
                 stream.set_linger(Some(Duration::from_secs(0)))?;
-                let sock = Socket::wrap(TcpStream::connect_stream(stream, &peer_addr)?);
+                let sock = TcpSock::wrap(TcpStream::connect_stream(stream, &peer_addr)?);
                 (sock, ifc.new_token(), false, our_addr, peer_addr)
             }
         };
@@ -82,14 +83,14 @@ impl Puncher {
         };
 
         let puncher = Rc::new(RefCell::new(Puncher {
-            token: token,
-            sock: sock,
-            our_addr: our_addr,
-            peer_addr: peer_addr,
-            via_accept: via_accept,
+            token,
+            sock,
+            our_addr,
+            peer_addr,
+            via_accept,
             connection_chooser: chooser,
             timeout: None,
-            f: f,
+            f,
         }));
 
         if let Err((nat_state, e)) = ifc.insert_state(token, puncher) {
@@ -102,23 +103,39 @@ impl Puncher {
     }
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let ok = match self.sock.read::<Vec<u8>>() {
-            Ok(Some(cipher_text)) => {
-                if let ConnectionChooser::Wait(ref key) = self.connection_chooser {
-                    match ::msg_to_read(&cipher_text, key) {
-                        Ok(ref plain_text) if plain_text == &CHOOSE_CONN => true,
-                        _ => false,
+        let mut ok = false;
+        loop {
+            match self.sock.read::<Vec<u8>>() {
+                Ok(Some(cipher_text)) => {
+                    if let ConnectionChooser::Wait(ref key) = self.connection_chooser {
+                        match ::msg_to_read(&cipher_text, key) {
+                            Ok(ref plain_text) if plain_text == &CHOOSE_CONN => ok = true,
+                            _ => {
+                                debug!("Error: Failed to decrypt a connection-choose order");
+                                ok = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        debug!("Error: A chooser TcpPucher got a choose order");
+                        ok = false;
+                        break;
                     }
-                } else {
-                    false
+                }
+                Ok(None) => {
+                    if ok {
+                        break;
+                    } else {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    debug!("Tcp Rendezvous client errored out in read: {:?}", e);
+                    ok = false;
+                    break;
                 }
             }
-            Ok(None) => return,
-            Err(e) => {
-                debug!("Tcp Rendezvous client errored out in read: {:?}", e);
-                false
-            }
-        };
+        }
 
         if ok {
             self.done(ifc, poll)
@@ -128,7 +145,7 @@ impl Puncher {
     }
 
     fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<Vec<u8>>) {
-        match self.sock.write(poll, self.token, m) {
+        match self.sock.write(m.map(|m| (m, 0))) {
             Ok(true) => self.done(ifc, poll),
             Ok(false) => (),
             Err(e) => {
@@ -141,11 +158,7 @@ impl Puncher {
     fn done(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let sock = mem::replace(&mut self.sock, Default::default());
-        if let Ok(stream) = sock.into_stream() {
-            (*self.f)(ifc, poll, self.token, Ok(stream));
-        } else {
-            (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
-        }
+        (*self.f)(ifc, poll, self.token, Ok(sock));
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -184,11 +197,10 @@ impl NatState for Puncher {
                 let _ = ifc.cancel_timeout(&t);
             }
             if !self.via_accept {
-                let r = || -> ::Res<Socket> {
+                let r = || -> ::Res<TcpSock> {
                     let sock = mem::replace(&mut self.sock, Default::default());
-                    let stream = sock.into_stream()?;
-                    stream.set_linger(None)?;
-                    Ok(Socket::wrap(stream))
+                    sock.set_linger(None)?;
+                    Ok(sock)
                 }();
 
                 match r {
@@ -220,10 +232,10 @@ impl NatState for Puncher {
         let _ = poll.deregister(&self.sock);
         let _ = mem::replace(&mut self.sock, Default::default());
 
-        let r = || -> ::Res<Socket> {
+        let r = || -> ::Res<TcpSock> {
             let stream = new_reusably_bound_tcp_sockets(&self.our_addr, 1)?.0[0].to_tcp_stream()?;
             stream.set_linger(Some(Duration::from_secs(0)))?;
-            let sock = Socket::wrap(TcpStream::connect_stream(stream, &self.peer_addr)?);
+            let sock = TcpSock::wrap(TcpStream::connect_stream(stream, &self.peer_addr)?);
             poll.register(
                 &sock,
                 self.token,

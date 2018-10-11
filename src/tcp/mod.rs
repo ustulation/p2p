@@ -1,6 +1,5 @@
 pub use self::hole_punch::TcpHolePunchMediator;
 pub use self::rendezvous_server::TcpRendezvousServer;
-pub use self::socket::Socket;
 
 use net2::TcpBuilder;
 use sodium::crypto::box_::PUBLICKEYBYTES;
@@ -8,7 +7,6 @@ use std::net::{IpAddr, SocketAddr};
 
 mod hole_punch;
 mod rendezvous_server;
-mod socket;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TcpEchoReq(pub [u8; PUBLICKEYBYTES]);

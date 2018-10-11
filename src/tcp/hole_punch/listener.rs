@@ -1,11 +1,11 @@
 use super::puncher::{Finish, Puncher, Via};
 use mio::tcp::TcpListener;
 use mio::{Poll, PollOpt, Ready, Token};
+use socket_collection::TcpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
-use tcp::Socket;
 use {Interface, NatError, NatState};
 
 pub struct Listener {
@@ -56,7 +56,7 @@ impl Listener {
                     Some(f) => f,
                     None => return,
                 };
-                let sock = Socket::wrap(s);
+                let sock = TcpSock::wrap(s);
                 let via = Via::Accept(sock, self.token);
                 if let Err(e) = Puncher::start(ifc, poll, via, &self.peer_enc_key, f) {
                     debug!("Error accepting direct puncher connection: {:?}", e);
