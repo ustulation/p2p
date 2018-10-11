@@ -1,9 +1,8 @@
 use config::{HOLE_PUNCH_TIMEOUT_SEC, HOLE_PUNCH_WAIT_FOR_OTHER, RENDEZVOUS_TIMEOUT_SEC};
 use mio::channel::Sender;
-use mio::net::UdpSocket;
 use mio::timer::Timeout;
 use mio::{Poll, Token};
-use socket_collection::TcpSock;
+use socket_collection::{TcpSock, UdpSock};
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -63,7 +62,7 @@ pub struct HolePunchInfo {
     /// TCP socket that successfully managed to hole punch
     pub tcp: Option<(TcpSock, Token)>,
     /// UDP socket that successfully managed to hole punch
-    pub udp: Option<(UdpSocket, SocketAddr, Token)>,
+    pub udp: Option<(UdpSock, SocketAddr, Token)>,
     /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
@@ -381,7 +380,7 @@ impl HolePunchMediator {
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
-        res: ::Res<(UdpSocket, SocketAddr, Token)>,
+        res: ::Res<(UdpSock, SocketAddr, Token)>,
     ) {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.udp_child = None;

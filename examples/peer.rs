@@ -12,11 +12,10 @@ extern crate unwrap;
 extern crate socket_collection;
 
 use self::event_loop::{spawn_event_loop, Core, CoreMsg, CoreState, El};
-use mio::net::UdpSocket;
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::HolePunchInfo;
 use p2p::{Handle, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
-use socket_collection::UdtSock;
+use socket_collection::{UdpSock, UdtSock};
 use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -55,14 +54,14 @@ impl ChatEngine {
         core: &mut Core,
         poll: &Poll,
         token: Token,
-        sock: UdpSocket,
+        sock: UdpSock,
         peer: SocketAddr,
         peer_enc_pk: &box_::PublicKey,
         tx: mpsc::Sender<()>,
     ) -> Token {
         let _ = unwrap!(poll.deregister(&sock));
 
-        let sock = unwrap!(UdtSock::wrap_mio_sock(sock, core.udt_epoll_handle()));
+        let sock = unwrap!(UdtSock::wrap_udp_sock(sock, core.udt_epoll_handle()));
 
         unwrap!(sock.connect(&peer));
 

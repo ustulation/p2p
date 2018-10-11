@@ -1,37 +1,37 @@
-use mio::net::UdpSocket;
 use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
+use socket_collection::UdpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
-use std::io::ErrorKind;
+use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 use {Interface, NatError, NatState, NatTimer};
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSocket, SocketAddr)>)>;
+pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSock, SocketAddr)>)>;
 
 const TIMER_ID: u8 = 0;
 const SYN: &[u8] = b"SYN";
 const SYN_ACK: &[u8] = b"SYN-ACK";
 const ACK: &[u8] = b"ACK";
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 enum Sending {
     Syn,
     SynAck,
     Ack,
-    None,
 }
 
 pub struct Puncher {
     token: Token,
-    sock: Option<UdpSocket>,
+    sock: UdpSock,
     peer: SocketAddr,
     key: box_::PrecomputedKey,
     connection_chooser: bool,
     os_ttl: u32,
+    starting_ttl: u32,
     current_ttl: u32,
     ttl_inc_interval_ms: u64,
     timeout: Timeout,
@@ -46,15 +46,19 @@ impl Puncher {
         ifc: &mut Interface,
         poll: &Poll,
         token: Token,
-        sock: UdpSocket,
-        ttl: u8,
+        mut sock: UdpSock,
+        starting_ttl: u8,
         ttl_inc_interval_ms: u64,
         peer: SocketAddr,
         peer_enc_pk: &box_::PublicKey,
         f: Finish,
     ) -> ::Res<()> {
         let os_ttl = sock.ttl()?;
-        sock.set_ttl(ttl as u32)?;
+        let starting_ttl = starting_ttl as u32;
+        sock.set_ttl(starting_ttl)?;
+        // FIXME: check if we need to wait for connect to succeed in async manner.. Here we are
+        // assuming that UDP connects happen instantly.
+        sock.connect(&peer)?;
 
         let timeout = match ifc.set_timeout(
             Duration::from_millis(ttl_inc_interval_ms),
@@ -62,6 +66,7 @@ impl Puncher {
         ) {
             Ok(timeout) => timeout,
             Err(e) => {
+                debug!("Error: UdpPuncher errored in setting timeout: {:?}", e);
                 let _ = poll.deregister(&sock);
                 return Err(From::from(e));
             }
@@ -70,27 +75,29 @@ impl Puncher {
         if let Err(e) = poll.reregister(
             &sock,
             token,
-            Ready::writable() | Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         ) {
+            debug!("Error: UdpPuncher errored in registeration: {:?}", e);
             let _ = poll.deregister(&sock);
             return Err(From::from(e));
         }
 
         let puncher = Rc::new(RefCell::new(Puncher {
             token: token,
-            sock: Some(sock),
-            peer: peer,
+            sock,
+            peer,
             key: box_::precompute(peer_enc_pk, ifc.enc_sk()),
             connection_chooser: ifc.enc_pk() > peer_enc_pk,
-            os_ttl: os_ttl,
-            current_ttl: ttl as u32,
-            ttl_inc_interval_ms: ttl_inc_interval_ms,
-            timeout: timeout,
+            os_ttl,
+            starting_ttl,
+            current_ttl: starting_ttl,
+            ttl_inc_interval_ms,
+            timeout,
             sending: Sending::Syn,
             syn_ack_rxd: false,
             syn_ack_txd: false,
-            f: f,
+            f,
         }));
 
         if let Err((nat_state, e)) = ifc.insert_state(token, puncher) {
@@ -103,27 +110,23 @@ impl Puncher {
     }
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let mut buf = [0; 512];
-        // FIXME will need to be done in a loop until wouldblock or Ok(None) - Same for rendezvous
-        // server
-        let r = match self.sock.as_ref() {
-            Some(s) => s.recv_from(&mut buf),
-            None => return,
-        };
-        let bytes_rxd = match r {
-            Ok((bytes, _)) => bytes,
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
-            {
-                return
+        let mut cipher_text = Vec::new();
+        loop {
+            match self.sock.read() {
+                Ok(Some(m)) => cipher_text = m,
+                Ok(None) => if cipher_text.is_empty() {
+                    return;
+                } else {
+                    break;
+                },
+                Err(e) => {
+                    debug!("Udp Puncher has errored out in read: {:?}", e);
+                    return self.terminate(ifc, poll);
+                }
             }
-            Err(e) => {
-                debug!("Udp Hole Puncher has errored out in read: {:?}", e);
-                return self.handle_err(ifc, poll);
-            }
-        };
+        }
 
-        let msg = match ::msg_to_read(&buf[..bytes_rxd], &self.key) {
+        let msg = match ::msg_to_read(&cipher_text, &self.key) {
             Ok(m) => m,
             Err(e) => {
                 debug!("Udp Hole Puncher has errored out in read: {:?}", e);
@@ -132,18 +135,18 @@ impl Puncher {
         };
 
         if msg == SYN {
-            self.sending = Sending::SynAck;
+            match self.sending {
+                Sending::Syn => self.sending = Sending::SynAck,
+                _ => (),
+            }
         } else if msg == SYN_ACK {
             if self.syn_ack_txd {
-                self.sending = if self.connection_chooser {
-                    Sending::Ack
-                } else {
-                    let _ = ifc.cancel_timeout(&self.timeout);
-                    Sending::None
-                };
+                if self.connection_chooser {
+                    self.sending = Sending::Ack;
+                }
             } else {
-                self.sending = Sending::SynAck;
                 self.syn_ack_rxd = true;
+                self.sending = Sending::SynAck;
             }
         } else if msg == ACK {
             if self.connection_chooser {
@@ -156,90 +159,59 @@ impl Puncher {
     }
 
     fn write(&mut self, ifc: &mut Interface, poll: &Poll) {
-        if let Err(e) = self.write_impl(ifc, poll) {
-            debug!("Udp Hole Puncher has errored out in write: {:?}", e);
-            self.handle_err(ifc, poll)
+        match self.sock.write::<Vec<u8>>(None) {
+            Ok(true) => self.on_successful_send(ifc, poll),
+            Ok(false) => (),
+            Err(e) => {
+                debug!("Udp Hole Puncher has errored out in write: {:?}", e);
+                self.handle_err(ifc, poll)
+            }
         }
     }
 
-    fn write_impl(&mut self, ifc: &mut Interface, poll: &Poll) -> ::Res<()> {
+    fn write_on_timeout(&mut self, ifc: &mut Interface, poll: &Poll) {
         let msg = {
             let m = match self.sending {
                 Sending::Syn => SYN,
                 Sending::SynAck => SYN_ACK,
                 Sending::Ack => ACK,
-                Sending::None => {
-                    let _ = ifc.cancel_timeout(&self.timeout);
-                    return Ok(());
-                }
             };
 
-            ::msg_to_send(m, &self.key)?
-        };
-
-        let r = match self.sock.as_ref() {
-            Some(s) => s.send_to(&msg, &self.peer),
-            None => return Err(NatError::UnregisteredSocket),
-        };
-        let sent = match r {
-            Ok(bytes_txd) => {
-                if bytes_txd != msg.len() {
-                    debug!(
-                        "Partial datagram sent - datagram will be treated as corrupted. \
-                         Actual size: {} B, sent size: {} B.",
-                        msg.len(),
-                        bytes_txd
-                    );
-                    false
-                } else {
-                    true
+            match ::msg_to_send(m, &self.key) {
+                Ok(m) => m,
+                Err(e) => {
+                    debug!("Error: Udp Puncher errored out while encrypting: {:?}", e);
+                    return self.handle_err(ifc, poll);
                 }
             }
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
-            {
-                false
-            }
-            Err(e) => return Err(From::from(e)),
         };
 
-        if sent {
-            match self.sending {
-                Sending::SynAck => self.syn_ack_txd = true,
-                Sending::Ack => return Ok(self.done(ifc, poll)),
-                _ => (),
+        match self.sock.write(Some((msg, 0))) {
+            Ok(true) => self.on_successful_send(ifc, poll),
+            Ok(false) => (),
+            Err(e) => {
+                debug!("Udp Puncher errored out in write: {:?}", e);
+                self.handle_err(ifc, poll);
             }
-            if self.syn_ack_txd && self.syn_ack_rxd {
-                self.sending = if self.connection_chooser {
-                    Sending::Ack
-                } else {
-                    let _ = ifc.cancel_timeout(&self.timeout);
-                    Sending::None
-                };
-            }
-            Ok(poll.reregister(
-                self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                self.token,
-                Ready::readable() | Ready::error() | Ready::hup(),
-                PollOpt::edge(),
-            )?)
-        } else {
-            Ok(poll.reregister(
-                self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                self.token,
-                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                PollOpt::edge(),
-            )?)
+        }
+    }
+
+    fn on_successful_send(&mut self, ifc: &mut Interface, poll: &Poll) {
+        match self.sending {
+            Sending::SynAck => self.syn_ack_txd = true,
+            Sending::Ack => return self.done(ifc, poll),
+            _ => (),
+        }
+        if self.syn_ack_txd && self.syn_ack_rxd && self.connection_chooser {
+            self.sending = Sending::Ack;
         }
     }
 
     fn done(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
-        match self.sock.take() {
-            Some(s) => (*self.f)(ifc, poll, self.token, Ok((s, self.peer))),
-            None => (*self.f)(ifc, poll, self.token, Err(NatError::UdpHolePunchFailed)),
-        }
+        let s = mem::replace(&mut self.sock, Default::default());
+        (*self.f)(ifc, poll, self.token, Ok((s, self.peer)));
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -251,12 +223,7 @@ impl Puncher {
 impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
-            let e = match self
-                .sock
-                .as_ref()
-                .ok_or(NatError::UnregisteredSocket)
-                .and_then(|s| s.take_error().map_err(From::from))
-            {
+            let e = match self.sock.take_error() {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
@@ -290,24 +257,22 @@ impl NatState for Puncher {
             debug!("OS TTL reached and still could not hole punch - giving up");
             return self.handle_err(ifc, poll);
         }
-        let r = match self.sock.as_ref() {
-            Some(sock) => sock.set_ttl(self.current_ttl).map_err(From::from),
-            None => Err(NatError::UnregisteredSocket),
-        };
-        if let Err(e) = r {
+        if let Err(e) = self.sock.set_ttl(self.current_ttl) {
             debug!("Error setting ttl: {:?}", e);
             return self.handle_err(ifc, poll);
         }
 
-        self.write(ifc, poll)
+        self.write_on_timeout(ifc, poll)
     }
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
-        if let Some(sock) = self.sock.take() {
-            let _ = poll.deregister(&sock);
-        }
+        let _ = poll.deregister(&self.sock);
+        debug!(
+            "Udp Puncher with starting_ttl={} terminated while at current_ttl={} and state={:?}",
+            self.starting_ttl, self.current_ttl, self.sending
+        );
     }
 
     fn as_any(&mut self) -> &mut Any {

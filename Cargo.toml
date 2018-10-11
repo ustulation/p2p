@@ -20,8 +20,8 @@ rust_sodium = "~0.5.0"
 serde = "~1.0.11"
 serde_derive = "~1.0.11"
 #socket-collection = "~0.2.0"
-#socket-collection = { git = "https://github.com/ustulation/socket-collection" }
-socket-collection = { path = "../socket-collection" }
+socket-collection = { git = "https://github.com/ustulation/socket-collection" }
+#socket-collection = { path = "../socket-collection" }
 
 [dev-dependencies]
 env_logger = "~0.5.13"

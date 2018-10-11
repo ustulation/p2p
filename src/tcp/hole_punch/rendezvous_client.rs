@@ -47,7 +47,6 @@ impl TcpRendezvousClient {
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
         let mut utf8 = Vec::new();
-
         loop {
             match self.sock.read() {
                 Ok(Some(TcpEchoResp(cipher_text))) => {

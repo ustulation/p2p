@@ -1,8 +1,8 @@
 use self::puncher::Puncher;
 use self::rendezvous_client::UdpRendezvousClient;
-use mio::net::UdpSocket;
 use mio::Poll;
 use mio::Token;
+use socket_collection::UdpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -17,16 +17,16 @@ mod puncher;
 mod rendezvous_client;
 
 pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<Vec<SocketAddr>>)>;
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSocket, SocketAddr, Token)>)>;
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSock, SocketAddr, Token)>)>;
 
 enum State {
     None,
     Rendezvous {
         children: HashSet<Token>,
-        info: (Vec<(UdpSocket, Token)>, Vec<SocketAddr>),
+        info: (Vec<(UdpSock, Token)>, Vec<SocketAddr>),
         f: RendezvousFinsih,
     },
-    ReadyToHolePunch(Vec<(UdpSocket, Token)>),
+    ReadyToHolePunch(Vec<(UdpSock, Token)>),
     HolePunching {
         children: HashSet<Token>,
         f: HolePunchFinsih,
@@ -57,7 +57,7 @@ impl UdpHolePunchMediator {
         let mut socks = Vec::with_capacity(ifc.config().udp_hole_punchers.len());
         let addr_any = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
         for _ in 0..ifc.config().udp_hole_punchers.len() {
-            socks.push(UdpSocket::bind(&addr_any)?);
+            socks.push(UdpSock::bind(&addr_any)?);
         }
 
         let mediator = Rc::new(RefCell::new(UdpHolePunchMediator {
@@ -103,7 +103,7 @@ impl UdpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        res: ::Res<(UdpSocket, SocketAddr)>,
+        res: ::Res<(UdpSock, SocketAddr)>,
     ) {
         let r = match self.state {
             State::Rendezvous {
@@ -272,7 +272,7 @@ impl UdpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        res: ::Res<(UdpSocket, SocketAddr)>,
+        res: ::Res<(UdpSock, SocketAddr)>,
     ) {
         let r = match self.state {
             State::HolePunching {
@@ -325,7 +325,7 @@ impl UdpHolePunchMediator {
         }
     }
 
-    fn dereg_socks(poll: &Poll, socks: &mut Vec<(UdpSocket, Token)>) {
+    fn dereg_socks(poll: &Poll, socks: &mut Vec<(UdpSock, Token)>) {
         for (sock, _) in socks.drain(..) {
             let _ = poll.deregister(&sock);
         }

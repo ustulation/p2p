@@ -1,34 +1,31 @@
-use bincode::{deserialize, serialize, Infinite};
-use mio::net::UdpSocket;
 use mio::{Poll, PollOpt, Ready, Token};
 use rand::{self, Rng};
+use socket_collection::UdpSock;
 use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
-use std::io::ErrorKind;
+use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::str::{self, FromStr};
 use udp::{UdpEchoReq, UdpEchoResp};
 use {Interface, NatError, NatState};
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSocket, SocketAddr)>)>;
+pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSock, SocketAddr)>)>;
 
 pub struct UdpRendezvousClient {
-    sock: Option<UdpSocket>,
+    sock: UdpSock,
     token: Token,
     servers: Vec<SocketAddr>,
+    on_first_write_triggered: Option<SocketAddr>,
     // Note: DO NOT convert to Hash/BTreeSet - strict ordering is required to pair with peer
     our_ext_addrs: Vec<SocketAddr>,
-    write_queue: Option<(SocketAddr, Vec<u8>)>,
-    req: Vec<u8>,
     f: Finish,
 }
 
 impl UdpRendezvousClient {
-    pub fn start(ifc: &mut Interface, poll: &Poll, sock: UdpSocket, f: Finish) -> ::Res<Token> {
+    pub fn start(ifc: &mut Interface, poll: &Poll, sock: UdpSock, f: Finish) -> ::Res<Token> {
         let token = ifc.new_token();
-        let req = serialize(&UdpEchoReq(ifc.enc_pk().0), Infinite)?;
         let mut servers = ifc.config().remote_udp_rendezvous_servers.clone();
         let num_servers = servers.len();
         if num_servers < 2 {
@@ -50,17 +47,16 @@ impl UdpRendezvousClient {
         poll.register(
             &sock,
             token,
-            Ready::writable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         )?;
 
         let client = Rc::new(RefCell::new(UdpRendezvousClient {
-            sock: Some(sock),
+            sock: sock,
             token: token,
             servers: servers,
+            on_first_write_triggered: Some(server),
             our_ext_addrs: Vec::with_capacity(num_servers),
-            write_queue: Some((server, req.clone())),
-            req: req,
             f: f,
         }));
 
@@ -74,33 +70,24 @@ impl UdpRendezvousClient {
     }
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let mut buf = [0; 512];
-        // FIXME will need to be done in a loop until wouldblock or Ok(None) - Same for rendezvous
-        // server
-        let r = match self.sock.as_ref() {
-            Some(s) => s.recv_from(&mut buf),
-            None => return,
-        };
-        let bytes_rxd = match r {
-            Ok((bytes, _)) => bytes,
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
-            {
-                return
+        let mut cipher_text = Vec::new();
+        loop {
+            match self.sock.read() {
+                Ok(Some(UdpEchoResp(m))) => cipher_text = m,
+                Ok(None) => if cipher_text.is_empty() {
+                    return;
+                } else {
+                    break;
+                },
+                Err(e) => {
+                    debug!(
+                        "Error: Udp Rendezvous Client has errored out in read: {:?}",
+                        e
+                    );
+                    return self.terminate(ifc, poll);
+                }
             }
-            Err(e) => {
-                debug!("Udp Rendezvous Client has errored out in read: {:?}", e);
-                return self.handle_err(ifc, poll);
-            }
-        };
-
-        let UdpEchoResp(cipher_text) = match deserialize(&buf[..bytes_rxd]) {
-            Ok(req) => req,
-            Err(e) => {
-                trace!("Unknown msg rxd by Udp Rendezvous Client: {:?}", e);
-                return;
-            }
-        };
+        }
 
         if let Ok(our_ext_addr_bytes) = sealedbox::open(&cipher_text, ifc.enc_pk(), ifc.enc_sk()) {
             match str::from_utf8(&our_ext_addr_bytes) {
@@ -124,63 +111,24 @@ impl UdpRendezvousClient {
         }
 
         if let Some(server) = self.servers.pop() {
-            self.write_queue = Some((server, self.req.clone()));
-            self.write(ifc, poll)
+            if let Err(e) = self.sock.connect(&server) {
+                debug!(
+                    "Error: Udp Rendezvous Client could not connect to server: {:?}",
+                    e
+                );
+                return self.handle_err(ifc, poll);
+            }
+            let pk = ifc.enc_pk().0;
+            self.write(ifc, poll, Some(UdpEchoReq(pk)));
         } else {
             self.done(ifc, poll)
         }
     }
 
-    fn write(&mut self, ifc: &mut Interface, poll: &Poll) {
-        if let Err(e) = self.write_impl(poll) {
-            warn!("Udp Rendezvous Client has errored out in write: {:?}", e);
+    fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<UdpEchoReq>) {
+        if let Err(e) = self.sock.write(m.map(|m| (m, 0))) {
+            debug!("Udp Rendezvous Client has errored out in write: {:?}", e);
             self.handle_err(ifc, poll)
-        }
-    }
-
-    fn write_impl(&mut self, poll: &Poll) -> ::Res<()> {
-        let (server, resp) = match self.write_queue.take() {
-            Some((server, resp)) => (server, resp),
-            None => return Ok(()),
-        };
-
-        let r = match self.sock.as_ref() {
-            Some(s) => s.send_to(&resp, &server),
-            None => return Err(NatError::UnregisteredSocket),
-        };
-        match r {
-            Ok(bytes_txd) => {
-                if bytes_txd != resp.len() {
-                    debug!(
-                        "Partial datagram sent - datagram will be treated as corrupted. \
-                         Actual size: {} B, sent size: {} B.",
-                        resp.len(),
-                        bytes_txd
-                    );
-                }
-            }
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
-            {
-                self.write_queue = Some((server, resp))
-            }
-            Err(e) => return Err(From::from(e)),
-        }
-
-        if self.write_queue.is_none() {
-            Ok(poll.reregister(
-                self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                self.token,
-                Ready::readable() | Ready::error() | Ready::hup(),
-                PollOpt::edge(),
-            )?)
-        } else {
-            Ok(poll.reregister(
-                self.sock.as_ref().ok_or(NatError::UnregisteredSocket)?,
-                self.token,
-                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                PollOpt::edge(),
-            )?)
         }
     }
 
@@ -196,7 +144,7 @@ impl UdpRendezvousClient {
         let mut is_err = false;
         for addr in &self.our_ext_addrs {
             if ext_addr.ip() != addr.ip() {
-                info!(
+                warn!(
                     "Symmetric NAT with variable IP mapping detected. No logic for Udp \
                      external address prediction for these circumstances!"
                 );
@@ -205,7 +153,7 @@ impl UdpRendezvousClient {
             } else if port_prediction_offset == 0 {
                 port_prediction_offset = addr.port() as i32 - ext_addr.port() as i32;
             } else if port_prediction_offset != addr.port() as i32 - ext_addr.port() as i32 {
-                info!(
+                warn!(
                     "Symmetric NAT with non-uniformly changing port mapping detected. No logic \
                      for Udp external address prediction for these circumstances!"
                 );
@@ -224,10 +172,8 @@ impl UdpRendezvousClient {
         ext_addr.set_port((port as i32 + port_prediction_offset) as u16);
         trace!("Our ext addr by Udp Rendezvous Client: {}", ext_addr);
 
-        match self.sock.take() {
-            Some(s) => (*self.f)(ifc, poll, self.token, Ok((s, ext_addr))),
-            None => (*self.f)(ifc, poll, self.token, Err(NatError::UdpRendezvousFailed)),
-        }
+        let s = mem::replace(&mut self.sock, Default::default());
+        (*self.f)(ifc, poll, self.token, Ok((s, ext_addr)));
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -239,12 +185,7 @@ impl UdpRendezvousClient {
 impl NatState for UdpRendezvousClient {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
         if event.is_error() || event.is_hup() {
-            let e = match self
-                .sock
-                .as_ref()
-                .ok_or(NatError::UnregisteredSocket)
-                .and_then(|s| s.take_error().map_err(From::from))
-            {
+            let e = match self.sock.take_error() {
                 Ok(err) => err.map_or(NatError::Unknown, NatError::from),
                 Err(e) => From::from(e),
             };
@@ -253,7 +194,20 @@ impl NatState for UdpRendezvousClient {
         } else if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
-            self.write(ifc, poll)
+            if let Some(server) = self.on_first_write_triggered.take() {
+                // FIXME: Check if UDP connect requires to wait for an event
+                if let Err(e) = self.sock.connect(&server) {
+                    debug!(
+                        "Error: Udp Rendezvous Client could not connect to server: {:?}",
+                        e
+                    );
+                    self.handle_err(ifc, poll);
+                }
+                let pk = ifc.enc_pk().0;
+                self.write(ifc, poll, Some(UdpEchoReq(pk)));
+            } else {
+                self.write(ifc, poll, None);
+            }
         } else {
             trace!("Ignoring unknown event kind: {:?}", event);
         }
@@ -261,9 +215,7 @@ impl NatState for UdpRendezvousClient {
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
-        if let Some(s) = self.sock.take() {
-            let _ = poll.deregister(&s);
-        }
+        let _ = poll.deregister(&self.sock);
     }
 
     fn as_any(&mut self) -> &mut Any {

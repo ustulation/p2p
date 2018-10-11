@@ -1,14 +1,11 @@
 use super::{UdpEchoReq, UdpEchoResp};
-use bincode::{deserialize, serialize, Infinite};
 use config::UDP_RENDEZVOUS_PORT;
-use mio::net::UdpSocket;
 use mio::{Poll, PollOpt, Ready, Token};
-use sodium::crypto::box_::PublicKey;
+use socket_collection::UdpSock;
+use sodium::crypto::box_;
 use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 use {Interface, NatError, NatState};
@@ -22,9 +19,8 @@ use {Interface, NatError, NatState};
 /// they take it as a STUN attempt or similar and mangle the information or even discard it.
 /// Encrypting makes sure no such thing happens.
 pub struct UdpRendezvousServer {
-    sock: UdpSocket,
+    sock: UdpSock,
     token: Token,
-    write_queue: VecDeque<(SocketAddr, Vec<u8>)>,
 }
 
 impl UdpRendezvousServer {
@@ -35,22 +31,18 @@ impl UdpRendezvousServer {
             .udp_rendezvous_port
             .unwrap_or(UDP_RENDEZVOUS_PORT);
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
-        let sock = UdpSocket::bind(&addr)?;
+        let sock = UdpSock::bind(&addr)?;
 
         let token = ifc.new_token();
 
         poll.register(
             &sock,
             token,
-            Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         )?;
 
-        let server = Rc::new(RefCell::new(UdpRendezvousServer {
-            sock: sock,
-            token: token,
-            write_queue: VecDeque::with_capacity(3),
-        }));
+        let server = Rc::new(RefCell::new(UdpRendezvousServer { sock, token }));
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start UdpRendezvousServer!");
@@ -61,91 +53,39 @@ impl UdpRendezvousServer {
         }
     }
 
-    fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let mut buf = [0; 512];
-        let (bytes_rxd, peer) = match self.sock.recv_from(&mut buf) {
-            Ok((bytes, peer)) => (bytes, peer),
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
-            {
-                return
-            }
-            Err(e) => {
-                warn!("Udp Rendezvous Server has errored out in read: {:?}", e);
-                return self.terminate(ifc, poll);
-            }
-        };
-
-        let UdpEchoReq(peer_pk) = match deserialize(&buf[..bytes_rxd]) {
-            Ok(req) => req,
-            Err(e) => {
-                trace!("Unknown msg rxd by Udp Rendezvous Server: {:?}", e);
-                return;
-            }
-        };
-
-        let resp = UdpEchoResp(sealedbox::seal(
-            format!("{}", peer).as_bytes(),
-            &PublicKey(peer_pk),
-        ));
-        let ser_resp = match serialize(&resp, Infinite) {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Error in serialization: {:?}", e);
-                return;
-            }
-        };
-
-        self.write_queue.push_back((peer, ser_resp));
-        self.write(ifc, poll)
-    }
-
-    fn write(&mut self, ifc: &mut Interface, poll: &Poll) {
-        if let Err(e) = self.write_impl(poll) {
-            warn!("Udp Rendezvous Server has errored out in write: {:?}", e);
-            self.terminate(ifc, poll)
-        }
-    }
-
-    fn write_impl(&mut self, poll: &Poll) -> ::Res<()> {
-        let (peer, resp) = match self.write_queue.pop_front() {
-            Some((peer, resp)) => (peer, resp),
-            None => return Ok(()),
-        };
-
-        match self.sock.send_to(&resp, &peer) {
-            Ok(bytes_txd) => {
-                if bytes_txd != resp.len() {
-                    debug!(
-                        "Partial datagram sent - datagram will be treated as corrupted. \
-                         Actual size: {} B, sent size: {} B.",
-                        resp.len(),
-                        bytes_txd
-                    );
+    fn read_frm(&mut self, ifc: &mut Interface, poll: &Poll) {
+        let mut pk = None;
+        loop {
+            match self.sock.read_frm() {
+                Ok(Some((UdpEchoReq(raw), peer))) => pk = Some((box_::PublicKey(raw), peer)),
+                Ok(None) => if pk.is_some() {
+                    break;
+                } else {
+                    return;
+                },
+                Err(e) => {
+                    debug!("Error in read: {:?}", e);
+                    return self.terminate(ifc, poll);
                 }
             }
-            Err(ref e)
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted =>
-            {
-                self.write_queue.push_front((peer, resp))
-            }
-            Err(e) => return Err(From::from(e)),
         }
 
-        if self.write_queue.is_empty() {
-            Ok(poll.reregister(
-                &self.sock,
-                self.token,
-                Ready::readable() | Ready::error() | Ready::hup(),
-                PollOpt::edge(),
-            )?)
+        if let Some((pk, peer)) = pk.take() {
+            let resp = UdpEchoResp(sealedbox::seal(format!("{}", peer).as_bytes(), &pk));
+            self.write_to(ifc, poll, Some((resp, peer)))
         } else {
-            Ok(poll.reregister(
-                &self.sock,
-                self.token,
-                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
-                PollOpt::edge(),
-            )?)
+            debug!("Error: Logic error in Udp Rendezvous Server - Please report.");
+            return self.terminate(ifc, poll);
+        }
+    }
+
+    fn write_to(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<(UdpEchoResp, SocketAddr)>) {
+        match self.sock.write_to(m.map(|(m, s)| (m, s, 0))) {
+            Ok(_) => (),
+            Err(e) => {
+                warn!("Udp Rendezvous Server has errored out in write: {:?}", e);
+                self.terminate(ifc, poll);
+            }
         }
     }
 }
@@ -160,9 +100,9 @@ impl NatState for UdpRendezvousServer {
             warn!("Error in UdpRendezvousServer readiness: {:?}", e);
             self.terminate(ifc, poll)
         } else if event.is_readable() {
-            self.read(ifc, poll)
+            self.read_frm(ifc, poll)
         } else if event.is_writable() {
-            self.write(ifc, poll)
+            self.write_to(ifc, poll, None)
         } else {
             trace!("Ignoring unknown event kind: {:?}", event);
         }
