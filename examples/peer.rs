@@ -13,8 +13,7 @@ extern crate socket_collection;
 
 use self::event_loop::{spawn_event_loop, Core, CoreMsg, CoreState, El};
 use mio::{Poll, PollOpt, Ready, Token};
-use p2p::HolePunchInfo;
-use p2p::{Handle, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
+use p2p::{Handle, HolePunchInfo, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
 use socket_collection::{UdpSock, UdtSock};
 use sodium::crypto::box_;
 use std::cell::RefCell;
@@ -231,20 +230,25 @@ fn main() {
     };
 
     let (sock, peer, token) = match (udp, tcp) {
-        (Some(info), Some(_)) => {
-            println!("Connected via both, TCP and UDP. Choosing UDP...\n");
-            info
-        }
-        (Some(info), None) => {
-            println!("Connected only via UDP\n");
-            info
-        }
-        (None, Some(_)) => {
+        (Some(udp_hp_info), Some(tcp_hp_info)) => {
             println!(
-                "Connected only via TCP. This example only supports communicating via \
-                 udp-socket but it seems it's tcp hole punching that has succeeded instead. \
-                 It is trivial to implement tcp communication for the chat engine and is \
-                 left for future scope. Terminating for the moment."
+                "Connected via both, TCP and UDP.\nTCP details: {:?}\nUDP details: {:?}\n\n
+                     Choosing UDP...\n",
+                tcp_hp_info, udp_hp_info
+            );
+            (udp_hp_info.sock, udp_hp_info.peer, udp_hp_info.token)
+        }
+        (Some(udp_hp_info), None) => {
+            println!("Connected only via UDP.\nUDP details: {:?}\n", udp_hp_info);
+            (udp_hp_info.sock, udp_hp_info.peer, udp_hp_info.token)
+        }
+        (None, Some(tcp_hp_info)) => {
+            println!(
+                "Connected only via TCP.\nTCP details: {:?}\n\nThis example only supports \
+                 communicating via udp-socket but it seems it's tcp hole punching that has \
+                 succeeded instead. It is trivial to implement tcp communication for the chat \
+                 engine and is left for future scope. Terminating for the moment.",
+                tcp_hp_info
             );
             return;
         }

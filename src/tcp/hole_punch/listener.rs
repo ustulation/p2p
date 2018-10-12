@@ -6,12 +6,14 @@ use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 use {Interface, NatError, NatState};
 
 pub struct Listener {
     token: Token,
     listener: TcpListener,
     peer_enc_key: box_::PublicKey,
+    commenced_at: Instant,
     f: Option<Finish>,
 }
 
@@ -36,6 +38,7 @@ impl Listener {
             token: token,
             listener: l,
             peer_enc_key: *peer_enc_key,
+            commenced_at: Instant::now(),
             f: Some(f),
         }));
 
@@ -57,7 +60,7 @@ impl Listener {
                     None => return,
                 };
                 let sock = TcpSock::wrap(s);
-                let via = Via::Accept(sock, self.token);
+                let via = Via::Accept(sock, self.token, self.commenced_at);
                 if let Err(e) = Puncher::start(ifc, poll, via, &self.peer_enc_key, f) {
                     debug!("Error accepting direct puncher connection: {:?}", e);
                 }

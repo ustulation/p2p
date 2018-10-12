@@ -11,13 +11,14 @@ use std::fmt::{self, Debug, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::{Rc, Weak};
-use {Interface, NatError, NatState, NatType};
+use std::time::Duration;
+use {Interface, NatError, NatState, NatType, UdpHolePunchInfo};
 
 mod puncher;
 mod rendezvous_client;
 
 pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, NatType, ::Res<Vec<SocketAddr>>)>;
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSock, SocketAddr, Token)>)>;
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<UdpHolePunchInfo>)>;
 
 enum State {
     None,
@@ -268,7 +269,7 @@ impl UdpHolePunchMediator {
 
         self.state = State::HolePunching {
             children: children,
-            f: f,
+            f,
         };
 
         Ok(())
@@ -279,7 +280,7 @@ impl UdpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        res: ::Res<(UdpSock, SocketAddr)>,
+        res: ::Res<(UdpSock, SocketAddr, u32, u32, Duration)>,
     ) {
         let r = match self.state {
             State::HolePunching {
@@ -287,8 +288,19 @@ impl UdpHolePunchMediator {
                 ref mut f,
             } => {
                 let _ = children.remove(&child);
-                if let Ok((sock, addr)) = res {
-                    f(ifc, poll, Ok((sock, addr, child)));
+                if let Ok((sock, peer, starting_ttl, ttl_on_being_reached, dur)) = res {
+                    f(
+                        ifc,
+                        poll,
+                        Ok(UdpHolePunchInfo::new(
+                            sock,
+                            peer,
+                            child,
+                            starting_ttl,
+                            ttl_on_being_reached,
+                            dur,
+                        )),
+                    );
                     Ok(true)
                 } else if children.is_empty() {
                     f(ifc, poll, Err(NatError::UdpHolePunchFailed));

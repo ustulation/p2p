@@ -7,10 +7,12 @@ use std::cell::RefCell;
 use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use {Interface, NatError, NatState, NatTimer};
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSock, SocketAddr)>)>;
+// Result of (UdpSock, peer, starting_ttl, ttl_on_being_reached, duration-of-hole-punch)
+pub type Finish =
+    Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSock, SocketAddr, u32, u32, Duration)>)>;
 
 const TIMER_ID: u8 = 0;
 const SYN: &[u8] = b"SYN";
@@ -33,11 +35,13 @@ pub struct Puncher {
     os_ttl: u32,
     starting_ttl: u32,
     current_ttl: u32,
+    ttl_on_being_reached: u32,
     ttl_inc_interval_ms: u64,
     timeout: Timeout,
     sending: Sending,
     syn_ack_rxd: bool,
     syn_ack_txd: bool,
+    commenced_at: Instant,
     f: Finish,
 }
 
@@ -58,7 +62,10 @@ impl Puncher {
         sock.set_ttl(starting_ttl)?;
         // FIXME: check if we need to wait for connect to succeed in async manner.. Here we are
         // assuming that UDP connects happen instantly.
-        sock.connect(&peer)?;
+        sock.connect(&peer).map_err(|e| {
+            debug!("Error: Failed to connect UDP Puncher: {:?}", e);
+            e
+        })?;
 
         let timeout = match ifc.set_timeout(
             Duration::from_millis(ttl_inc_interval_ms),
@@ -92,11 +99,13 @@ impl Puncher {
             os_ttl,
             starting_ttl,
             current_ttl: starting_ttl,
+            ttl_on_being_reached: 0,
             ttl_inc_interval_ms,
             timeout,
             sending: Sending::Syn,
             syn_ack_rxd: false,
             syn_ack_txd: false,
+            commenced_at: Instant::now(),
             f,
         }));
 
@@ -156,6 +165,20 @@ impl Puncher {
                 return self.done(ifc, poll);
             }
         }
+
+        // Since we have read something, revert back to OS default TTL
+        if self.current_ttl != self.os_ttl {
+            if let Err(e) = self.sock.set_ttl(self.os_ttl) {
+                debug!(
+                    "Error: Could not set OS Default TTL of {}: {:?}",
+                    self.os_ttl, e
+                );
+                self.handle_err(ifc, poll)
+            } else {
+                self.ttl_on_being_reached = self.current_ttl;
+                self.current_ttl = self.os_ttl;
+            }
+        }
     }
 
     fn write(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -211,7 +234,18 @@ impl Puncher {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
         let s = mem::replace(&mut self.sock, Default::default());
-        (*self.f)(ifc, poll, self.token, Ok((s, self.peer)));
+        (*self.f)(
+            ifc,
+            poll,
+            self.token,
+            Ok((
+                s,
+                self.peer,
+                self.starting_ttl,
+                self.ttl_on_being_reached,
+                self.commenced_at.elapsed(),
+            )),
+        );
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -240,8 +274,9 @@ impl NatState for Puncher {
 
     fn timeout(&mut self, ifc: &mut Interface, poll: &Poll, timer_id: u8) {
         if timer_id != TIMER_ID {
-            debug!("Invalid Timer ID: {}", timer_id);
+            warn!("Invalid Timer ID: {}", timer_id);
         }
+
         self.timeout = match ifc.set_timeout(
             Duration::from_millis(self.ttl_inc_interval_ms),
             NatTimer::new(self.token, TIMER_ID),
@@ -252,14 +287,19 @@ impl NatState for Puncher {
                 return self.handle_err(ifc, poll);
             }
         };
-        self.current_ttl += 1;
-        if self.current_ttl >= self.os_ttl {
-            debug!("OS TTL reached and still could not hole punch - giving up");
-            return self.handle_err(ifc, poll);
-        }
-        if let Err(e) = self.sock.set_ttl(self.current_ttl) {
-            debug!("Error setting ttl: {:?}", e);
-            return self.handle_err(ifc, poll);
+
+        // If we have got an incoming message we would have had set current to the os value so
+        // keep it at that, else do the usual incrementing.
+        if self.current_ttl < self.os_ttl {
+            self.current_ttl += 1;
+            if self.current_ttl == self.os_ttl {
+                debug!("OS TTL reached and still peer did not reach us - giving up");
+                return self.handle_err(ifc, poll);
+            }
+            if let Err(e) = self.sock.set_ttl(self.current_ttl) {
+                debug!("Error setting ttl: {:?}", e);
+                return self.handle_err(ifc, poll);
+            }
         }
 
         self.write_on_timeout(ifc, poll)

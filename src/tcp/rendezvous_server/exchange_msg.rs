@@ -74,7 +74,7 @@ impl ExchangeMsg {
             let resp = TcpEchoResp(sealedbox::seal(format!("{}", self.peer).as_bytes(), &pk));
             self.write(ifc, poll, Some(resp))
         } else {
-            debug!("Error: Logic error in Tcp Rendezvous Server - Please report.");
+            warn!("Error: Logic error in Tcp Rendezvous Server - Please report.");
             return self.terminate(ifc, poll);
         }
     }

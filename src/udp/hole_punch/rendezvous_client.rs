@@ -19,6 +19,7 @@ pub struct UdpRendezvousClient {
     servers: Vec<SocketAddr>,
     on_first_write_triggered: Option<SocketAddr>,
     // Note: DO NOT convert to Hash/BTreeSet - strict ordering is required to pair with peer
+    // More info in `RendezvousInfo` documentation
     our_ext_addrs: Vec<SocketAddr>,
     f: Finish,
 }

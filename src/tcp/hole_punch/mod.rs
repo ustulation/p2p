@@ -14,15 +14,16 @@ use std::fmt::{self, Debug, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 use tcp::new_reusably_bound_tcp_sockets;
-use {Interface, NatError, NatState, NatType};
+use {Interface, NatError, NatState, NatType, TcpHolePunchInfo};
 
 mod listener;
 mod puncher;
 mod rendezvous_client;
 
 pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, NatType, ::Res<SocketAddr>)>;
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(TcpSock, Token)>)>;
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<TcpHolePunchInfo>)>;
 
 const LISTENER_BACKLOG: i32 = 100;
 
@@ -332,7 +333,7 @@ impl TcpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        res: ::Res<TcpSock>,
+        res: ::Res<(TcpSock, Duration)>,
     ) {
         let r = match self.state {
             State::HolePunching {
@@ -340,8 +341,8 @@ impl TcpHolePunchMediator {
                 ref mut f,
             } => {
                 let _ = children.remove(&child);
-                if let Ok(sock) = res {
-                    f(ifc, poll, Ok((sock, child)));
+                if let Ok((sock, dur)) = res {
+                    f(ifc, poll, Ok(TcpHolePunchInfo::new(sock, child, dur)));
                     Ok(true)
                 } else if children.is_empty() {
                     f(ifc, poll, Err(NatError::TcpHolePunchFailed));

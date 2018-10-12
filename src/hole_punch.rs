@@ -41,7 +41,10 @@ pub enum NatType {
 /// each other.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RendezvousInfo {
-    /// UDP addresses in order
+    /// UDP addresses in order. This is not to be re-ordered becuase we want to match our ttl
+    /// runners with peer's (so our slowest will correspond to their slowest etc.) and also make
+    /// sure that we are not mis-matching the our-to-peer socket-mapping. Hence not a
+    /// Hash/BTreeSet.
     pub udp: Vec<SocketAddr>,
     /// TCP addresses in order
     pub tcp: Option<SocketAddr>,
@@ -79,13 +82,70 @@ impl Default for RendezvousInfo {
     }
 }
 
+/// A successful result of TCP hole punch will be bundled in this structure
+#[derive(Debug)]
+pub struct TcpHolePunchInfo {
+    /// Hole punched socket
+    pub sock: TcpSock,
+    /// Token the udp socket is registered with mio
+    pub token: Token,
+    /// Duration it took to successfull forge a NAT hole - intended for debugging/stats purposes
+    pub dur: Duration,
+}
+
+impl TcpHolePunchInfo {
+    /// Construct a new `TcpHolePunchInfo`
+    pub fn new(sock: TcpSock, token: Token, dur: Duration) -> Self {
+        Self { sock, token, dur }
+    }
+}
+
+/// A successful result of UDP hole punch will be bundled in this structure
+#[derive(Debug)]
+pub struct UdpHolePunchInfo {
+    /// Hole punched socket
+    pub sock: UdpSock,
+    /// Peer hole punched to
+    pub peer: SocketAddr,
+    /// Token the udp socket is registered with mio
+    pub token: Token,
+    /// Starting TTL of the socket - intended for debugging/stats purposes
+    pub starting_ttl: u32,
+    /// TTL of the socket when concluding we have been reached by the peer - intended for
+    /// debugging/stats purposes
+    pub ttl_on_being_reached: u32,
+    /// Duration it took to successfull forge a NAT hole - intended for debugging/stats purposes
+    pub dur: Duration,
+}
+
+impl UdpHolePunchInfo {
+    /// Construct a new `UdpHolePunchInfo`
+    pub fn new(
+        sock: UdpSock,
+        peer: SocketAddr,
+        token: Token,
+        starting_ttl: u32,
+        ttl_on_being_reached: u32,
+        dur: Duration,
+    ) -> Self {
+        Self {
+            sock,
+            peer,
+            token,
+            starting_ttl,
+            ttl_on_being_reached,
+            dur,
+        }
+    }
+}
+
 /// A successful result of hole punch will be bundled in this structure
 #[derive(Debug)]
 pub struct HolePunchInfo {
     /// TCP socket that successfully managed to hole punch
-    pub tcp: Option<(TcpSock, Token)>,
+    pub tcp: Option<TcpHolePunchInfo>,
     /// UDP socket that successfully managed to hole punch
-    pub udp: Option<(UdpSock, SocketAddr, Token)>,
+    pub udp: Option<UdpHolePunchInfo>,
     /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
@@ -416,13 +476,13 @@ impl HolePunchMediator {
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
-        res: ::Res<(UdpSock, SocketAddr, Token)>,
+        res: ::Res<UdpHolePunchInfo>,
     ) {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.udp_child = None;
-            if let Ok(sock_info) = res {
+            if let Ok(udp_hp_info) = res {
                 trace!("UDP has successfully hole punched");
-                info.udp = Some(sock_info);
+                info.udp = Some(udp_hp_info);
             }
         }
 
@@ -433,13 +493,13 @@ impl HolePunchMediator {
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
-        res: ::Res<(TcpSock, Token)>,
+        res: ::Res<TcpHolePunchInfo>,
     ) {
         if let State::HolePunching { ref mut info, .. } = self.state {
             self.tcp_child = None;
-            if let Ok(sock_info) = res {
+            if let Ok(tcp_hp_info) = res {
                 trace!("TCP has successfully hole punched");
-                info.tcp = Some(sock_info);
+                info.tcp = Some(tcp_hp_info);
             }
         }
 
@@ -574,11 +634,11 @@ impl NatState for HolePunchMediator {
             } => {
                 let _ = ifc.cancel_timeout(timeout);
 
-                if let Some((ref tcp, _)) = info.tcp {
-                    let _ = poll.deregister(tcp);
+                if let Some(ref tcp_hp_info) = info.tcp {
+                    let _ = poll.deregister(&tcp_hp_info.sock);
                 }
-                if let Some((ref udp, ..)) = info.udp {
-                    let _ = poll.deregister(udp);
+                if let Some(ref udp_hp_info) = info.udp {
+                    let _ = poll.deregister(&udp_hp_info.sock);
                 }
             }
             _ => (),

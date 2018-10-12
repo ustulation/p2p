@@ -9,18 +9,18 @@ use std::cell::RefCell;
 use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tcp::new_reusably_bound_tcp_sockets;
 use {Interface, NatError, NatState, NatTimer};
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<TcpSock>)>;
+pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(TcpSock, Duration)>)>;
 
 pub enum Via {
     Connect {
         our_addr: SocketAddr,
         peer_addr: SocketAddr,
     },
-    Accept(TcpSock, Token),
+    Accept(TcpSock, Token, Instant),
 }
 
 const TIMER_ID: u8 = 0;
@@ -40,6 +40,7 @@ pub struct Puncher {
     via_accept: bool,
     connection_chooser: ConnectionChooser,
     timeout: Option<Timeout>,
+    commenced_at: Instant,
     f: Finish,
 }
 
@@ -51,11 +52,11 @@ impl Puncher {
         peer_enc_pk: &box_::PublicKey,
         f: Finish,
     ) -> ::Res<Token> {
-        let (sock, token, via_accept, our_addr, peer_addr) = match via {
-            Via::Accept(sock, t) => {
+        let (sock, token, via_accept, our_addr, peer_addr, commenced_at) = match via {
+            Via::Accept(sock, t, commenced_at) => {
                 let our_addr = sock.local_addr()?;
                 let peer_addr = sock.peer_addr()?;
-                (sock, t, true, our_addr, peer_addr)
+                (sock, t, true, our_addr, peer_addr, commenced_at)
             }
             Via::Connect {
                 our_addr,
@@ -64,7 +65,14 @@ impl Puncher {
                 let stream = new_reusably_bound_tcp_sockets(&our_addr, 1)?.0[0].to_tcp_stream()?;
                 stream.set_linger(Some(Duration::from_secs(0)))?;
                 let sock = TcpSock::wrap(TcpStream::connect_stream(stream, &peer_addr)?);
-                (sock, ifc.new_token(), false, our_addr, peer_addr)
+                (
+                    sock,
+                    ifc.new_token(),
+                    false,
+                    our_addr,
+                    peer_addr,
+                    Instant::now(),
+                )
             }
         };
 
@@ -90,6 +98,7 @@ impl Puncher {
             via_accept,
             connection_chooser: chooser,
             timeout: None,
+            commenced_at,
             f,
         }));
 
@@ -158,7 +167,8 @@ impl Puncher {
     fn done(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let sock = mem::replace(&mut self.sock, Default::default());
-        (*self.f)(ifc, poll, self.token, Ok(sock));
+        let dur = self.commenced_at.elapsed();
+        (*self.f)(ifc, poll, self.token, Ok((sock, dur)));
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {

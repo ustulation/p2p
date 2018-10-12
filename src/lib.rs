@@ -302,6 +302,7 @@ pub use config::Config;
 pub use error::NatError;
 pub use hole_punch::{
     GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator, NatType, RendezvousInfo,
+    TcpHolePunchInfo, UdpHolePunchInfo,
 };
 pub use tcp::TcpRendezvousServer;
 pub use udp::UdpRendezvousServer;

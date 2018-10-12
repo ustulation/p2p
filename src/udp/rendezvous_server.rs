@@ -74,7 +74,7 @@ impl UdpRendezvousServer {
             let resp = UdpEchoResp(sealedbox::seal(format!("{}", peer).as_bytes(), &pk));
             self.write_to(ifc, poll, Some((resp, peer)))
         } else {
-            debug!("Error: Logic error in Udp Rendezvous Server - Please report.");
+            warn!("Error: Logic error in Udp Rendezvous Server - Please report.");
             return self.terminate(ifc, poll);
         }
     }
