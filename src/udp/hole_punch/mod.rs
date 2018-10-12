@@ -11,12 +11,12 @@ use std::fmt::{self, Debug, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::{Rc, Weak};
-use {Interface, NatError, NatState};
+use {Interface, NatError, NatState, NatType};
 
 mod puncher;
 mod rendezvous_client;
 
-pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<Vec<SocketAddr>>)>;
+pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, NatType, ::Res<Vec<SocketAddr>>)>;
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(UdpSock, SocketAddr, Token)>)>;
 
 enum State {
@@ -71,11 +71,11 @@ impl UdpHolePunchMediator {
 
         for sock in socks {
             let weak_cloned = weak.clone();
-            let handler = move |ifc: &mut Interface, poll: &Poll, child, res| {
+            let handler = move |ifc: &mut Interface, poll: &Poll, child, nat_type, res| {
                 if let Some(mediator) = weak_cloned.upgrade() {
                     mediator
                         .borrow_mut()
-                        .handle_rendezvous(ifc, poll, child, res);
+                        .handle_rendezvous(ifc, poll, child, nat_type, res);
                 }
             };
 
@@ -91,18 +91,25 @@ impl UdpHolePunchMediator {
             mediator.borrow_mut().state = State::Rendezvous {
                 children: rendezvous_children,
                 info: (Vec::with_capacity(n), Vec::with_capacity(n)),
-                f: f,
+                f,
             };
 
             Ok(mediator)
         }
     }
 
+    // The NatType report will only be considered for the last child. This assumes that router does
+    // not appear as NatType::EDM to one and NatType::EIM to another etc. Just one caveat though:
+    // It can appear as EDM to one and EDMRandomIp/EDMRandomPort to another if the port at
+    // delta/port_prediction_offset happens to be occupied by some other socket. We don't want to
+    // make the code bloat to handle this rare case and it's going to be reported by TCP correctly
+    // anyway given that similar thing happening with TCP at the same time too is even rarer.
     fn handle_rendezvous(
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
+        nat_type: NatType,
         res: ::Res<(UdpSock, SocketAddr)>,
     ) {
         let r = match self.state {
@@ -121,10 +128,10 @@ impl UdpHolePunchMediator {
                     let ext_addrs = mem::replace(&mut info.1, vec![]);
                     if socks.is_empty() || ext_addrs.is_empty() {
                         UdpHolePunchMediator::dereg_socks(poll, &mut socks);
-                        f(ifc, poll, Err(NatError::UdpRendezvousFailed));
+                        f(ifc, poll, nat_type, Err(NatError::UdpRendezvousFailed));
                         Err(NatError::UdpRendezvousFailed)
                     } else {
-                        f(ifc, poll, Ok(ext_addrs));
+                        f(ifc, poll, nat_type, Ok(ext_addrs));
                         Ok(Some(socks))
                     }
                 } else {

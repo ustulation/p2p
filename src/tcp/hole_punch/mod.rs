@@ -15,13 +15,13 @@ use std::mem;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::{Rc, Weak};
 use tcp::new_reusably_bound_tcp_sockets;
-use {Interface, NatError, NatState};
+use {Interface, NatError, NatState, NatType};
 
 mod listener;
 mod puncher;
 mod rendezvous_client;
 
-pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<SocketAddr>)>;
+pub type RendezvousFinsih = Box<FnMut(&mut Interface, &Poll, NatType, ::Res<SocketAddr>)>;
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<(TcpSock, Token)>)>;
 
 const LISTENER_BACKLOG: i32 = 100;
@@ -144,16 +144,22 @@ impl TcpHolePunchMediator {
                     let ext_addrs = mem::replace(&mut info.1, vec![]);
 
                     if ext_addrs.is_empty() {
-                        f(ifc, poll, Err(NatError::TcpRendezvousFailed));
+                        f(
+                            ifc,
+                            poll,
+                            NatType::Unknown,
+                            Err(NatError::TcpRendezvousFailed),
+                        );
                         Err(NatError::TcpRendezvousFailed)
                     } else {
-                        match TcpHolePunchMediator::port_prediction(ext_addrs) {
+                        let mut nat_type = NatType::Unknown;
+                        match TcpHolePunchMediator::port_prediction(ext_addrs, &mut nat_type) {
                             Ok(ext_addr) => {
-                                f(ifc, poll, Ok(ext_addr));
+                                f(ifc, poll, nat_type, Ok(ext_addr));
                                 Ok(Some(info.0))
                             }
                             _ => {
-                                f(ifc, poll, Err(NatError::TcpRendezvousFailed));
+                                f(ifc, poll, nat_type, Err(NatError::TcpRendezvousFailed));
                                 Err(NatError::TcpRendezvousFailed)
                             }
                         }
@@ -186,20 +192,27 @@ impl TcpHolePunchMediator {
         }
     }
 
-    fn port_prediction(mut ext_addrs: Vec<SocketAddr>) -> ::Res<SocketAddr> {
+    fn port_prediction(
+        mut ext_addrs: Vec<SocketAddr>,
+        nat_type: &mut NatType,
+    ) -> ::Res<SocketAddr> {
         let mut ext_addr = match ext_addrs.pop() {
             Some(addr) => addr,
             None => return Err(NatError::TcpRendezvousFailed),
         };
 
+        let mut addrs = vec![ext_addr];
         let mut port_prediction_offset = 0i32;
         let mut is_err = false;
         for addr in ext_addrs {
+            addrs.push(addr);
+
             if ext_addr.ip() != addr.ip() {
                 info!(
                     "Symmetric NAT with variable IP mapping detected. No logic for Tcp \
                      external address prediction for these circumstances!"
                 );
+                *nat_type = NatType::EDMRandomIp(addrs.into_iter().map(|s| s.ip()).collect());
                 is_err = true;
                 break;
             } else if port_prediction_offset == 0 {
@@ -209,6 +222,7 @@ impl TcpHolePunchMediator {
                     "Symmetric NAT with non-uniformly changing port mapping detected. No logic \
                      for Tcp external address prediction for these circumstances!"
                 );
+                *nat_type = NatType::EDMRandomPort(addrs.into_iter().map(|s| s.port()).collect());
                 is_err = true;
                 break;
             }
@@ -223,6 +237,12 @@ impl TcpHolePunchMediator {
         let port = ext_addr.port();
         ext_addr.set_port((port as i32 + port_prediction_offset) as u16);
         trace!("Our ext addr by Tcp Rendezvous Client: {}", ext_addr);
+
+        *nat_type = if port_prediction_offset == 0 {
+            NatType::EIM
+        } else {
+            NatType::EDM(port_prediction_offset)
+        };
 
         Ok(ext_addr)
     }

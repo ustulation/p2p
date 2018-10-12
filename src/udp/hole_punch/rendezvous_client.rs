@@ -9,9 +9,9 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::str::{self, FromStr};
 use udp::{UdpEchoReq, UdpEchoResp};
-use {Interface, NatError, NatState};
+use {Interface, NatError, NatState, NatType};
 
-pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, ::Res<(UdpSock, SocketAddr)>)>;
+pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, NatType, ::Res<(UdpSock, SocketAddr)>)>;
 
 pub struct UdpRendezvousClient {
     sock: UdpSock,
@@ -57,7 +57,7 @@ impl UdpRendezvousClient {
             servers: servers,
             on_first_write_triggered: Some(server),
             our_ext_addrs: Vec::with_capacity(num_servers),
-            f: f,
+            f,
         }));
 
         if ifc.insert_state(token, client.clone()).is_err() {
@@ -116,7 +116,7 @@ impl UdpRendezvousClient {
                     "Error: Udp Rendezvous Client could not connect to server: {:?}",
                     e
                 );
-                return self.handle_err(ifc, poll);
+                return self.handle_err(ifc, poll, None);
             }
             let pk = ifc.enc_pk().0;
             self.write(ifc, poll, Some(UdpEchoReq(pk)));
@@ -128,7 +128,7 @@ impl UdpRendezvousClient {
     fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<UdpEchoReq>) {
         if let Err(e) = self.sock.write(m.map(|m| (m, 0))) {
             debug!("Udp Rendezvous Client has errored out in write: {:?}", e);
-            self.handle_err(ifc, poll)
+            self.handle_err(ifc, poll, None)
         }
     }
 
@@ -137,17 +137,23 @@ impl UdpRendezvousClient {
 
         let mut ext_addr = match self.our_ext_addrs.pop() {
             Some(addr) => addr,
-            None => return self.handle_err(ifc, poll),
+            None => return self.handle_err(ifc, poll, None),
         };
 
+        let mut nat_type = NatType::Unknown;
+
+        let mut addrs = vec![ext_addr];
         let mut port_prediction_offset = 0i32;
         let mut is_err = false;
         for addr in &self.our_ext_addrs {
+            addrs.push(*addr);
+
             if ext_addr.ip() != addr.ip() {
                 warn!(
                     "Symmetric NAT with variable IP mapping detected. No logic for Udp \
                      external address prediction for these circumstances!"
                 );
+                nat_type = NatType::EDMRandomIp(addrs.into_iter().map(|s| s.ip()).collect());
                 is_err = true;
                 break;
             } else if port_prediction_offset == 0 {
@@ -157,6 +163,7 @@ impl UdpRendezvousClient {
                     "Symmetric NAT with non-uniformly changing port mapping detected. No logic \
                      for Udp external address prediction for these circumstances!"
                 );
+                nat_type = NatType::EDMRandomPort(addrs.into_iter().map(|s| s.port()).collect());
                 is_err = true;
                 break;
             }
@@ -165,20 +172,32 @@ impl UdpRendezvousClient {
         }
 
         if is_err {
-            return self.handle_err(ifc, poll);
+            return self.handle_err(ifc, poll, Some(nat_type));
         }
 
         let port = ext_addr.port();
         ext_addr.set_port((port as i32 + port_prediction_offset) as u16);
         trace!("Our ext addr by Udp Rendezvous Client: {}", ext_addr);
 
+        nat_type = if port_prediction_offset == 0 {
+            NatType::EIM
+        } else {
+            NatType::EDM(port_prediction_offset)
+        };
+
         let s = mem::replace(&mut self.sock, Default::default());
-        (*self.f)(ifc, poll, self.token, Ok((s, ext_addr)));
+        (*self.f)(ifc, poll, self.token, nat_type, Ok((s, ext_addr)));
     }
 
-    fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
+    fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll, nat_type: Option<NatType>) {
         self.terminate(ifc, poll);
-        (*self.f)(ifc, poll, self.token, Err(NatError::UdpRendezvousFailed));
+        (*self.f)(
+            ifc,
+            poll,
+            self.token,
+            nat_type.unwrap_or(NatType::Unknown),
+            Err(NatError::UdpRendezvousFailed),
+        );
     }
 }
 
@@ -190,7 +209,7 @@ impl NatState for UdpRendezvousClient {
                 Err(e) => From::from(e),
             };
             debug!("Error in UdpRendezvousClient readiness: {:?}", e);
-            self.handle_err(ifc, poll);
+            self.handle_err(ifc, poll, None);
         } else if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
@@ -201,7 +220,7 @@ impl NatState for UdpRendezvousClient {
                         "Error: Udp Rendezvous Client could not connect to server: {:?}",
                         e
                     );
-                    self.handle_err(ifc, poll);
+                    self.handle_err(ifc, poll, None);
                 }
                 let pk = ifc.enc_pk().0;
                 self.write(ifc, poll, Some(UdpEchoReq(pk)));

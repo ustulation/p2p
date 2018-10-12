@@ -8,7 +8,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::{self, Debug, Formatter};
 use std::mem;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 use tcp::TcpHolePunchMediator;
@@ -19,6 +19,21 @@ use {Interface, NatError, NatMsg, NatState, NatTimer};
 pub type GetInfo = Box<FnMut(&mut Interface, &Poll, ::Res<(Handle, RendezvousInfo)>)>;
 /// Callback to receive the result of hole punching
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
+
+/// Detected NAT Type
+#[derive(Debug, Serialize, Deserialize)]
+pub enum NatType {
+    /// Endpoint Independent Mapping NAT
+    EIM,
+    /// Predictable Endpoint dependent Mapping NAT. Contains the detected delta.
+    EDM(i32),
+    /// Unpredictable Endpoint dependent Mapping NAT. Contains the detected IPs.
+    EDMRandomIp(Vec<IpAddr>),
+    /// Unpredictable Endpoint dependent Mapping NAT. Contains the detected ports.
+    EDMRandomPort(Vec<u16>),
+    /// Unknown or could not be determined
+    Unknown,
+}
 
 /// A rendezvous packet.
 ///
@@ -34,6 +49,10 @@ pub struct RendezvousInfo {
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
     pub enc_pk: [u8; box_::PUBLICKEYBYTES],
+    /// Detected NAT Type for TCP
+    pub nat_type_for_tcp: NatType,
+    /// Detected NAT Type for UDP
+    pub nat_type_for_udp: NatType,
 }
 
 impl RendezvousInfo {
@@ -42,6 +61,8 @@ impl RendezvousInfo {
             udp: vec![],
             tcp: None,
             enc_pk: enc_pk.0,
+            nat_type_for_tcp: NatType::Unknown,
+            nat_type_for_udp: NatType::Unknown,
         }
     }
 }
@@ -52,6 +73,8 @@ impl Default for RendezvousInfo {
             udp: vec![],
             tcp: None,
             enc_pk: [0; box_::PUBLICKEYBYTES],
+            nat_type_for_tcp: NatType::Unknown,
+            nat_type_for_udp: NatType::Unknown,
         }
     }
 }
@@ -153,9 +176,11 @@ impl HolePunchMediator {
         let weak_cloned = weak.clone();
         mediator.borrow_mut().self_weak = weak.clone();
 
-        let handler = move |ifc: &mut Interface, poll: &Poll, res| {
+        let handler = move |ifc: &mut Interface, poll: &Poll, nat_type, res| {
             if let Some(mediator) = weak.upgrade() {
-                mediator.borrow_mut().handle_udp_rendezvous(ifc, poll, res);
+                mediator
+                    .borrow_mut()
+                    .handle_udp_rendezvous(ifc, poll, nat_type, res);
             }
         };
 
@@ -167,9 +192,11 @@ impl HolePunchMediator {
             }
         };
 
-        let handler = move |ifc: &mut Interface, poll: &Poll, res| {
+        let handler = move |ifc: &mut Interface, poll: &Poll, nat_type, res| {
             if let Some(mediator) = weak_cloned.upgrade() {
-                mediator.borrow_mut().handle_tcp_rendezvous(ifc, poll, res);
+                mediator
+                    .borrow_mut()
+                    .handle_tcp_rendezvous(ifc, poll, nat_type, res);
             }
         };
 
@@ -210,6 +237,7 @@ impl HolePunchMediator {
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
+        nat_type: NatType,
         res: ::Res<Vec<SocketAddr>>,
     ) {
         if let State::Rendezvous { ref mut info, .. } = self.state {
@@ -220,18 +248,26 @@ impl HolePunchMediator {
             } else {
                 self.udp_child = None;
             }
+            info.nat_type_for_udp = nat_type;
         }
 
         self.handle_rendezvous_impl(ifc, poll);
     }
 
-    fn handle_tcp_rendezvous(&mut self, ifc: &mut Interface, poll: &Poll, res: ::Res<SocketAddr>) {
+    fn handle_tcp_rendezvous(
+        &mut self,
+        ifc: &mut Interface,
+        poll: &Poll,
+        nat_type: NatType,
+        res: ::Res<SocketAddr>,
+    ) {
         if let State::Rendezvous { ref mut info, .. } = self.state {
             if let Ok(ext_addr) = res {
                 info.tcp = Some(ext_addr);
             } else {
                 self.tcp_child = None;
             }
+            info.nat_type_for_tcp = nat_type;
         }
 
         self.handle_rendezvous_impl(ifc, poll);
@@ -481,14 +517,16 @@ impl NatState for HolePunchMediator {
                     match udp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
                         // It has already gone to the next state, ignore it
                         Err(NatError::InvalidState) => (),
-                        r @ Ok(_) | r @ Err(_) => self.handle_udp_rendezvous(ifc, poll, r),
+                        r @ Ok(_) | r @ Err(_) => {
+                            self.handle_udp_rendezvous(ifc, poll, NatType::Unknown, r)
+                        }
                     }
                 }
                 if let Some(tcp_child) = self.tcp_child.as_ref().cloned() {
                     match tcp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
                         // It has already gone to the next state, ignore it
                         NatError::InvalidState => (),
-                        e => self.handle_tcp_rendezvous(ifc, poll, Err(e)),
+                        e => self.handle_tcp_rendezvous(ifc, poll, NatType::Unknown, Err(e)),
                     }
                 }
 
