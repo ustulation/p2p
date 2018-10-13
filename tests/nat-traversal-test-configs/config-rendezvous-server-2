@@ -1,0 +1,10 @@
+{
+  "rendezvous_timeout_sec": null,
+  "hole_punch_timeout_sec": null,
+  "hole_punch_wait_for_other": null,
+  "udp_rendezvous_port": 10012,
+  "tcp_rendezvous_port": 15012,
+  "remote_udp_rendezvous_servers": [],
+  "remote_tcp_rendezvous_servers": [],
+  "udp_hole_punchers": []
+}
