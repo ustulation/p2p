@@ -21,7 +21,7 @@ pub type GetInfo = Box<FnMut(&mut Interface, &Poll, ::Res<(Handle, RendezvousInf
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
 
 /// Detected NAT Type
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum NatType {
     /// Endpoint Independent Mapping NAT
     EIM,
@@ -33,6 +33,12 @@ pub enum NatType {
     EDMRandomPort(Vec<u16>),
     /// Unknown or could not be determined
     Unknown,
+}
+
+impl Default for NatType {
+    fn default() -> Self {
+        NatType::Unknown
+    }
 }
 
 /// A rendezvous packet.
@@ -64,8 +70,8 @@ impl RendezvousInfo {
             udp: vec![],
             tcp: None,
             enc_pk: enc_pk.0,
-            nat_type_for_tcp: NatType::Unknown,
-            nat_type_for_udp: NatType::Unknown,
+            nat_type_for_tcp: Default::default(),
+            nat_type_for_udp: Default::default(),
         }
     }
 }
@@ -76,8 +82,8 @@ impl Default for RendezvousInfo {
             udp: vec![],
             tcp: None,
             enc_pk: [0; box_::PUBLICKEYBYTES],
-            nat_type_for_tcp: NatType::Unknown,
-            nat_type_for_udp: NatType::Unknown,
+            nat_type_for_tcp: Default::default(),
+            nat_type_for_udp: Default::default(),
         }
     }
 }
@@ -574,11 +580,18 @@ impl NatState for HolePunchMediator {
         let terminate = match self.state {
             State::Rendezvous { .. } => {
                 if let Some(udp_child) = self.udp_child.as_ref().cloned() {
-                    match udp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
+                    let mut nat_type = Default::default();
+                    match udp_child.borrow_mut().rendezvous_timeout(ifc, poll).map(
+                        |(our_addrs, nat)| {
+                            nat_type = nat;
+                            our_addrs
+                        },
+                    ) {
                         // It has already gone to the next state, ignore it
                         Err(NatError::InvalidState) => (),
                         r @ Ok(_) | r @ Err(_) => {
-                            self.handle_udp_rendezvous(ifc, poll, NatType::Unknown, r)
+                            debug!("Extracted results after time out for UDP Rendezvous reached");
+                            self.handle_udp_rendezvous(ifc, poll, nat_type, r)
                         }
                     }
                 }

@@ -21,6 +21,7 @@ use {Interface, NatError, NatState};
 pub struct UdpRendezvousServer {
     sock: UdpSock,
     token: Token,
+    terminated: bool,
 }
 
 impl UdpRendezvousServer {
@@ -42,7 +43,11 @@ impl UdpRendezvousServer {
             PollOpt::edge(),
         )?;
 
-        let server = Rc::new(RefCell::new(UdpRendezvousServer { sock, token }));
+        let server = Rc::new(RefCell::new(UdpRendezvousServer {
+            sock,
+            token,
+            terminated: false,
+        }));
 
         if ifc.insert_state(token, server.clone()).is_err() {
             warn!("Unable to start UdpRendezvousServer!");
@@ -54,14 +59,14 @@ impl UdpRendezvousServer {
     }
 
     fn read_frm(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let mut pk = None;
+        let mut peers = Vec::new();
         loop {
             match self.sock.read_frm() {
-                Ok(Some((UdpEchoReq(raw), peer))) => pk = Some((box_::PublicKey(raw), peer)),
-                Ok(None) => if pk.is_some() {
-                    break;
-                } else {
+                Ok(Some((UdpEchoReq(pk), peer))) => peers.push((box_::PublicKey(pk), peer)),
+                Ok(None) => if peers.is_empty() {
                     return;
+                } else {
+                    break;
                 },
                 Err(e) => {
                     debug!("Error in read: {:?}", e);
@@ -70,12 +75,13 @@ impl UdpRendezvousServer {
             }
         }
 
-        if let Some((pk, peer)) = pk.take() {
+        for (pk, peer) in peers {
             let resp = UdpEchoResp(sealedbox::seal(format!("{}", peer).as_bytes(), &pk));
-            self.write_to(ifc, poll, Some((resp, peer)))
-        } else {
-            warn!("Error: Logic error in Udp Rendezvous Server - Please report.");
-            return self.terminate(ifc, poll);
+            self.write_to(ifc, poll, Some((resp, peer)));
+            // Errored while writting
+            if self.terminated {
+                break;
+            }
         }
     }
 
@@ -111,6 +117,7 @@ impl NatState for UdpRendezvousServer {
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
         let _ = ifc.remove_state(self.token);
         let _ = poll.deregister(&self.sock);
+        self.terminated = true;
     }
 
     fn as_any(&mut self) -> &mut Any {

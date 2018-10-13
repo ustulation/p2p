@@ -3,6 +3,7 @@
 extern crate env_logger;
 #[macro_use]
 extern crate log;
+// extern crate maidsafe_utilities;
 extern crate mio;
 extern crate p2p;
 extern crate rust_sodium as sodium;
@@ -177,7 +178,7 @@ fn start_chatting(el: &El, token: Token, rx: mpsc::Receiver<()>) {
 }
 
 fn main() {
-    env_logger::init();
+    // unwrap!(maidsafe_utilities::log::init(true));
 
     let el = spawn_event_loop();
     let (handle, rendezvous_info) = match get_rendezvous_info(&el) {

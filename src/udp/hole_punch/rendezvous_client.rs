@@ -71,10 +71,10 @@ impl UdpRendezvousClient {
     }
 
     fn read(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let mut cipher_text = Vec::new();
+        let mut cipher_text = Vec::with_capacity(64);
         loop {
             match self.sock.read() {
-                Ok(Some(UdpEchoResp(m))) => cipher_text = m,
+                Ok(Some(UdpEchoResp(cipher))) => cipher_text = cipher,
                 Ok(None) => if cipher_text.is_empty() {
                     return;
                 } else {
@@ -141,7 +141,7 @@ impl UdpRendezvousClient {
             None => return self.handle_err(ifc, poll, None),
         };
 
-        let mut nat_type = NatType::Unknown;
+        let mut nat_type = Default::default();
 
         let mut addrs = vec![ext_addr];
         let mut port_prediction_offset = 0i32;
@@ -157,7 +157,7 @@ impl UdpRendezvousClient {
                 nat_type = NatType::EDMRandomIp(addrs.into_iter().map(|s| s.ip()).collect());
                 is_err = true;
                 break;
-            } else if port_prediction_offset == 0 {
+            } else if addrs.len() == 2 {
                 port_prediction_offset = addr.port() as i32 - ext_addr.port() as i32;
             } else if port_prediction_offset != addr.port() as i32 - ext_addr.port() as i32 {
                 warn!(
@@ -196,7 +196,7 @@ impl UdpRendezvousClient {
             ifc,
             poll,
             self.token,
-            nat_type.unwrap_or(NatType::Unknown),
+            nat_type.unwrap_or(Default::default()),
             Err(NatError::UdpRendezvousFailed),
         );
     }
@@ -215,13 +215,12 @@ impl NatState for UdpRendezvousClient {
             self.read(ifc, poll)
         } else if event.is_writable() {
             if let Some(server) = self.on_first_write_triggered.take() {
-                // FIXME: Check if UDP connect requires to wait for an event
                 if let Err(e) = self.sock.connect(&server) {
                     debug!(
                         "Error: Udp Rendezvous Client could not connect to server: {:?}",
                         e
                     );
-                    self.handle_err(ifc, poll, None);
+                    return self.handle_err(ifc, poll, None);
                 }
                 let pk = ifc.enc_pk().0;
                 self.write(ifc, poll, Some(UdpEchoReq(pk)));

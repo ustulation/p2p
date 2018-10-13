@@ -25,6 +25,7 @@ enum State {
     Rendezvous {
         children: HashSet<Token>,
         info: (Vec<(UdpSock, Token)>, Vec<SocketAddr>),
+        nat_type: NatType,
         f: RendezvousFinsih,
     },
     ReadyToHolePunch(Vec<(UdpSock, Token)>),
@@ -92,6 +93,7 @@ impl UdpHolePunchMediator {
             mediator.borrow_mut().state = State::Rendezvous {
                 children: rendezvous_children,
                 info: (Vec::with_capacity(n), Vec::with_capacity(n)),
+                nat_type: Default::default(),
                 f,
             };
 
@@ -99,27 +101,32 @@ impl UdpHolePunchMediator {
         }
     }
 
-    // The NatType report will only be considered for the last child. This assumes that router does
-    // not appear as NatType::EDM to one and NatType::EIM to another etc. Just one caveat though:
-    // It can appear as EDM to one and EDMRandomIp/EDMRandomPort to another if the port at
-    // delta/port_prediction_offset happens to be occupied by some other socket. We don't want to
-    // make the code bloat to handle this rare case and it's going to be reported by TCP correctly
-    // anyway given that similar thing happening with TCP at the same time too is even rarer.
+    // The NatType report will only be considered for the 1st successful child to report a known NAT
+    // type. This assumes that router does not appear as NatType::EDM to one and NatType::EIM to
+    // another etc. Just one caveat though: It can appear as EDM to one and
+    // EDMRandomIp/EDMRandomPort to another if the port at delta/port_prediction_offset happens to
+    // be occupied by some other socket. We don't want to make the code bloat to handle this rare
+    // case and it's going to be reported by TCP correctly anyway given that similar thing happening
+    // with TCP at the same time too is even rarer.
     fn handle_rendezvous(
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        nat_type: NatType,
+        deduced_nat_type: NatType,
         res: ::Res<(UdpSock, SocketAddr)>,
     ) {
         let r = match self.state {
             State::Rendezvous {
                 ref mut children,
                 ref mut info,
+                ref mut nat_type,
                 ref mut f,
             } => {
                 let _ = children.remove(&child);
+                if *nat_type == Default::default() {
+                    *nat_type = deduced_nat_type;
+                }
                 if let Ok((sock, ext_addr)) = res {
                     info.0.push((sock, child));
                     info.1.push(ext_addr);
@@ -127,6 +134,7 @@ impl UdpHolePunchMediator {
                 if children.is_empty() {
                     let mut socks = mem::replace(&mut info.0, vec![]);
                     let ext_addrs = mem::replace(&mut info.1, vec![]);
+                    let nat_type = mem::replace(nat_type, Default::default());
                     if socks.is_empty() || ext_addrs.is_empty() {
                         UdpHolePunchMediator::dereg_socks(poll, &mut socks);
                         f(ifc, poll, nat_type, Err(NatError::UdpRendezvousFailed));
@@ -169,21 +177,23 @@ impl UdpHolePunchMediator {
         &mut self,
         ifc: &mut Interface,
         poll: &Poll,
-    ) -> ::Res<Vec<SocketAddr>> {
+    ) -> ::Res<(Vec<SocketAddr>, NatType)> {
         let r = match self.state {
             State::Rendezvous {
                 ref mut children,
                 ref mut info,
+                ref mut nat_type,
                 ..
             } => {
                 UdpHolePunchMediator::terminate_children(ifc, poll, children);
                 let mut socks = mem::replace(&mut info.0, vec![]);
                 let ext_addrs = mem::replace(&mut info.1, vec![]);
+                let nat_type = mem::replace(nat_type, Default::default());
                 if socks.is_empty() || ext_addrs.is_empty() {
                     UdpHolePunchMediator::dereg_socks(poll, &mut socks);
                     Err(NatError::UdpRendezvousFailed)
                 } else {
-                    Ok((socks, ext_addrs))
+                    Ok((socks, ext_addrs, nat_type))
                 }
             }
             ref x => {
@@ -196,9 +206,9 @@ impl UdpHolePunchMediator {
             }
         };
 
-        let r = r.map(|(socks, ext_addrs)| {
+        let r = r.map(|(socks, ext_addrs, nat_type)| {
             self.state = State::ReadyToHolePunch(socks);
-            ext_addrs
+            (ext_addrs, nat_type)
         });
 
         match r {
