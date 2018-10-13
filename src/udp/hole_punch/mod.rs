@@ -255,7 +255,7 @@ impl UdpHolePunchMediator {
                         .handle_hole_punch(ifc, poll, token, res);
                 }
             };
-            if Puncher::start(
+            match Puncher::start(
                 ifc,
                 poll,
                 token,
@@ -265,14 +265,16 @@ impl UdpHolePunchMediator {
                 peer,
                 peer_enc_pk,
                 Box::new(handler),
-            ).is_ok()
-            {
-                let _ = children.insert(token);
+            ) {
+                Ok(()) => {
+                    let _ = children.insert(token);
+                }
+                Err(e) => debug!("Error: Could not start UDP Puncher: {:?}", e),
             }
         }
 
         if children.is_empty() {
-            debug!("Failure: Not even one valid child even managed to start hole punching");
+            info!("Failure: Not even one valid child even managed to start hole punching");
             self.terminate(ifc, poll);
             return Err(NatError::UdpHolePunchFailed);
         }

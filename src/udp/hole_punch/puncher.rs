@@ -39,8 +39,6 @@ pub struct Puncher {
     ttl_inc_interval_ms: u64,
     timeout: Timeout,
     sending: Sending,
-    syn_ack_rxd: bool,
-    syn_ack_txd: bool,
     commenced_at: Instant,
     f: Finish,
 }
@@ -60,8 +58,6 @@ impl Puncher {
         let os_ttl = sock.ttl()?;
         let starting_ttl = starting_ttl as u32;
         sock.set_ttl(starting_ttl)?;
-        // FIXME: check if we need to wait for connect to succeed in async manner.. Here we are
-        // assuming that UDP connects happen instantly.
         sock.connect(&peer).map_err(|e| {
             debug!("Error: Failed to connect UDP Puncher: {:?}", e);
             e
@@ -103,8 +99,6 @@ impl Puncher {
             ttl_inc_interval_ms,
             timeout,
             sending: Sending::Syn,
-            syn_ack_rxd: false,
-            syn_ack_txd: false,
             commenced_at: Instant::now(),
             f,
         }));
@@ -149,13 +143,10 @@ impl Puncher {
                 _ => (),
             }
         } else if msg == SYN_ACK {
-            if self.syn_ack_txd {
-                if self.connection_chooser {
-                    self.sending = Sending::Ack;
-                }
+            self.sending = if self.connection_chooser {
+                Sending::Ack
             } else {
-                self.syn_ack_rxd = true;
-                self.sending = Sending::SynAck;
+                Sending::SynAck
             }
         } else if msg == ACK {
             if self.connection_chooser {
@@ -221,12 +212,8 @@ impl Puncher {
 
     fn on_successful_send(&mut self, ifc: &mut Interface, poll: &Poll) {
         match self.sending {
-            Sending::SynAck => self.syn_ack_txd = true,
-            Sending::Ack => return self.done(ifc, poll),
+            Sending::Ack => self.done(ifc, poll),
             _ => (),
-        }
-        if self.syn_ack_txd && self.syn_ack_rxd && self.connection_chooser {
-            self.sending = Sending::Ack;
         }
     }
 
