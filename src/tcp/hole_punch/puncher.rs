@@ -79,7 +79,7 @@ impl Puncher {
         poll.register(
             &sock,
             token,
-            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable(),
             PollOpt::edge(),
         )?;
 
@@ -172,35 +172,34 @@ impl Puncher {
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
-        self.terminate(ifc, poll);
-        (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
+        let e = match self.sock.take_error() {
+            Ok(err) => err.map_or(NatError::Unknown, NatError::from),
+            Err(e) => From::from(e),
+        };
+        if self.via_accept {
+            debug!("Error in Tcp Puncher readiness: {:?}", e);
+            self.terminate(ifc, poll);
+            (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
+        } else {
+            trace!("Error in Tcp Puncher connector readiness: {:?}", e);
+            match ifc.set_timeout(
+                Duration::from_millis(RE_CONNECT_MS),
+                NatTimer::new(self.token, TIMER_ID),
+            ) {
+                Ok(t) => self.timeout = Some(t),
+                Err(e) => {
+                    debug!("Error setting timeout: {:?}", e);
+                    self.terminate(ifc, poll);
+                    (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
+                }
+            }
+        }
     }
 }
 
 impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
-        if event.is_error() {
-            let e = match self.sock.take_error() {
-                Ok(err) => err.map_or(NatError::Unknown, NatError::from),
-                Err(e) => From::from(e),
-            };
-            if self.via_accept {
-                debug!("Error in Tcp Puncher readiness: {:?}", e);
-                self.handle_err(ifc, poll)
-            } else {
-                trace!("Error in Tcp Puncher connector readiness: {:?}", e);
-                match ifc.set_timeout(
-                    Duration::from_millis(RE_CONNECT_MS),
-                    NatTimer::new(self.token, TIMER_ID),
-                ) {
-                    Ok(t) => self.timeout = Some(t),
-                    Err(e) => {
-                        debug!("Error setting timeout: {:?}", e);
-                        self.handle_err(ifc, poll)
-                    }
-                }
-            }
-        } else if event.is_readable() {
+        if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
             if let Some(t) = self.timeout.take() {
@@ -217,7 +216,8 @@ impl NatState for Puncher {
                     Ok(s) => self.sock = s,
                     Err(e) => {
                         debug!("Terminating due to error: {:?}", e);
-                        return self.handle_err(ifc, poll);
+                        self.terminate(ifc, poll);
+                        (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
                     }
                 }
             }
@@ -227,11 +227,8 @@ impl NatState for Puncher {
                 return;
             };
             self.write(ifc, poll, m)
-        } else if event.is_hup() {
-            debug!("Shutdown in Tcp Puncher readiness");
-            self.handle_err(ifc, poll)
         } else {
-            trace!("Ignoring unknown event kind: {:?}", event);
+            warn!("Investigate: Ignoring unknown event kind: {:?}", event);
         }
     }
 
@@ -249,7 +246,7 @@ impl NatState for Puncher {
             poll.register(
                 &sock,
                 self.token,
-                Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
+                Ready::readable() | Ready::writable(),
                 PollOpt::edge(),
             )?;
             Ok(sock)
@@ -259,7 +256,8 @@ impl NatState for Puncher {
             Ok(s) => self.sock = s,
             Err(e) => {
                 debug!("Aborting connection attempt due to: {:?}", e);
-                self.handle_err(ifc, poll)
+                self.terminate(ifc, poll);
+                (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
             }
         }
     }

@@ -4,6 +4,8 @@ extern crate p2p;
 extern crate rust_sodium as sodium;
 extern crate serde_json;
 #[macro_use]
+extern crate log;
+#[macro_use]
 extern crate unwrap;
 
 use maidsafe_utilities::thread::{self, Joiner};
@@ -11,8 +13,8 @@ use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
 use mio::{Event, Events, Poll, PollOpt, Ready, Token};
 use p2p::{
-    Config, Handle, HolePunchMediator, Interface, NatMsg, NatState, NatTimer, RendezvousInfo, Res,
-    TcpRendezvousServer, UdpRendezvousServer,
+    Config, Handle, HolePunchMediator, Interface, NatMsg, NatState, NatTimer, NatType,
+    RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
 };
 use sodium::crypto::box_;
 use std::cell::RefCell;
@@ -241,7 +243,7 @@ fn start_rendezvous_servers() -> Vec<El> {
             unwrap!(tx.send((udp_server_token, tcp_server_token)));
         })));
 
-        let (udp_server_token, tcp_server_token) = unwrap!(rx.recv());
+        let (_udp_server_token, _tcp_server_token) = unwrap!(rx.recv());
 
         els.push(el);
     }
@@ -262,43 +264,111 @@ fn get_rendezvous_info(el: &El) -> mpsc::Receiver<Res<(Handle, RendezvousInfo)>>
 }
 
 #[test]
-fn nat_traverse() {
+fn nat_traverse_among_3_peers() {
     unwrap!(maidsafe_utilities::log::init(true));
 
-    let els_rendezvous_servers = start_rendezvous_servers();
+    let _els_rendezvous_servers = start_rendezvous_servers();
 
     let peer_config_path = "./tests/nat-traversal-test-configs/config-peers".to_string();
     let el_peer0 = spawn_event_loop(peer_config_path.clone());
-    let el_peer1 = spawn_event_loop(peer_config_path);
+    let el_peer1 = spawn_event_loop(peer_config_path.clone());
+    let el_peer2 = spawn_event_loop(peer_config_path);
 
     // Get `RendezvousInfo` in parallel
-    let rendezvous_rx0 = get_rendezvous_info(&el_peer0);
-    let rendezvous_rx1 = get_rendezvous_info(&el_peer1);
+    let rendezvous_rx01 = get_rendezvous_info(&el_peer0);
+    let rendezvous_rx02 = get_rendezvous_info(&el_peer0);
+    let rendezvous_rx10 = get_rendezvous_info(&el_peer1);
+    let rendezvous_rx12 = get_rendezvous_info(&el_peer1);
+    let rendezvous_rx20 = get_rendezvous_info(&el_peer2);
+    let rendezvous_rx21 = get_rendezvous_info(&el_peer2);
 
-    let (handle0, rendezvous_info0) = unwrap!(unwrap!(rendezvous_rx0.recv()));
-    let (handle1, rendezvous_info1) = unwrap!(unwrap!(rendezvous_rx1.recv()));
+    let (handle01, rendezvous_info01) = unwrap!(unwrap!(rendezvous_rx01.recv()));
+    let (handle02, rendezvous_info02) = unwrap!(unwrap!(rendezvous_rx02.recv()));
+    let (handle10, rendezvous_info10) = unwrap!(unwrap!(rendezvous_rx10.recv()));
+    let (handle12, rendezvous_info12) = unwrap!(unwrap!(rendezvous_rx12.recv()));
+    let (handle20, rendezvous_info20) = unwrap!(unwrap!(rendezvous_rx20.recv()));
+    let (handle21, rendezvous_info21) = unwrap!(unwrap!(rendezvous_rx21.recv()));
+
+    // The localhost is very likely to be EIM unless someone's changed it deliberately for e.g., in
+    // iptables on Linux etc. In that case change the assertion accordingly.
+    assert_eq!(rendezvous_info01.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(rendezvous_info02.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(rendezvous_info10.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(rendezvous_info12.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(rendezvous_info20.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(rendezvous_info21.nat_type_for_tcp, NatType::EIM);
+
+    // The localhost is very likely to be EIM unless someone's changed it deliberately for e.g., in
+    // iptables on Linux etc. In that case change the assertion accordingly.
+    assert_eq!(rendezvous_info01.nat_type_for_udp, NatType::EIM);
+    assert_eq!(rendezvous_info02.nat_type_for_udp, NatType::EIM);
+    assert_eq!(rendezvous_info10.nat_type_for_udp, NatType::EIM);
+    assert_eq!(rendezvous_info12.nat_type_for_udp, NatType::EIM);
+    assert_eq!(rendezvous_info20.nat_type_for_udp, NatType::EIM);
+    assert_eq!(rendezvous_info21.nat_type_for_udp, NatType::EIM);
 
     // NAT Traverse in parallel
-    let (hole_punch_tx0, hole_punch_rx0) = mpsc::channel();
-    handle0.fire_hole_punch(
-        rendezvous_info1,
+    let (hole_punch_tx01, hole_punch_rx01) = mpsc::channel();
+    handle01.fire_hole_punch(
+        rendezvous_info10,
         Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx0.send(res));
+            unwrap!(hole_punch_tx01.send(res));
         }),
     );
-    let (hole_punch_tx1, hole_punch_rx1) = mpsc::channel();
-    handle1.fire_hole_punch(
-        rendezvous_info0,
+    let (hole_punch_tx02, hole_punch_rx02) = mpsc::channel();
+    handle02.fire_hole_punch(
+        rendezvous_info20,
         Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx1.send(res));
+            unwrap!(hole_punch_tx02.send(res));
+        }),
+    );
+    let (hole_punch_tx10, hole_punch_rx10) = mpsc::channel();
+    handle10.fire_hole_punch(
+        rendezvous_info01,
+        Box::new(move |_, _, res| {
+            unwrap!(hole_punch_tx10.send(res));
+        }),
+    );
+    let (hole_punch_tx12, hole_punch_rx12) = mpsc::channel();
+    handle12.fire_hole_punch(
+        rendezvous_info21,
+        Box::new(move |_, _, res| {
+            unwrap!(hole_punch_tx12.send(res));
+        }),
+    );
+    let (hole_punch_tx20, hole_punch_rx20) = mpsc::channel();
+    handle20.fire_hole_punch(
+        rendezvous_info02,
+        Box::new(move |_, _, res| {
+            unwrap!(hole_punch_tx20.send(res));
+        }),
+    );
+    let (hole_punch_tx21, hole_punch_rx21) = mpsc::channel();
+    handle21.fire_hole_punch(
+        rendezvous_info12,
+        Box::new(move |_, _, res| {
+            unwrap!(hole_punch_tx21.send(res));
         }),
     );
 
-    let hole_punch_info0 = unwrap!(unwrap!(hole_punch_rx0.recv()));
-    let hole_punch_info1 = unwrap!(unwrap!(hole_punch_rx1.recv()));
+    let hole_punch_info01 = unwrap!(unwrap!(hole_punch_rx01.recv()));
+    let hole_punch_info02 = unwrap!(unwrap!(hole_punch_rx02.recv()));
+    let hole_punch_info10 = unwrap!(unwrap!(hole_punch_rx10.recv()));
+    let hole_punch_info12 = unwrap!(unwrap!(hole_punch_rx12.recv()));
+    let hole_punch_info20 = unwrap!(unwrap!(hole_punch_rx20.recv()));
+    let hole_punch_info21 = unwrap!(unwrap!(hole_punch_rx21.recv()));
 
-    assert!(hole_punch_info0.tcp.is_some());
-    assert!(hole_punch_info0.udp.is_some());
-    assert!(hole_punch_info1.tcp.is_some());
-    assert!(hole_punch_info1.udp.is_some());
+    assert!(hole_punch_info01.tcp.is_some());
+    assert!(hole_punch_info02.tcp.is_some());
+    assert!(hole_punch_info10.tcp.is_some());
+    assert!(hole_punch_info12.tcp.is_some());
+    assert!(hole_punch_info20.tcp.is_some());
+    assert!(hole_punch_info21.tcp.is_some());
+
+    assert!(hole_punch_info01.udp.is_some());
+    assert!(hole_punch_info02.udp.is_some());
+    assert!(hole_punch_info10.udp.is_some());
+    assert!(hole_punch_info12.udp.is_some());
+    assert!(hole_punch_info20.udp.is_some());
+    assert!(hole_punch_info21.udp.is_some());
 }

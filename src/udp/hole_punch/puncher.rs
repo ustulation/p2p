@@ -78,7 +78,7 @@ impl Puncher {
         if let Err(e) = poll.reregister(
             &sock,
             token,
-            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable(),
             PollOpt::edge(),
         ) {
             debug!("Error: UdpPuncher errored in registeration: {:?}", e);
@@ -243,19 +243,12 @@ impl Puncher {
 
 impl NatState for Puncher {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
-        if event.is_error() || event.is_hup() {
-            let e = match self.sock.take_error() {
-                Ok(err) => err.map_or(NatError::Unknown, NatError::from),
-                Err(e) => From::from(e),
-            };
-            debug!("Error in Udp Puncher readiness: {:?}", e);
-            self.handle_err(ifc, poll)
-        } else if event.is_readable() {
+        if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
             self.write(ifc, poll)
         } else {
-            trace!("Ignoring unknown event kind: {:?}", event);
+            warn!("Investigate: Ignoring unknown event kind: {:?}", event);
         }
     }
 

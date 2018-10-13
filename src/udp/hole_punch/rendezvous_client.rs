@@ -48,7 +48,7 @@ impl UdpRendezvousClient {
         poll.register(
             &sock,
             token,
-            Ready::readable() | Ready::writable() | Ready::error() | Ready::hup(),
+            Ready::readable() | Ready::writable(),
             PollOpt::edge(),
         )?;
 
@@ -204,14 +204,7 @@ impl UdpRendezvousClient {
 
 impl NatState for UdpRendezvousClient {
     fn ready(&mut self, ifc: &mut Interface, poll: &Poll, event: Ready) {
-        if event.is_error() || event.is_hup() {
-            let e = match self.sock.take_error() {
-                Ok(err) => err.map_or(NatError::Unknown, NatError::from),
-                Err(e) => From::from(e),
-            };
-            debug!("Error in UdpRendezvousClient readiness: {:?}", e);
-            self.handle_err(ifc, poll, None);
-        } else if event.is_readable() {
+        if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
             if let Some(server) = self.on_first_write_triggered.take() {
@@ -228,7 +221,7 @@ impl NatState for UdpRendezvousClient {
                 self.write(ifc, poll, None);
             }
         } else {
-            trace!("Ignoring unknown event kind: {:?}", event);
+            warn!("Investigate: Ignoring unknown event kind: {:?}", event);
         }
     }
 
