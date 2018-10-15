@@ -21,7 +21,7 @@ pub type GetInfo = Box<FnMut(&mut Interface, &Poll, ::Res<(Handle, RendezvousInf
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
 
 /// Detected NAT Type
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum NatType {
     /// Endpoint Independent Mapping NAT
     EIM,
@@ -45,7 +45,7 @@ impl Default for NatType {
 ///
 /// This is supposed to be exchanged out of band between the peers to allow them to hole-punch to
 /// each other.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RendezvousInfo {
     /// UDP addresses in order. This is not to be re-ordered becuase we want to match our ttl
     /// runners with peer's (so our slowest will correspond to their slowest etc.) and also make
