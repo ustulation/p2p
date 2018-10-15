@@ -1,0 +1,26 @@
+[appenders.display]
+kind = "async_console"
+pattern = "{l} {d(%H:%M:%S.%f)} [{M} #FS#{f}#FE#:{L}] {m}{n}"
+
+[[appenders.display.filters]]
+kind  = "threshold"
+level = "info"
+
+[appenders.async_file]
+kind = "async_file"
+output_file_name = "client.log"
+pattern = "{l} {d(%H:%M:%S.%f)} [{M} #FS#{f}#FE#:{L}] {m}{n}"
+append = true
+file_timestamp = true
+
+[loggers."p2p"]
+level = "trace"
+appenders = ["display", "async_file"]
+
+[loggers."nat_traversal"]
+level = "trace"
+appenders = ["display", "async_file"]
+
+[loggers."socket_collection"]
+level = "info"
+appenders = ["display", "async_file"]

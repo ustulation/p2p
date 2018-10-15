@@ -1,6 +1,6 @@
 use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
-use socket_collection::UdpSock;
+use socket_collection::{SocketError, UdpSock};
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -18,6 +18,7 @@ const TIMER_ID: u8 = 0;
 const SYN: &[u8] = b"SYN";
 const SYN_ACK: &[u8] = b"SYN-ACK";
 const ACK: &[u8] = b"ACK";
+const MAX_ACK_RETRANSMISSIONS: u8 = 3;
 
 #[derive(Debug, Eq, PartialEq)]
 enum Sending {
@@ -39,6 +40,7 @@ pub struct Puncher {
     ttl_inc_interval_ms: u64,
     timeout: Timeout,
     sending: Sending,
+    num_acks_transmitted: u8,
     commenced_at: Instant,
     f: Finish,
 }
@@ -99,6 +101,7 @@ impl Puncher {
             ttl_inc_interval_ms,
             timeout,
             sending: Sending::Syn,
+            num_acks_transmitted: 0,
             commenced_at: Instant::now(),
             f,
         }));
@@ -123,7 +126,15 @@ impl Puncher {
                     break;
                 },
                 Err(e) => {
-                    debug!("Udp Puncher has errored out in read: {:?}", e);
+                    match e {
+                        SocketError::ZeroByteRead => trace!(
+                            "Error: {:?} - this behaviour is only observed on Windows where \
+                             a connected UDP socket seems to get an EOF when remote peer has \
+                             dropped its socket (observed over localhost on windows)",
+                            e
+                        ),
+                        _ => debug!("Udp Puncher has errored out in read: {:?}", e),
+                    }
                     return self.terminate(ifc, poll);
                 }
             }
@@ -132,7 +143,10 @@ impl Puncher {
         let msg = match ::msg_to_read(&cipher_text, &self.key) {
             Ok(m) => m,
             Err(e) => {
-                debug!("Udp Hole Puncher has errored out in read: {:?}", e);
+                debug!(
+                    "Udp Hole Puncher has errored out in deciphering incoming data: {:?}",
+                    e
+                );
                 return self.handle_err(ifc, poll);
             }
         };
@@ -153,6 +167,11 @@ impl Puncher {
                 debug!("No tolerance for a non chooser giving us an ACK - terminating");
                 return self.handle_err(ifc, poll);
             } else {
+                trace!(
+                    "Received ACK for starting_ttl={}, ttl_on_being_reached={} - we are done",
+                    self.starting_ttl,
+                    self.ttl_on_being_reached
+                );
                 return self.done(ifc, poll);
             }
         }
@@ -188,7 +207,15 @@ impl Puncher {
             let m = match self.sending {
                 Sending::Syn => SYN,
                 Sending::SynAck => SYN_ACK,
-                Sending::Ack => ACK,
+                Sending::Ack => {
+                    if self.num_acks_transmitted < MAX_ACK_RETRANSMISSIONS {
+                        self.num_acks_transmitted += 1;
+                    }
+                    if self.num_acks_transmitted == MAX_ACK_RETRANSMISSIONS {
+                        let _ = ifc.cancel_timeout(&self.timeout);
+                    }
+                    ACK
+                }
             };
 
             match ::msg_to_send(m, &self.key) {
@@ -212,7 +239,14 @@ impl Puncher {
 
     fn on_successful_send(&mut self, ifc: &mut Interface, poll: &Poll) {
         match self.sending {
-            Sending::Ack => self.done(ifc, poll),
+            Sending::Ack => if self.num_acks_transmitted == MAX_ACK_RETRANSMISSIONS {
+                trace!(
+                    "Sent all ACKs for starting_ttl={}, ttl_on_being_reached={} - we are done",
+                    self.starting_ttl,
+                    self.ttl_on_being_reached
+                );
+                self.done(ifc, poll);
+            },
             _ => (),
         }
     }
@@ -289,9 +323,18 @@ impl NatState for Puncher {
         let _ = ifc.remove_state(self.token);
         let _ = ifc.cancel_timeout(&self.timeout);
         let _ = poll.deregister(&self.sock);
-        debug!(
-            "Udp Puncher with starting_ttl={} terminated while at current_ttl={} and state={:?}",
-            self.starting_ttl, self.current_ttl, self.sending
+
+        let ttl_on_being_reached = if self.ttl_on_being_reached == 0 {
+            "N/A (Puncher terminated before it could receive anything)".to_string()
+        } else {
+            format!("{}", self.ttl_on_being_reached)
+        };
+        trace!(
+            "Udp Puncher with starting_ttl={} terminated while at ttl_on_being_reached={} and \
+             state={:?}",
+            self.starting_ttl,
+            ttl_on_being_reached,
+            self.sending
         );
     }
 

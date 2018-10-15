@@ -232,7 +232,7 @@ fn start_rendezvous_servers() -> Vec<El> {
 
     for i in 0..NUM_RENDEZVOUS_SERVERS {
         let el = spawn_event_loop(format!(
-            "./tests/nat-traversal-test-configs/config-rendezvous-server-{}",
+            "./tests/nat-traversal-test-resources/config-rendezvous-server-{}",
             i,
         ));
 
@@ -269,7 +269,7 @@ fn nat_traverse_among_3_peers() {
 
     let _els_rendezvous_servers = start_rendezvous_servers();
 
-    let peer_config_path = "./tests/nat-traversal-test-configs/config-peers".to_string();
+    let peer_config_path = "./tests/nat-traversal-test-resources/config-peers".to_string();
     let el_peer0 = spawn_event_loop(peer_config_path.clone());
     let el_peer1 = spawn_event_loop(peer_config_path.clone());
     let el_peer2 = spawn_event_loop(peer_config_path);
