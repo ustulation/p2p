@@ -183,16 +183,19 @@ impl Puncher {
                     "Error: Could not set OS Default TTL of {}: {:?}",
                     self.os_ttl, e
                 );
-                self.handle_err(ifc, poll)
+                return self.handle_err(ifc, poll);
             } else {
                 self.ttl_on_being_reached = self.current_ttl;
                 self.current_ttl = self.os_ttl;
             }
         }
+
+        // Do a premature-handshake since we have received something. This will hasten things up.
+        self.continue_handshake(ifc, poll);
     }
 
-    fn write(&mut self, ifc: &mut Interface, poll: &Poll) {
-        match self.sock.write::<Vec<u8>>(None) {
+    fn write(&mut self, ifc: &mut Interface, poll: &Poll, m: Option<Vec<u8>>) {
+        match self.sock.write(m.map(|m| (m, 0))) {
             Ok(true) => self.on_successful_send(ifc, poll),
             Ok(false) => (),
             Err(e) => {
@@ -202,7 +205,7 @@ impl Puncher {
         }
     }
 
-    fn write_on_timeout(&mut self, ifc: &mut Interface, poll: &Poll) {
+    fn continue_handshake(&mut self, ifc: &mut Interface, poll: &Poll) {
         let msg = {
             let m = match self.sending {
                 Sending::Syn => SYN,
@@ -227,14 +230,7 @@ impl Puncher {
             }
         };
 
-        match self.sock.write(Some((msg, 0))) {
-            Ok(true) => self.on_successful_send(ifc, poll),
-            Ok(false) => (),
-            Err(e) => {
-                debug!("Udp Puncher errored out in write: {:?}", e);
-                self.handle_err(ifc, poll);
-            }
-        }
+        self.write(ifc, poll, Some(msg));
     }
 
     fn on_successful_send(&mut self, ifc: &mut Interface, poll: &Poll) {
@@ -280,7 +276,7 @@ impl NatState for Puncher {
         if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
-            self.write(ifc, poll)
+            self.write(ifc, poll, None)
         } else {
             warn!("Investigate: Ignoring unknown event kind: {:?}", event);
         }
@@ -316,7 +312,7 @@ impl NatState for Puncher {
             }
         }
 
-        self.write_on_timeout(ifc, poll)
+        self.continue_handshake(ifc, poll)
     }
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
