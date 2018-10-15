@@ -18,6 +18,7 @@ const TIMER_ID: u8 = 0;
 const SYN: &[u8] = b"SYN";
 const SYN_ACK: &[u8] = b"SYN-ACK";
 const ACK: &[u8] = b"ACK";
+const ACK_ACK: &[u8] = b"ACK_ACK"; // Fire and forget optimistic case to release ACK-sender
 const MAX_ACK_RETRANSMISSIONS: u8 = 3;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -25,6 +26,7 @@ enum Sending {
     Syn,
     SynAck,
     Ack,
+    AckAck,
 }
 
 pub struct Puncher {
@@ -164,16 +166,21 @@ impl Puncher {
             }
         } else if msg == ACK {
             if self.connection_chooser {
-                debug!("No tolerance for a non chooser giving us an ACK - terminating");
+                info!("No tolerance for a non chooser giving us an ACK - terminating");
                 return self.handle_err(ifc, poll);
-            } else {
-                trace!(
-                    "Received ACK for starting_ttl={}, ttl_on_being_reached={} - we are done",
-                    self.starting_ttl,
-                    self.ttl_on_being_reached
-                );
-                return self.done(ifc, poll);
             }
+            self.sending = Sending::AckAck;
+        } else if msg == ACK_ACK {
+            if !self.connection_chooser {
+                info!("No tolerance for a chooser giving us an ACK_ACK - terminating");
+                return self.handle_err(ifc, poll);
+            }
+            trace!(
+                "Received ACK_ACK for starting_ttl={}, ttl_on_being_reached={} - we are done",
+                self.starting_ttl,
+                self.ttl_on_being_reached
+            );
+            return self.done(ifc, poll);
         }
 
         // Since we have read something, revert back to OS default TTL
@@ -219,6 +226,10 @@ impl Puncher {
                     }
                     ACK
                 }
+                Sending::AckAck => {
+                    let _ = ifc.cancel_timeout(&self.timeout);
+                    ACK_ACK
+                }
             };
 
             match ::msg_to_send(m, &self.key) {
@@ -243,6 +254,14 @@ impl Puncher {
                 );
                 self.done(ifc, poll);
             },
+            Sending::AckAck => {
+                trace!(
+                    "Sent ACK_ACK for starting_ttl={}, ttl_on_being_reached={} - we are done",
+                    self.starting_ttl,
+                    self.ttl_on_being_reached
+                );
+                self.done(ifc, poll);
+            }
             _ => (),
         }
     }
