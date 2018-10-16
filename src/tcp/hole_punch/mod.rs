@@ -249,6 +249,7 @@ impl TcpHolePunchMediator {
     }
 
     pub fn rendezvous_timeout(&mut self, ifc: &mut Interface, poll: &Poll) -> NatError {
+        debug!("Timeout for TCP Rendezvous");
         let e = match self.state {
             State::Rendezvous { .. } => NatError::TcpRendezvousFailed,
             _ => NatError::InvalidState,

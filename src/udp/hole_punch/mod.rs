@@ -178,6 +178,7 @@ impl UdpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
     ) -> ::Res<(Vec<SocketAddr>, NatType)> {
+        debug!("Timeout for UDP Rendezvous");
         let r = match self.state {
             State::Rendezvous {
                 ref mut children,

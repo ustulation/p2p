@@ -23,7 +23,7 @@ pub struct Core {
     enc_pk: box_::PublicKey,
     enc_sk: box_::SecretKey,
     tx: Sender<NatMsg>,
-    udt_epoll_handle: Handle,
+    // udt_epoll_handle: Handle,
 }
 
 impl Core {
@@ -42,7 +42,8 @@ impl Core {
     }
 
     pub fn udt_epoll_handle(&self) -> Handle {
-        self.udt_epoll_handle.clone()
+        unreachable!("For later");
+        //self.udt_epoll_handle.clone()
     }
 
     #[allow(unused)]
@@ -209,9 +210,9 @@ pub fn spawn_event_loop() -> El {
             PollOpt::edge(),
         ));
 
-        let notifier = Notify(core_tx);
-        let epoll_loop = unwrap!(EpollLoop::start_event_loop(notifier));
-        let udt_epoll_handle = epoll_loop.handle();
+        // let notifier = Notify(core_tx);
+        // let epoll_loop = unwrap!(EpollLoop::start_event_loop(notifier));
+        // let udt_epoll_handle = epoll_loop.handle();
 
         let mut core = Core {
             nat_states: HashMap::with_capacity(10),
@@ -222,7 +223,7 @@ pub fn spawn_event_loop() -> El {
             enc_pk: enc_pk,
             enc_sk: enc_sk,
             tx: nat_tx,
-            udt_epoll_handle,
+            // udt_epoll_handle,
         };
 
         let mut events = Events::with_capacity(1024);

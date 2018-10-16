@@ -13,7 +13,7 @@ use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
 use mio::{Event, Events, Poll, PollOpt, Ready, Token};
 use p2p::{
-    Config, Handle, HolePunchMediator, Interface, NatMsg, NatState, NatTimer, NatType,
+    Config, Handle, HolePunchMediator, Interface, NatInfo, NatMsg, NatState, NatTimer, NatType,
     RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
 };
 use sodium::crypto::box_;
@@ -251,11 +251,11 @@ fn start_rendezvous_servers() -> Vec<El> {
     els
 }
 
-fn get_rendezvous_info(el: &El) -> mpsc::Receiver<Res<(Handle, RendezvousInfo)>> {
+fn get_rendezvous_info(el: &El) -> mpsc::Receiver<(NatInfo, Res<(Handle, RendezvousInfo)>)> {
     let (tx, rx) = mpsc::channel();
     unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        let handler = move |_: &mut Interface, _: &Poll, res| {
-            unwrap!(tx.send(res));
+        let handler = move |_: &mut Interface, _: &Poll, nat_info, res| {
+            unwrap!(tx.send((nat_info, res)));
         };
         unwrap!(HolePunchMediator::start(ifc, poll, Box::new(handler)));
     })));
@@ -282,30 +282,48 @@ fn nat_traverse_among_3_peers() {
     let rendezvous_rx20 = get_rendezvous_info(&el_peer2);
     let rendezvous_rx21 = get_rendezvous_info(&el_peer2);
 
-    let (handle01, rendezvous_info01) = unwrap!(unwrap!(rendezvous_rx01.recv()));
-    let (handle02, rendezvous_info02) = unwrap!(unwrap!(rendezvous_rx02.recv()));
-    let (handle10, rendezvous_info10) = unwrap!(unwrap!(rendezvous_rx10.recv()));
-    let (handle12, rendezvous_info12) = unwrap!(unwrap!(rendezvous_rx12.recv()));
-    let (handle20, rendezvous_info20) = unwrap!(unwrap!(rendezvous_rx20.recv()));
-    let (handle21, rendezvous_info21) = unwrap!(unwrap!(rendezvous_rx21.recv()));
+    let (nat_info01, (handle01, rendezvous_info01)) = {
+        let (nat_info, res) = unwrap!(rendezvous_rx01.recv());
+        (nat_info, unwrap!(res))
+    };
+    let (nat_info02, (handle02, rendezvous_info02)) = {
+        let (nat_info, res) = unwrap!(rendezvous_rx02.recv());
+        (nat_info, unwrap!(res))
+    };
+    let (nat_info10, (handle10, rendezvous_info10)) = {
+        let (nat_info, res) = unwrap!(rendezvous_rx10.recv());
+        (nat_info, unwrap!(res))
+    };
+    let (nat_info12, (handle12, rendezvous_info12)) = {
+        let (nat_info, res) = unwrap!(rendezvous_rx12.recv());
+        (nat_info, unwrap!(res))
+    };
+    let (nat_info20, (handle20, rendezvous_info20)) = {
+        let (nat_info, res) = unwrap!(rendezvous_rx20.recv());
+        (nat_info, unwrap!(res))
+    };
+    let (nat_info21, (handle21, rendezvous_info21)) = {
+        let (nat_info, res) = unwrap!(rendezvous_rx21.recv());
+        (nat_info, unwrap!(res))
+    };
 
     // The localhost is very likely to be EIM unless someone's changed it deliberately for e.g., in
     // iptables on Linux etc. In that case change the assertion accordingly.
-    assert_eq!(rendezvous_info01.nat_type_for_tcp, NatType::EIM);
-    assert_eq!(rendezvous_info02.nat_type_for_tcp, NatType::EIM);
-    assert_eq!(rendezvous_info10.nat_type_for_tcp, NatType::EIM);
-    assert_eq!(rendezvous_info12.nat_type_for_tcp, NatType::EIM);
-    assert_eq!(rendezvous_info20.nat_type_for_tcp, NatType::EIM);
-    assert_eq!(rendezvous_info21.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(nat_info01.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(nat_info02.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(nat_info10.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(nat_info12.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(nat_info20.nat_type_for_tcp, NatType::EIM);
+    assert_eq!(nat_info21.nat_type_for_tcp, NatType::EIM);
 
     // The localhost is very likely to be EIM unless someone's changed it deliberately for e.g., in
     // iptables on Linux etc. In that case change the assertion accordingly.
-    assert_eq!(rendezvous_info01.nat_type_for_udp, NatType::EIM);
-    assert_eq!(rendezvous_info02.nat_type_for_udp, NatType::EIM);
-    assert_eq!(rendezvous_info10.nat_type_for_udp, NatType::EIM);
-    assert_eq!(rendezvous_info12.nat_type_for_udp, NatType::EIM);
-    assert_eq!(rendezvous_info20.nat_type_for_udp, NatType::EIM);
-    assert_eq!(rendezvous_info21.nat_type_for_udp, NatType::EIM);
+    assert_eq!(nat_info01.nat_type_for_udp, NatType::EIM);
+    assert_eq!(nat_info02.nat_type_for_udp, NatType::EIM);
+    assert_eq!(nat_info10.nat_type_for_udp, NatType::EIM);
+    assert_eq!(nat_info12.nat_type_for_udp, NatType::EIM);
+    assert_eq!(nat_info20.nat_type_for_udp, NatType::EIM);
+    assert_eq!(nat_info21.nat_type_for_udp, NatType::EIM);
 
     // NAT Traverse in parallel
     let (hole_punch_tx01, hole_punch_rx01) = mpsc::channel();

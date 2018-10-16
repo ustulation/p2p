@@ -3,7 +3,7 @@
 extern crate env_logger;
 #[macro_use]
 extern crate log;
-// extern crate maidsafe_utilities;
+extern crate maidsafe_utilities;
 extern crate mio;
 extern crate p2p;
 extern crate rust_sodium as sodium;
@@ -24,12 +24,15 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
+#[cfg(target_family = "unix")]
+use std::process::Command;
+
 mod event_loop;
 
 fn get_rendezvous_info(el: &El) -> Res<(Handle, RendezvousInfo)> {
     let (tx, rx) = mpsc::channel();
     unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        let get_info = move |_: &mut Interface, _: &Poll, res| {
+        let get_info = move |_: &mut Interface, _: &Poll, _nat_info, res| {
             unwrap!(tx.send(res));
         };
         unwrap!(HolePunchMediator::start(ifc, poll, Box::new(get_info)));
@@ -177,8 +180,16 @@ fn start_chatting(el: &El, token: Token, rx: mpsc::Receiver<()>) {
     }
 }
 
+#[cfg(target_family = "unix")]
+fn copy_to_clipboard(our_info: &str) {
+    let xclip = format!("xclip -i -selection clipboard <<< '{}'", our_info);
+    if let Ok(mut cmd) = Command::new("sh").arg("-c").arg(xclip).spawn() {
+        let _ = cmd.wait();
+    }
+}
+
 fn main() {
-    // unwrap!(maidsafe_utilities::log::init(true));
+    unwrap!(maidsafe_utilities::log::init(true));
 
     let el = spawn_event_loop();
     let (handle, rendezvous_info) = match get_rendezvous_info(&el) {
@@ -192,8 +203,16 @@ fn main() {
             return;
         }
     };
+
     let our_info = unwrap!(serde_json::to_string(&rendezvous_info));
-    println!("Our rendezvous info:\n{}", our_info);
+
+    #[cfg(target_family = "unix")]
+    copy_to_clipboard(&our_info);
+
+    println!(
+        "Our rendezvous info (Copied to clipboard on Linux if xclip's there):\n{}",
+        our_info
+    );
 
     println!(
         "\n[NOTE: For unfriendlier routers/NATs, timming can play a big role. It's \
@@ -259,10 +278,14 @@ fn main() {
         ),
     };
 
-    let (tx, rx) = mpsc::channel();
-    unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
-        let _token = ChatEngine::start(core, poll, token, sock, peer, &enc_pk, tx);
-    })));
+    if false {
+        let (tx, rx) = mpsc::channel();
+        unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
+            let _token = ChatEngine::start(core, poll, token, sock, peer, &enc_pk, tx);
+        })));
 
-    start_chatting(&el, token, rx);
+        start_chatting(&el, token, rx);
+    } else {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
 }

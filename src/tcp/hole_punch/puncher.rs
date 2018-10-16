@@ -139,7 +139,7 @@ impl Puncher {
                     }
                 }
                 Err(e) => {
-                    debug!("Tcp Rendezvous client errored out in read: {:?}", e);
+                    debug!("Tcp Puncher errored out in read: {:?}", e);
                     ok = false;
                     break;
                 }
@@ -165,6 +165,9 @@ impl Puncher {
     }
 
     fn done(&mut self, ifc: &mut Interface, poll: &Poll) {
+        if let Some(t) = self.timeout.take() {
+            let _ = ifc.cancel_timeout(&t);
+        }
         let _ = ifc.remove_state(self.token);
         let sock = mem::replace(&mut self.sock, Default::default());
         let dur = self.commenced_at.elapsed();
@@ -172,16 +175,25 @@ impl Puncher {
     }
 
     fn handle_err(&mut self, ifc: &mut Interface, poll: &Poll) {
-        let e = match self.sock.take_error() {
-            Ok(err) => err.map_or(NatError::Unknown, NatError::from),
-            Err(e) => From::from(e),
-        };
         if self.via_accept {
-            debug!("Error in Tcp Puncher readiness: {:?}", e);
             self.terminate(ifc, poll);
             (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
         } else {
-            trace!("Error in Tcp Puncher connector readiness: {:?}", e);
+            // NOTE: Windows Fix. Edge trigger on error works like Level trigger on Windows and
+            // instead of not notifying the error again, it actually notifies it immediately going
+            // into an infinite loop. So deregister the socket immediately.
+            let _ = poll.deregister(&self.sock);
+            let _ = mem::replace(&mut self.sock, Default::default());
+
+            // If read/write both fire one after another and error out for some reason, good idea
+            // to cancel any set timers before to not have zombie timers around. Although this
+            // should not happen because we have deregistered the socket above, still do it for
+            // defensive programming because mio is not clear if `deregister` will prevent the
+            // already accumulated events from firing or not. Since our state is still `alive` if
+            // it does fire for the discarded socket, we will reach here.
+            if let Some(t) = self.timeout.take() {
+                let _ = ifc.cancel_timeout(&t);
+            }
             match ifc.set_timeout(
                 Duration::from_millis(RE_CONNECT_MS),
                 NatTimer::new(self.token, TIMER_ID),
@@ -202,9 +214,6 @@ impl NatState for Puncher {
         if event.is_readable() {
             self.read(ifc, poll)
         } else if event.is_writable() {
-            if let Some(t) = self.timeout.take() {
-                let _ = ifc.cancel_timeout(&t);
-            }
             if !self.via_accept {
                 let r = || -> ::Res<TcpSock> {
                     let sock = mem::replace(&mut self.sock, Default::default());
@@ -236,8 +245,6 @@ impl NatState for Puncher {
         if timer_id != TIMER_ID {
             debug!("Invalid timer id: {}", timer_id);
         }
-        let _ = poll.deregister(&self.sock);
-        let _ = mem::replace(&mut self.sock, Default::default());
 
         let r = || -> ::Res<TcpSock> {
             let stream = new_reusably_bound_tcp_sockets(&self.our_addr, 1)?.0[0].to_tcp_stream()?;
@@ -263,6 +270,9 @@ impl NatState for Puncher {
     }
 
     fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
+        if let Some(t) = self.timeout.take() {
+            let _ = ifc.cancel_timeout(&t);
+        }
         let _ = ifc.remove_state(self.token);
         let _ = poll.deregister(&self.sock);
     }

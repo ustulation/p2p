@@ -16,7 +16,7 @@ use udp::UdpHolePunchMediator;
 use {Interface, NatError, NatMsg, NatState, NatTimer};
 
 /// Callback to receive the result of rendezvous
-pub type GetInfo = Box<FnMut(&mut Interface, &Poll, ::Res<(Handle, RendezvousInfo)>)>;
+pub type GetInfo = Box<FnMut(&mut Interface, &Poll, NatInfo, ::Res<(Handle, RendezvousInfo)>)>;
 /// Callback to receive the result of hole punching
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
 
@@ -41,6 +41,15 @@ impl Default for NatType {
     }
 }
 
+/// NAT Details
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct NatInfo {
+    /// Detected NAT Type for TCP
+    pub nat_type_for_tcp: NatType,
+    /// Detected NAT Type for UDP
+    pub nat_type_for_udp: NatType,
+}
+
 /// A rendezvous packet.
 ///
 /// This is supposed to be exchanged out of band between the peers to allow them to hole-punch to
@@ -58,10 +67,6 @@ pub struct RendezvousInfo {
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
     pub enc_pk: [u8; box_::PUBLICKEYBYTES],
-    /// Detected NAT Type for TCP
-    pub nat_type_for_tcp: NatType,
-    /// Detected NAT Type for UDP
-    pub nat_type_for_udp: NatType,
 }
 
 impl RendezvousInfo {
@@ -70,8 +75,6 @@ impl RendezvousInfo {
             udp: vec![],
             tcp: None,
             enc_pk: enc_pk.0,
-            nat_type_for_tcp: Default::default(),
-            nat_type_for_udp: Default::default(),
         }
     }
 }
@@ -82,8 +85,6 @@ impl Default for RendezvousInfo {
             udp: vec![],
             tcp: None,
             enc_pk: [0; box_::PUBLICKEYBYTES],
-            nat_type_for_tcp: Default::default(),
-            nat_type_for_udp: Default::default(),
         }
     }
 }
@@ -184,6 +185,7 @@ enum State {
     None,
     Rendezvous {
         info: RendezvousInfo,
+        nat_info: NatInfo,
         timeout: Timeout,
         f: GetInfo,
     },
@@ -281,6 +283,7 @@ impl HolePunchMediator {
                 let mut m = mediator.borrow_mut();
                 m.state = State::Rendezvous {
                     info: RendezvousInfo::with_key(ifc.enc_pk()),
+                    nat_info: Default::default(),
                     timeout: timeout,
                     f: f,
                 };
@@ -306,7 +309,12 @@ impl HolePunchMediator {
         nat_type: NatType,
         res: ::Res<Vec<SocketAddr>>,
     ) {
-        if let State::Rendezvous { ref mut info, .. } = self.state {
+        if let State::Rendezvous {
+            ref mut info,
+            ref mut nat_info,
+            ..
+        } = self.state
+        {
             if let Ok(ext_addrs) = res {
                 // We assume that udp_child does not return an empty list here - rather it
                 // should error out on such case (i.e. call us with an error)
@@ -314,7 +322,7 @@ impl HolePunchMediator {
             } else {
                 self.udp_child = None;
             }
-            info.nat_type_for_udp = nat_type;
+            nat_info.nat_type_for_udp = nat_type;
         }
 
         self.handle_rendezvous_impl(ifc, poll);
@@ -327,13 +335,18 @@ impl HolePunchMediator {
         nat_type: NatType,
         res: ::Res<SocketAddr>,
     ) {
-        if let State::Rendezvous { ref mut info, .. } = self.state {
+        if let State::Rendezvous {
+            ref mut info,
+            ref mut nat_info,
+            ..
+        } = self.state
+        {
             if let Ok(ext_addr) = res {
                 info.tcp = Some(ext_addr);
             } else {
                 self.tcp_child = None;
             }
-            info.nat_type_for_tcp = nat_type;
+            nat_info.nat_type_for_tcp = nat_type;
         }
 
         self.handle_rendezvous_impl(ifc, poll);
@@ -343,6 +356,7 @@ impl HolePunchMediator {
         let r = match self.state {
             State::Rendezvous {
                 ref mut info,
+                ref mut nat_info,
                 ref mut f,
                 ref timeout,
             } => {
@@ -350,16 +364,18 @@ impl HolePunchMediator {
                     && (self.tcp_child.is_none() || info.tcp.is_some())
                 {
                     if self.udp_child.is_none() && self.tcp_child.is_none() {
-                        f(ifc, poll, Err(NatError::RendezvousFailed));
+                        let nat_info = mem::replace(nat_info, Default::default());
+                        f(ifc, poll, nat_info, Err(NatError::RendezvousFailed));
                         Err(NatError::RendezvousFailed)
                     } else {
                         let _ = ifc.cancel_timeout(timeout);
                         let info = mem::replace(info, Default::default());
+                        let nat_info = mem::replace(nat_info, Default::default());
                         let handle = Handle {
                             token: self.token,
                             tx: ifc.sender().clone(),
                         };
-                        f(ifc, poll, Ok((handle, info)));
+                        f(ifc, poll, nat_info, Ok((handle, info)));
                         Ok(true)
                     }
                 } else {
@@ -599,7 +615,7 @@ impl NatState for HolePunchMediator {
                     match tcp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
                         // It has already gone to the next state, ignore it
                         NatError::InvalidState => (),
-                        e => self.handle_tcp_rendezvous(ifc, poll, NatType::Unknown, Err(e)),
+                        e => self.handle_tcp_rendezvous(ifc, poll, Default::default(), Err(e)),
                     }
                 }
 
@@ -610,6 +626,7 @@ impl NatState for HolePunchMediator {
                 ref mut f,
                 ..
             } => {
+                debug!("Timeout fired for Holepunch");
                 if info.tcp.is_none() && info.udp.is_none() {
                     f(ifc, poll, Err(NatError::HolePunchFailed));
                 } else {

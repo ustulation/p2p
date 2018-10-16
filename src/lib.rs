@@ -301,8 +301,8 @@ mod udp;
 pub use config::Config;
 pub use error::NatError;
 pub use hole_punch::{
-    GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator, NatType, RendezvousInfo,
-    TcpHolePunchInfo, UdpHolePunchInfo,
+    GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator, NatInfo, NatType,
+    RendezvousInfo, TcpHolePunchInfo, UdpHolePunchInfo,
 };
 pub use tcp::TcpRendezvousServer;
 pub use udp::UdpRendezvousServer;

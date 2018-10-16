@@ -1,13 +1,13 @@
 use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
-use socket_collection::{SocketError, UdpSock};
+use socket_collection::UdpSock;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
-use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use std::{fmt, mem};
 use {Interface, NatError, NatState, NatTimer};
 
 // Result of (UdpSock, peer, starting_ttl, ttl_on_being_reached, duration-of-hole-punch)
@@ -128,16 +128,15 @@ impl Puncher {
                     break;
                 },
                 Err(e) => {
-                    match e {
-                        SocketError::ZeroByteRead => trace!(
-                            "Error: {:?} - this behaviour is only observed on Windows where \
-                             a connected UDP socket seems to get an EOF when remote peer has \
-                             dropped its socket (observed over localhost on windows)",
-                            e
-                        ),
-                        _ => debug!("Udp Puncher has errored out in read: {:?}", e),
+                    trace!(
+                        "{} Ignoring Error Read: {:?} - These are likely caused by ICMP errors for \
+                        timeout/ttl-drops or unreachable-peer/port. Continue with ttl-runners.",
+                        self, e);
+                    if cipher_text.is_empty() {
+                        return;
+                    } else {
+                        break;
                     }
-                    return self.terminate(ifc, poll);
                 }
             }
         }
@@ -145,51 +144,46 @@ impl Puncher {
         let msg = match ::msg_to_read(&cipher_text, &self.key) {
             Ok(m) => m,
             Err(e) => {
-                debug!(
-                    "Udp Hole Puncher has errored out in deciphering incoming data: {:?}",
-                    e
-                );
+                debug!("{} Errored while deciphering incoming data: {:?}", self, e);
                 return self.handle_err(ifc, poll);
             }
         };
 
         if msg == SYN {
-            match self.sending {
-                Sending::Syn => self.sending = Sending::SynAck,
-                _ => (),
+            if let Sending::Syn = self.sending {
+                self.sending = Sending::SynAck;
             }
         } else if msg == SYN_ACK {
-            self.sending = if self.connection_chooser {
-                Sending::Ack
-            } else {
-                Sending::SynAck
+            if self.connection_chooser {
+                self.sending = Sending::Ack
+            } else if let Sending::Syn = self.sending {
+                self.sending = Sending::SynAck;
             }
         } else if msg == ACK {
             if self.connection_chooser {
-                info!("No tolerance for a non chooser giving us an ACK - terminating");
+                info!(
+                    "{} No tolerance for a non chooser giving us an ACK - terminating",
+                    self
+                );
                 return self.handle_err(ifc, poll);
             }
             self.sending = Sending::AckAck;
         } else if msg == ACK_ACK {
             if !self.connection_chooser {
-                info!("No tolerance for a chooser giving us an ACK_ACK - terminating");
+                info!(
+                    "{} No tolerance for a chooser giving us an ACK_ACK - terminating",
+                    self
+                );
                 return self.handle_err(ifc, poll);
             }
-            trace!(
-                "Received ACK_ACK for starting_ttl={}, ttl_on_being_reached={} - we are done",
-                self.starting_ttl,
-                self.ttl_on_being_reached
-            );
+            trace!("{} Rxd ACK_ACK - we are done", self);
             return self.done(ifc, poll);
         }
 
         // Since we have read something, revert back to OS default TTL
         if self.current_ttl != self.os_ttl {
             if let Err(e) = self.sock.set_ttl(self.os_ttl) {
-                debug!(
-                    "Error: Could not set OS Default TTL of {}: {:?}",
-                    self.os_ttl, e
-                );
+                debug!("{} Error: Could not set OS Default TTL: {:?}", self, e);
                 return self.handle_err(ifc, poll);
             } else {
                 self.ttl_on_being_reached = self.current_ttl;
@@ -205,10 +199,12 @@ impl Puncher {
         match self.sock.write(m.map(|m| (m, 0))) {
             Ok(true) => self.on_successful_send(ifc, poll),
             Ok(false) => (),
-            Err(e) => {
-                debug!("Udp Hole Puncher has errored out in write: {:?}", e);
-                self.handle_err(ifc, poll)
-            }
+            Err(e) => trace!(
+                "{} Ignoring Error in Write: {:?} - These are likely caused by ICMP errors for \
+                 timeout/ttl-drops or unreachable-peer/port. Continue with ttl-runners.",
+                self,
+                e
+            ),
         }
     }
 
@@ -235,7 +231,7 @@ impl Puncher {
             match ::msg_to_send(m, &self.key) {
                 Ok(m) => m,
                 Err(e) => {
-                    debug!("Error: Udp Puncher errored out while encrypting: {:?}", e);
+                    debug!("{} Error: while encrypting: {:?}", self, e);
                     return self.handle_err(ifc, poll);
                 }
             }
@@ -247,19 +243,11 @@ impl Puncher {
     fn on_successful_send(&mut self, ifc: &mut Interface, poll: &Poll) {
         match self.sending {
             Sending::Ack => if self.num_acks_transmitted == MAX_ACK_RETRANSMISSIONS {
-                trace!(
-                    "Sent all ACKs for starting_ttl={}, ttl_on_being_reached={} - we are done",
-                    self.starting_ttl,
-                    self.ttl_on_being_reached
-                );
+                trace!("{} Sent all ACKs - we are done", self);
                 self.done(ifc, poll);
             },
             Sending::AckAck => {
-                trace!(
-                    "Sent ACK_ACK for starting_ttl={}, ttl_on_being_reached={} - we are done",
-                    self.starting_ttl,
-                    self.ttl_on_being_reached
-                );
+                trace!("{} Sent ACK_ACK - we are done", self);
                 self.done(ifc, poll);
             }
             _ => (),
@@ -297,13 +285,16 @@ impl NatState for Puncher {
         } else if event.is_writable() {
             self.write(ifc, poll, None)
         } else {
-            warn!("Investigate: Ignoring unknown event kind: {:?}", event);
+            warn!(
+                "{} Investigate: Ignoring unknown event kind: {:?}",
+                self, event
+            );
         }
     }
 
     fn timeout(&mut self, ifc: &mut Interface, poll: &Poll, timer_id: u8) {
         if timer_id != TIMER_ID {
-            warn!("Invalid Timer ID: {}", timer_id);
+            warn!("{} Invalid Timer ID: {}", self, timer_id);
         }
 
         self.timeout = match ifc.set_timeout(
@@ -312,7 +303,7 @@ impl NatState for Puncher {
         ) {
             Ok(t) => t,
             Err(e) => {
-                debug!("Error in setting timeout: {:?}", e);
+                debug!("{} Error in setting timeout: {:?}", self, e);
                 return self.handle_err(ifc, poll);
             }
         };
@@ -322,11 +313,14 @@ impl NatState for Puncher {
         if self.current_ttl < self.os_ttl {
             self.current_ttl += 1;
             if self.current_ttl == self.os_ttl {
-                debug!("OS TTL reached and still peer did not reach us - giving up");
+                debug!(
+                    "{} OS TTL reached and still peer did not reach us - giving up",
+                    self
+                );
                 return self.handle_err(ifc, poll);
             }
             if let Err(e) = self.sock.set_ttl(self.current_ttl) {
-                debug!("Error setting ttl: {:?}", e);
+                debug!("{} Error setting ttl: {:?}", self, e);
                 return self.handle_err(ifc, poll);
             }
         }
@@ -339,21 +333,35 @@ impl NatState for Puncher {
         let _ = ifc.cancel_timeout(&self.timeout);
         let _ = poll.deregister(&self.sock);
 
-        let ttl_on_being_reached = if self.ttl_on_being_reached == 0 {
-            "N/A (Puncher terminated before it could receive anything)".to_string()
-        } else {
-            format!("{}", self.ttl_on_being_reached)
-        };
-        trace!(
-            "Udp Puncher with starting_ttl={} terminated while at ttl_on_being_reached={} and \
-             state={:?}",
-            self.starting_ttl,
-            ttl_on_being_reached,
-            self.sending
-        );
+        trace!("{} terminated", self);
     }
 
     fn as_any(&mut self) -> &mut Any {
         self
+    }
+}
+
+impl fmt::Display for Puncher {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let ttl_on_being_reached = if self.ttl_on_being_reached == 0 {
+            "N/A".to_string()
+        } else {
+            format!("{}", self.ttl_on_being_reached)
+        };
+        write!(
+            f,
+            "UdpPuncher [peer=({:02x}{:02x}{:02x}../{}) ;; os_ttl={}, starting_ttl={}, current_ttl={}
+            , ttl_on_being_reached={} ;; state={:?} ;; chooser={}]",
+            self.key.0[0],
+            self.key.0[1],
+            self.key.0[2],
+            self.peer,
+            self.os_ttl,
+            self.starting_ttl,
+            self.current_ttl,
+            ttl_on_being_reached,
+            self.sending,
+            self.connection_chooser
+        )
     }
 }
