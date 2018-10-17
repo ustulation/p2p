@@ -48,8 +48,8 @@ quick_error! {
         /// Rendezvous with server failed for both Tcp and Udp - could not obtain our external
         /// address
         RendezvousFailed {
-            description("Udp Rendezvous with server failed for both Tcp and Udp - could not obtain \
-                        our external address")
+            description("Rendezvous with server failed for both Tcp and Udp - could not obtain our \
+                        external address")
         }
         /// Udp Rendezvous with server failed - could not obtain our external address
         UdpRendezvousFailed {
