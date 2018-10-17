@@ -21,7 +21,7 @@ pub type GetInfo = Box<FnMut(&mut Interface, &Poll, NatInfo, ::Res<(Handle, Rend
 pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
 
 /// Detected NAT Type
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum NatType {
     /// Endpoint Independent Mapping NAT
     EIM,
@@ -42,7 +42,7 @@ impl Default for NatType {
 }
 
 /// NAT Details
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct NatInfo {
     /// Detected NAT Type for TCP
     pub nat_type_for_tcp: NatType,
