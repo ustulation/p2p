@@ -5,42 +5,31 @@ env:
 os:
   - linux
   - osx
+  - windows
 language: rust
 rust:
-  - 1.19.0
-  - nightly-2017-07-20
+  - 1.29.0
 sudo: false
-branches:
-  only:
-    - master
 cache:
   cargo: true
 before_script:
   - if ! cargo prune --version | grep -q "0.1.8"; then
       cargo install cargo-prune --vers="0.1.8" --force;
     fi
-  - if [ "${TRAVIS_RUST_VERSION}" = 1.19.0 ]; then
-      rustfmt_vers=0.9.0;
-      if ! rustfmt --version | grep -q $rustfmt_vers; then
-        cargo install rustfmt --vers=$rustfmt_vers --force;
-      fi
-    elif [ "${TRAVIS_OS_NAME}" = linux ]; then
-      clippy_vers=0.0.144;
-      if ! cargo clippy --version | grep -q $clippy_vers; then
-        cargo install clippy --vers=$clippy_vers --force;
-      fi
+  - if ! rustfmt --version | grep -q "0.99.1-stable"; then
+      rustup component add rustfmt-preview;
+    fi
+  - if ! cargo clippy --version | grep -q "0.0.212"; then
+      rustup component add clippy-preview;
     fi
 script:
-  - if [ "${TRAVIS_RUST_VERSION}" = 1.19.0 ]; then
+  - set -x;
+    cargo fmt -- --check &&
+    cargo test --verbose --release
+  - if [ "${TRAVIS_OS_NAME}" = linux ]; then
         (
             set -x;
-            cargo fmt -- --write-mode=diff &&
-            cargo test --verbose --release
-        );
-    elif [ "${TRAVIS_OS_NAME}" = linux ]; then
-        (
-            set -x;
-            cargo clippy --profile=test
+            printf "Clippy disabled for now -> cargo clippy --profile=test\n";
         )
     fi
 before_cache:
