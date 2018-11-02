@@ -3,7 +3,7 @@ use mio::timer::{Timeout, Timer, TimerError};
 use mio::{Event, Events, Poll, PollOpt, Ready, Token};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
 use serde_json;
-use socket_collection::{EpollLoop, Handle, Notifier};
+// use socket_collection::{EpollLoop, Handle, Notifier};
 use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
@@ -41,10 +41,10 @@ impl Core {
         }
     }
 
-    pub fn udt_epoll_handle(&self) -> Handle {
-        unreachable!("For later");
-        //self.udt_epoll_handle.clone()
-    }
+    // pub fn udt_epoll_handle(&self) -> Handle {
+    //     unreachable!("For later");
+    //     //self.udt_epoll_handle.clone()
+    // }
 
     #[allow(unused)]
     pub fn peer_state(&mut self, token: Token) -> Option<Rc<RefCell<CoreState>>> {
@@ -146,14 +146,14 @@ impl CoreMsg {
     }
 }
 
-pub struct Notify(Sender<CoreMsg>);
-impl Notifier for Notify {
-    fn notify(&self, event: Event) {
-        unwrap!(self.0.send(CoreMsg::new(move |core, poll| {
-            core.handle_readiness(poll, event.token(), event.kind());
-        })));
-    }
-}
+// pub struct Notify(Sender<CoreMsg>);
+// impl Notifier for Notify {
+//     fn notify(&self, event: Event) {
+//         unwrap!(self.0.send(CoreMsg::new(move |core, poll| {
+//             core.handle_readiness(poll, event.token(), event.kind());
+//         })));
+//     }
+// }
 
 pub struct El {
     pub nat_tx: Sender<NatMsg>,

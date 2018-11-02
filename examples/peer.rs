@@ -15,7 +15,8 @@ extern crate socket_collection;
 use self::event_loop::{spawn_event_loop, Core, CoreMsg, CoreState, El};
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::{Handle, HolePunchInfo, HolePunchMediator, Interface, NatMsg, RendezvousInfo, Res};
-use socket_collection::{UdpSock, UdtSock};
+// use socket_collection::{UdpSock, UdtSock};
+use socket_collection::UdpSock;
 use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -45,7 +46,8 @@ struct ChatEngine {
     token: Token,
     write_queue: VecDeque<Vec<u8>>,
     read_buf: [u8; 1024],
-    sock: UdtSock,
+    // sock: UdtSock,
+    sock: UdpSock,
     peer: SocketAddr,
     key: box_::PrecomputedKey,
     waiting_for_connect: bool,
@@ -62,18 +64,18 @@ impl ChatEngine {
         peer_enc_pk: &box_::PublicKey,
         tx: mpsc::Sender<()>,
     ) -> Token {
-        let _ = unwrap!(poll.deregister(&sock));
+        // let _ = unwrap!(poll.deregister(&sock));
 
-        let sock = unwrap!(UdtSock::wrap_udp_sock(sock, core.udt_epoll_handle()));
+        // let sock = unwrap!(UdtSock::wrap_udp_sock(sock, core.udt_epoll_handle()));
 
-        unwrap!(sock.connect(&peer));
+        // unwrap!(sock.connect(&peer));
 
-        unwrap!(poll.reregister(
-            &sock,
-            token,
-            Ready::writable() | Ready::error() | Ready::hup(),
-            PollOpt::edge(),
-        ));
+        // unwrap!(poll.reregister(
+        //     &sock,
+        //     token,
+        //     Ready::writable() | Ready::error() | Ready::hup(),
+        //     PollOpt::edge(),
+        // ));
 
         let engine = Rc::new(RefCell::new(ChatEngine {
             token: token,
