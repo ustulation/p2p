@@ -1,6 +1,6 @@
 use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
-use mio::{Event, Events, Poll, PollOpt, Ready, Token};
+use mio::{Events, Poll, PollOpt, Ready, Token};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
 use serde_json;
 // use socket_collection::{EpollLoop, Handle, Notifier};
@@ -39,6 +39,10 @@ impl Core {
         } else {
             Err((state, "Token is already mapped".to_string()))
         }
+    }
+
+    pub fn remove_peer_state(&mut self, token: Token) -> Option<Rc<RefCell<CoreState>>> {
+        self.peer_states.remove(&token)
     }
 
     // pub fn udt_epoll_handle(&self) -> Handle {
@@ -130,7 +134,7 @@ impl Interface for Core {
 pub trait CoreState {
     fn ready(&mut self, &mut Core, &Poll, Ready);
     fn terminate(&mut self, &mut Core, &Poll);
-    fn write(&mut self, &mut Core, &Poll, String);
+    fn write(&mut self, &mut Core, &Poll, Vec<u8>) {}
 }
 
 pub struct CoreMsg(Option<Box<FnMut(&mut Core, &Poll) + Send + 'static>>);
