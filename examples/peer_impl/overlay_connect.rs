@@ -1,8 +1,8 @@
 use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
-use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
+use mio_extras::timer::Timeout;
 use p2p::{
     msg_to_read, msg_to_send, Handle, HolePunchInfo, HolePunchMediator, Interface, NatInfo,
     RendezvousInfo, Res,
@@ -92,10 +92,10 @@ impl OverlayConnect {
             state: Default::default(),
             peers: peers,
             tx,
-            timeout: unwrap!(core.set_core_timeout(
+            timeout: core.set_core_timeout(
                 Duration::from_secs(PURGE_EXPIRED_AWAITS_SECS),
-                CoreTimer::new(token, TIMER_ID)
-            )),
+                CoreTimer::new(token, TIMER_ID),
+            ),
             self_weak: Default::default(),
         }));
         state.borrow_mut().self_weak = Rc::downgrade(&state);
@@ -618,10 +618,10 @@ impl CoreState for OverlayConnect {
             });
         }
 
-        self.timeout = unwrap!(core.set_core_timeout(
+        self.timeout = core.set_core_timeout(
             Duration::from_secs(PURGE_EXPIRED_AWAITS_SECS),
-            CoreTimer::new(self.token, TIMER_ID)
-        ));
+            CoreTimer::new(self.token, TIMER_ID),
+        );
     }
 
     fn terminate(&mut self, core: &mut Core, poll: &Poll) {

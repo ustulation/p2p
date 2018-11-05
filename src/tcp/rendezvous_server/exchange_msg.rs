@@ -1,6 +1,6 @@
 use super::{TcpEchoReq, TcpEchoResp};
-use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
+use mio_extras::timer::Timeout;
 use socket_collection::{SocketError, TcpSock};
 use sodium::crypto::box_;
 use sodium::crypto::sealedbox;
@@ -28,7 +28,7 @@ impl ExchangeMsg {
         let timeout = ifc.set_timeout(
             Duration::from_secs(RENDEZVOUS_EXCHG_TIMEOUT_SEC),
             NatTimer::new(token, TIMER_ID),
-        )?;
+        );
 
         poll.register(
             &sock,

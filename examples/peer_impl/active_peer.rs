@@ -1,8 +1,8 @@
 use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
-use mio::timer::Timeout;
 use mio::{Poll, Ready, Token};
+use mio_extras::timer::Timeout;
 use p2p::{msg_to_read, msg_to_send, Interface};
 use socket_collection::UdpSock;
 use sodium::crypto::box_;
@@ -54,14 +54,14 @@ impl ActivePeer {
             should_buffer: true,
             chat_buf: Default::default(),
             tolerate_read_errs: true,
-            timeout_inactivity: unwrap!(core.set_core_timeout(
+            timeout_inactivity: core.set_core_timeout(
                 Duration::from_secs(INACTIVITY_TIMEOUT_SECS),
-                CoreTimer::new(token, INACTIVITY_TIMEOUT_ID)
-            )),
-            timeout_tolerate_read_errs: unwrap!(core.set_core_timeout(
+                CoreTimer::new(token, INACTIVITY_TIMEOUT_ID),
+            ),
+            timeout_tolerate_read_errs: core.set_core_timeout(
                 Duration::from_secs(TOLERATE_READ_ERRS_SECS),
-                CoreTimer::new(token, TOLERATE_READ_ERRS_ID)
-            )),
+                CoreTimer::new(token, TOLERATE_READ_ERRS_ID),
+            ),
             tx: tx.clone(),
         }));
 
@@ -173,10 +173,10 @@ impl ActivePeer {
         }
 
         let _ = core.cancel_core_timeout(&self.timeout_inactivity);
-        self.timeout_inactivity = unwrap!(core.set_core_timeout(
+        self.timeout_inactivity = core.set_core_timeout(
             Duration::from_secs(INACTIVITY_TIMEOUT_SECS),
-            CoreTimer::new(self.token, INACTIVITY_TIMEOUT_ID)
-        ));
+            CoreTimer::new(self.token, INACTIVITY_TIMEOUT_ID),
+        );
 
         true
     }

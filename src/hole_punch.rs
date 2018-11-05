@@ -1,7 +1,7 @@
 use config::{HOLE_PUNCH_TIMEOUT_SEC, HOLE_PUNCH_WAIT_FOR_OTHER, RENDEZVOUS_TIMEOUT_SEC};
-use mio::channel::Sender;
-use mio::timer::Timeout;
 use mio::{Poll, Token};
+use mio_extras::channel::Sender;
+use mio_extras::timer::Timeout;
 use socket_collection::{TcpSock, UdpSock};
 use sodium::crypto::box_;
 use std::any::Any;
@@ -234,7 +234,7 @@ impl HolePunchMediator {
             .config()
             .rendezvous_timeout_sec
             .unwrap_or(RENDEZVOUS_TIMEOUT_SEC);
-        let timeout = ifc.set_timeout(Duration::from_secs(dur), NatTimer::new(token, TIMER_ID))?;
+        let timeout = ifc.set_timeout(Duration::from_secs(dur), NatTimer::new(token, TIMER_ID));
 
         let mediator = Rc::new(RefCell::new(HolePunchMediator {
             token,
@@ -428,16 +428,10 @@ impl HolePunchMediator {
             .config()
             .hole_punch_timeout_sec
             .unwrap_or(HOLE_PUNCH_TIMEOUT_SEC);
-        let timeout = match ifc.set_timeout(
+        let timeout = ifc.set_timeout(
             Duration::from_secs(dur),
             NatTimer::new(self.token, TIMER_ID),
-        ) {
-            Ok(t) => t,
-            Err(e) => {
-                debug!("Terminating punch hole due to error in timer: {:?}", e);
-                return self.terminate(ifc, poll);
-            }
-        };
+        );
 
         let peer_enc_pk = box_::PublicKey(peer.enc_pk);
 

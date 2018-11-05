@@ -276,15 +276,16 @@ extern crate serde_derive;
 
 extern crate bincode;
 extern crate mio;
+extern crate mio_extras;
 extern crate net2;
 extern crate rand;
 extern crate rust_sodium as sodium;
 extern crate socket_collection;
 
 use bincode::{deserialize, serialize, Infinite};
-use mio::channel::Sender;
-use mio::timer::{Timeout, TimerError};
 use mio::{Poll, Ready, Token};
+use mio_extras::channel::Sender;
+use mio_extras::timer::Timeout;
 use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
@@ -405,11 +406,7 @@ pub trait Interface {
     fn state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
     /// Set timeout. User code is expected to have a `mio::timer::Timer<NatTimer>` on which the
     /// timeout can be set.
-    fn set_timeout(
-        &mut self,
-        duration: Duration,
-        timer_detail: NatTimer,
-    ) -> Result<Timeout, TimerError>;
+    fn set_timeout(&mut self, duration: Duration, timer_detail: NatTimer) -> Timeout;
     /// Cancel the timout
     fn cancel_timeout(&mut self, timeout: &Timeout) -> Option<NatTimer>;
     /// Give us a new unique token

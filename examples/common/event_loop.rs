@@ -1,6 +1,6 @@
-use mio::channel::{self, Sender};
-use mio::timer::{Timeout, Timer, TimerError};
 use mio::{Events, Poll, PollOpt, Ready, Token};
+use mio_extras::channel::{self, Sender};
+use mio_extras::timer::{Timeout, Timer};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
 use std::any::Any;
 // use socket_collection::{EpollLoop, Handle, Notifier};
@@ -53,11 +53,7 @@ impl Core {
         self.peer_states.get(&token).cloned()
     }
 
-    pub fn set_core_timeout(
-        &mut self,
-        duration: Duration,
-        timer_detail: CoreTimer,
-    ) -> Result<Timeout, TimerError> {
+    pub fn set_core_timeout(&mut self, duration: Duration, timer_detail: CoreTimer) -> Timeout {
         self.core_timer.set_timeout(duration, timer_detail)
     }
 
@@ -117,11 +113,7 @@ impl Interface for Core {
         self.nat_states.get(&token).cloned()
     }
 
-    fn set_timeout(
-        &mut self,
-        duration: Duration,
-        timer_detail: NatTimer,
-    ) -> Result<Timeout, TimerError> {
+    fn set_timeout(&mut self, duration: Duration, timer_detail: NatTimer) -> Timeout {
         self.nat_timer.set_timeout(duration, timer_detail)
     }
 
