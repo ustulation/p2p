@@ -1,5 +1,5 @@
 use common::event_loop::{Core, CoreState};
-use common::types::{PeerMsg, PlainTextMsg};
+use common::types::{PeerId, PeerMsg, PlainTextMsg};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::{msg_to_read, msg_to_send, Interface, RendezvousInfo};
@@ -14,7 +14,7 @@ pub struct Peer {
     token: Token,
     sock: TcpSock,
     state: CurrentState,
-    peers: Weak<RefCell<BTreeMap<String, (box_::PublicKey, Token)>>>,
+    peers: Weak<RefCell<BTreeMap<PeerId, Token>>>,
 }
 
 enum CurrentState {
@@ -24,9 +24,8 @@ enum CurrentState {
         key: box_::PrecomputedKey,
     },
     PeerActivated {
-        pk: box_::PublicKey,
+        id: PeerId,
         key: box_::PrecomputedKey,
-        name: String,
     },
 }
 
@@ -51,7 +50,7 @@ impl Peer {
         core: &mut Core,
         poll: &Poll,
         sock: TcpSock,
-        peers: Weak<RefCell<BTreeMap<String, (box_::PublicKey, Token)>>>,
+        peers: Weak<RefCell<BTreeMap<PeerId, Token>>>,
     ) {
         let token = core.new_token();
 
@@ -144,7 +143,7 @@ impl Peer {
             }
         };
 
-        let plaintext = match deserialise::<PlainTextMsg>(&plaintext_ser) {
+        let plaintext = match deserialise(&plaintext_ser) {
             Ok(pt) => pt,
             Err(e) => {
                 info!("Error deserialising: {:?}", e);
@@ -155,16 +154,12 @@ impl Peer {
         match plaintext {
             PlainTextMsg::ReqUpdateName(name) => self.handle_update_name(core, poll, name),
             PlainTextMsg::ReqOnlinePeers => self.handle_req_online_peers(core, poll),
-            PlainTextMsg::ReqRendezvousInfo {
-                src_info,
-                dst_peer,
-                dst_pk,
-            } => self.forward_rendezvous_impl(core, poll, src_info, dst_peer, dst_pk, true),
-            PlainTextMsg::RendezvousInfoResp {
-                src_info,
-                dst_peer,
-                dst_pk,
-            } => self.forward_rendezvous_impl(core, poll, src_info, dst_peer, dst_pk, false),
+            PlainTextMsg::ReqRendezvousInfo { src_info, dst_peer } => {
+                self.forward_rendezvous_impl(core, poll, src_info, dst_peer, true)
+            }
+            PlainTextMsg::RendezvousInfoResp { src_info, dst_peer } => {
+                self.forward_rendezvous_impl(core, poll, src_info, dst_peer, false)
+            }
             x => {
                 info!("Invalid PlainTextMsg: {:?}", x);
                 return false;
@@ -183,24 +178,28 @@ impl Peer {
 
         match mem::replace(&mut self.state, Default::default()) {
             CurrentState::AwaitingPeerName { pk, key } => {
-                let ciphertext = if name.is_empty()
-                    || name.contains(" ")
-                    || peers.borrow().contains_key(&name)
+                let id = PeerId::new(name, pk);
+                let ciphertext = if id.name.is_empty()
+                    || id.name.contains(" ")
+                    || peers.borrow().contains_key(&id)
                 {
-                    trace!("Invalid name or name already taken - choose a different one");
+                    trace!("Invalid name or identity already taken - choose a different one");
                     let resp_ser = unwrap!(serialise(&PlainTextMsg::UpdateNameResp(false)));
-                    unwrap!(msg_to_send(&resp_ser, &key))
+                    let ciphertext = unwrap!(msg_to_send(&resp_ser, &key));
+
+                    self.state = CurrentState::AwaitingPeerName { pk, key };
+
+                    ciphertext
                 } else {
                     let resp_ser = unwrap!(serialise(&PlainTextMsg::UpdateNameResp(true)));
                     let ciphertext = unwrap!(msg_to_send(&resp_ser, &key));
 
                     self.state = CurrentState::PeerActivated {
-                        pk,
+                        id: id.clone(),
                         key,
-                        name: name.clone(),
                     };
-                    if peers.borrow_mut().insert(name, (pk, self.token)).is_some() {
-                        panic!("Logic Error in updating name: name existed and is now displaced !");
+                    if peers.borrow_mut().insert(id, self.token).is_some() {
+                        panic!("Logic Error in updating name: id existed and is now displaced !");
                     }
 
                     ciphertext
@@ -211,7 +210,7 @@ impl Peer {
             }
             x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
-                return false;
+                false
             }
         }
     }
@@ -227,11 +226,7 @@ impl Peer {
                     }
                 };
 
-                let peers: Vec<(String, box_::PublicKey)> = peers
-                    .borrow()
-                    .iter()
-                    .map(|elt| (elt.0.clone(), (elt.1).0))
-                    .collect();
+                let peers: Vec<PeerId> = peers.borrow().keys().cloned().collect();
 
                 let peers_ser = unwrap!(serialise(&PlainTextMsg::OnlinePeersResp(peers)));
                 unwrap!(msg_to_send(&peers_ser, key))
@@ -252,12 +247,11 @@ impl Peer {
         core: &mut Core,
         poll: &Poll,
         src_info: RendezvousInfo,
-        dst_peer: String,
-        dst_pk: box_::PublicKey,
+        dst_peer: PeerId,
         is_request: bool,
     ) -> bool {
         let src_peer = match self.state {
-            CurrentState::PeerActivated { ref name, .. } => name.clone(),
+            CurrentState::PeerActivated { ref id, .. } => id.clone(),
             ref x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
                 return false;
@@ -273,12 +267,7 @@ impl Peer {
         };
 
         let dst_token = match peers.borrow().get(&dst_peer) {
-            Some(&(pk, t)) => if pk != dst_pk {
-                trace!("Destination Peer is no longer the same.");
-                return true;
-            } else {
-                t
-            },
+            Some(&t) => t,
             None => {
                 trace!("Destination Peer is no longer online.");
                 return true;
@@ -330,8 +319,8 @@ impl CoreState for Peer {
 
     fn terminate(&mut self, core: &mut Core, poll: &Poll) {
         if let Some(peers) = self.peers.upgrade() {
-            if let CurrentState::PeerActivated { ref name, .. } = self.state {
-                let _ = peers.borrow_mut().remove(name);
+            if let CurrentState::PeerActivated { ref id, .. } = self.state {
+                let _ = peers.borrow_mut().remove(&id);
             }
         }
         let _ = poll.deregister(&self.sock);

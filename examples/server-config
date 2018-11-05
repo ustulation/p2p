@@ -1,6 +1,6 @@
 {
   "server_cfg": {
-    "overlay_port": 32145
+    "overlay_port": 20001
   },
   "p2p_cfg": {
     "rendezvous_timeout_sec": null,

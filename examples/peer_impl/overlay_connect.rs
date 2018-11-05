@@ -1,14 +1,16 @@
 use common::event_loop::{Core, CoreState};
-use common::types::{PeerMsg, PlainTextMsg};
+use common::types::{PeerId, PeerMsg, PlainTextMsg};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::{msg_to_read, msg_to_send, Interface, RendezvousInfo};
 use socket_collection::TcpSock;
 use sodium::crypto::box_;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 use Event;
 
@@ -17,6 +19,7 @@ pub struct OverlayConnect {
     sock: TcpSock,
     our_name: String,
     state: CurrentState,
+    peers: Arc<Mutex<BTreeMap<PeerId, Option<Token>>>>,
     tx: Sender<Event>,
 }
 
@@ -58,6 +61,7 @@ impl OverlayConnect {
         poll: &Poll,
         overlay: &SocketAddr,
         our_name: String,
+        peers: Arc<Mutex<BTreeMap<PeerId, Option<Token>>>>,
         tx: Sender<Event>,
     ) {
         let token = core.new_token();
@@ -75,6 +79,7 @@ impl OverlayConnect {
             sock,
             our_name,
             state: Default::default(),
+            peers: peers,
             tx,
         }));
 
@@ -98,6 +103,7 @@ impl OverlayConnect {
                 }
                 Ok(None) => return,
                 Err(e) => {
+                    // TODO Make this debug better as such:
                     // debug!("{:?} - Failed to read from sock: {:?}", self.our_id, e);
                     debug!("Failed to read from sock: {:?}", e);
                     return self.terminate(core, poll);
@@ -166,7 +172,9 @@ impl OverlayConnect {
             PlainTextMsg::UpdateNameResp(is_updated) => {
                 self.handle_update_name_resp(core, poll, is_updated)
             }
-            PlainTextMsg::OnlinePeersResp(resp) => self.handle_req_online_peers(core, poll, resp),
+            PlainTextMsg::OnlinePeersResp(online_peers) => {
+                self.handle_online_peers_resp(core, poll, online_peers)
+            }
             PlainTextMsg::ForwardedRendezvousReq { src_info, src_peer } => {
                 self.handle_rendezvous_req(core, poll, src_info, src_peer)
             }
@@ -181,16 +189,61 @@ impl OverlayConnect {
     }
 
     fn handle_update_name_resp(&mut self, core: &mut Core, poll: &Poll, is_updated: bool) -> bool {
-        unimplemented!()
+        match mem::replace(&mut self.state, Default::default()) {
+            CurrentState::AwaitingUpdateNameResp { pk, key } => {
+                if is_updated {
+                    if let Err(e) = self.tx.send(Event::OverlayConnected(self.token)) {
+                        debug!("Error sending event: {:?}", e);
+                        return false;
+                    }
+
+                    self.state = CurrentState::OverlayActivated { pk, key };
+
+                    true
+                } else {
+                    if let Err(e) = self.tx.send(Event::OverlayConnectFailed) {
+                        debug!("Error sending event: {:?}", e);
+                    }
+                    self.terminate(core, poll);
+
+                    false
+                }
+            }
+            x => {
+                info!("Message cannot be handled in the current state: {:?}", x);
+                false
+            }
+        }
     }
 
-    fn handle_req_online_peers(
+    fn handle_online_peers_resp(
         &mut self,
         core: &mut Core,
         poll: &Poll,
-        resp: Vec<(String, box_::PublicKey)>,
+        online_peers: Vec<PeerId>,
     ) -> bool {
-        unimplemented!()
+        {
+            let mut peers_guard = unwrap!(self.peers.lock());
+            let mut current_peers = mem::replace(&mut *peers_guard, Default::default());
+
+            online_peers.into_iter().for_each(|id| {
+                let token = current_peers.remove(&id).and_then(|t| t);
+                let _ = peers_guard.insert(id, token);
+            });
+
+            current_peers.into_iter().for_each(|(id, token)| {
+                if token.is_some() {
+                    let _ = peers_guard.insert(id, token);
+                }
+            });
+        }
+
+        if let Err(e) = self.tx.send(Event::PeersRefreshed) {
+            debug!("Error sending event: {:?}", e);
+            false
+        } else {
+            true
+        }
     }
 
     fn handle_rendezvous_req(
@@ -198,7 +251,7 @@ impl OverlayConnect {
         core: &mut Core,
         poll: &Poll,
         src_info: RendezvousInfo,
-        src_peer: String,
+        src_peer: PeerId,
     ) -> bool {
         unimplemented!()
     }
@@ -208,7 +261,7 @@ impl OverlayConnect {
         core: &mut Core,
         poll: &Poll,
         src_info: RendezvousInfo,
-        src_peer: String,
+        src_peer: PeerId,
     ) -> bool {
         unimplemented!()
     }

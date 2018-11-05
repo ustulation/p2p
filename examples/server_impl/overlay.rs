@@ -1,4 +1,5 @@
 use common::event_loop::{Core, CoreState};
+use common::types::PeerId;
 use mio::net::TcpListener;
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::Interface;
@@ -15,7 +16,7 @@ use Peer;
 pub struct Overlay {
     token: Token,
     l: TcpListener,
-    peers: Rc<RefCell<BTreeMap<String, (box_::PublicKey, Token)>>>,
+    peers: Rc<RefCell<BTreeMap<PeerId, Token>>>,
 }
 
 impl Overlay {
