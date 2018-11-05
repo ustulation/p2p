@@ -1,10 +1,10 @@
 use common::event_loop::{Core, CoreState};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
-use maidsafe_utilities::serialisation::{deserialise, serialise};
+use maidsafe_utilities::serialisation::serialise;
 use mio::{Poll, PollOpt, Ready, Token};
-use p2p::{msg_to_read, msg_to_send, Interface, RendezvousInfo};
+use p2p::{Interface, RendezvousInfo};
+use safe_crypto::{PublicEncryptKey, SharedSecretKey};
 use socket_collection::TcpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -21,12 +21,12 @@ pub struct Peer {
 enum CurrentState {
     AwaitingPeerPk,
     AwaitingPeerName {
-        pk: box_::PublicKey,
-        key: box_::PrecomputedKey,
+        pk: PublicEncryptKey,
+        key: SharedSecretKey,
     },
     PeerActivated {
         id: PeerId,
-        key: box_::PrecomputedKey,
+        key: SharedSecretKey,
     },
 }
 
@@ -108,7 +108,7 @@ impl Peer {
         }
     }
 
-    fn handle_peer_pk(&mut self, core: &mut Core, poll: &Poll, pk: box_::PublicKey) -> bool {
+    fn handle_peer_pk(&mut self, core: &mut Core, poll: &Poll, pk: PublicEncryptKey) -> bool {
         match self.state {
             CurrentState::AwaitingPeerPk => (),
             ref x => {
@@ -119,7 +119,7 @@ impl Peer {
 
         self.state = CurrentState::AwaitingPeerName {
             pk,
-            key: box_::precompute(&pk, core.enc_sk()),
+            key: core.enc_sk().shared_secret(&pk),
         };
         let overlay_pk = *core.enc_pk();
 
@@ -129,9 +129,9 @@ impl Peer {
     }
 
     fn handle_ciphertext(&mut self, core: &mut Core, poll: &Poll, ciphertext: &[u8]) -> bool {
-        let plaintext_ser = match self.state {
+        let plaintext = match self.state {
             CurrentState::AwaitingPeerName { ref key, .. }
-            | CurrentState::PeerActivated { ref key, .. } => match msg_to_read(ciphertext, key) {
+            | CurrentState::PeerActivated { ref key, .. } => match key.decrypt(ciphertext) {
                 Ok(pt) => pt,
                 Err(e) => {
                     info!("Error decrypting: {:?}", e);
@@ -140,14 +140,6 @@ impl Peer {
             },
             ref x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
-                return false;
-            }
-        };
-
-        let plaintext = match deserialise(&plaintext_ser) {
-            Ok(pt) => pt,
-            Err(e) => {
-                info!("Error deserialising: {:?}", e);
                 return false;
             }
         };
@@ -182,15 +174,15 @@ impl Peer {
                     || peers.borrow().contains_key(&id)
                 {
                     trace!("Invalid name or identity already taken - choose a different one");
-                    let resp_ser = unwrap!(serialise(&PlainTextMsg::UpdateNameResp(false)));
-                    let ciphertext = unwrap!(msg_to_send(&resp_ser, &key));
+                    let resp = PlainTextMsg::UpdateNameResp(false);
+                    let ciphertext = unwrap!(key.encrypt(&resp));
 
                     self.state = CurrentState::AwaitingPeerName { pk, key };
 
                     ciphertext
                 } else {
-                    let resp_ser = unwrap!(serialise(&PlainTextMsg::UpdateNameResp(true)));
-                    let ciphertext = unwrap!(msg_to_send(&resp_ser, &key));
+                    let resp = PlainTextMsg::UpdateNameResp(true);
+                    let ciphertext = unwrap!(key.encrypt(&resp));
 
                     self.state = CurrentState::PeerActivated {
                         id: id.clone(),
@@ -225,9 +217,8 @@ impl Peer {
                 };
 
                 let peers: Vec<PeerId> = peers.borrow().keys().cloned().collect();
-
-                let peers_ser = unwrap!(serialise(&PlainTextMsg::OnlinePeersResp(peers)));
-                unwrap!(msg_to_send(&peers_ser, key))
+                let peers = PlainTextMsg::OnlinePeersResp(peers);
+                unwrap!(key.encrypt(&peers))
             }
             ref x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
@@ -301,7 +292,7 @@ impl CoreState for Peer {
 
     fn write(&mut self, core: &mut Core, poll: &Poll, data: Vec<u8>) {
         let ciphertext = match self.state {
-            CurrentState::PeerActivated { ref key, .. } => unwrap!(msg_to_send(&data, key)),
+            CurrentState::PeerActivated { ref key, .. } => unwrap!(key.encrypt_bytes(&data)),
             ref x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
                 return;

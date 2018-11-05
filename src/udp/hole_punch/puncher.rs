@@ -1,7 +1,7 @@
 use mio::{Poll, PollOpt, Ready, Token};
 use mio_extras::timer::Timeout;
+use safe_crypto::{PublicEncryptKey, SharedSecretKey};
 use socket_collection::UdpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -33,8 +33,8 @@ pub struct Puncher {
     token: Token,
     sock: UdpSock,
     peer: SocketAddr,
-    peer_enc_pk: box_::PublicKey,
-    key: box_::PrecomputedKey,
+    peer_enc_pk: PublicEncryptKey,
+    key: SharedSecretKey,
     connection_chooser: bool,
     os_ttl: u32,
     starting_ttl: u32,
@@ -57,7 +57,7 @@ impl Puncher {
         starting_ttl: u8,
         ttl_inc_interval_ms: u64,
         peer: SocketAddr,
-        peer_enc_pk: &box_::PublicKey,
+        peer_enc_pk: &PublicEncryptKey,
         f: Finish,
     ) -> ::Res<()> {
         let os_ttl = sock.ttl()?;
@@ -89,7 +89,7 @@ impl Puncher {
             sock,
             peer,
             peer_enc_pk: *peer_enc_pk,
-            key: box_::precompute(peer_enc_pk, ifc.enc_sk()),
+            key: ifc.enc_sk().shared_secret(peer_enc_pk),
             connection_chooser: ifc.enc_pk() > peer_enc_pk,
             os_ttl,
             starting_ttl,
@@ -136,7 +136,7 @@ impl Puncher {
             }
         }
 
-        let msg = match ::msg_to_read(&cipher_text, &self.key) {
+        let msg = match self.key.decrypt_bytes(&cipher_text) {
             Ok(m) => m,
             Err(e) => {
                 debug!("{} Errored while deciphering incoming data: {:?}", self, e);
@@ -223,7 +223,7 @@ impl Puncher {
                 }
             };
 
-            match ::msg_to_send(m, &self.key) {
+            match self.key.encrypt_bytes(&m) {
                 Ok(m) => m,
                 Err(e) => {
                     debug!("{} Error: while encrypting: {:?}", self, e);
@@ -337,13 +337,14 @@ impl fmt::Display for Puncher {
         } else {
             format!("{}", self.ttl_on_being_reached)
         };
+        let peer_pk = self.peer_enc_pk.into_bytes();
         write!(
             f,
             "UdpPuncher [peer=({:02x}{:02x}{:02x}../{}) ;; os_ttl={}, starting_ttl={}, current_ttl={}
             , ttl_on_being_reached={} ;; state={:?} ;; chooser={}]",
-            self.peer_enc_pk.0[0],
-            self.peer_enc_pk.0[1],
-            self.peer_enc_pk.0[2],
+            peer_pk[0],
+            peer_pk[1],
+            peer_pk[2],
             self.peer,
             self.os_ttl,
             self.starting_ttl,

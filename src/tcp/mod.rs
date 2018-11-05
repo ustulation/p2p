@@ -2,14 +2,14 @@ pub use self::hole_punch::TcpHolePunchMediator;
 pub use self::rendezvous_server::TcpRendezvousServer;
 
 use net2::TcpBuilder;
-use sodium::crypto::box_::PUBLICKEYBYTES;
+use safe_crypto::PUBLIC_ENCRYPT_KEY_BYTES;
 use std::net::{IpAddr, SocketAddr};
 
 mod hole_punch;
 mod rendezvous_server;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct TcpEchoReq(pub [u8; PUBLICKEYBYTES]);
+struct TcpEchoReq(pub [u8; PUBLIC_ENCRYPT_KEY_BYTES]);
 #[derive(Debug, Serialize, Deserialize)]
 struct TcpEchoResp(pub Vec<u8>);
 

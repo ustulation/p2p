@@ -2,8 +2,8 @@ use self::puncher::Puncher;
 use self::rendezvous_client::UdpRendezvousClient;
 use mio::Poll;
 use mio::Token;
+use safe_crypto::PublicEncryptKey;
 use socket_collection::UdpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -228,7 +228,7 @@ impl UdpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         peers: Vec<SocketAddr>,
-        peer_enc_pk: &box_::PublicKey,
+        peer_enc_pk: &PublicEncryptKey,
         f: HolePunchFinsih,
     ) -> ::Res<()> {
         let info = match self.state {

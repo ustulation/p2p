@@ -1,25 +1,26 @@
 use p2p::RendezvousInfo;
-use sodium::crypto::box_;
+use safe_crypto::PublicEncryptKey;
 use std::fmt;
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PeerId {
     pub name: String,
-    pub pk: box_::PublicKey,
+    pub pk: PublicEncryptKey,
 }
 
 impl PeerId {
-    pub fn new(name: String, pk: box_::PublicKey) -> Self {
+    pub fn new(name: String, pk: PublicEncryptKey) -> Self {
         Self { name, pk }
     }
 }
 
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let pk = self.pk.into_bytes();
         write!(
             f,
             "Peer: {} ({:02x}{:02x}{:02x}{:02x})",
-            self.name, self.pk.0[0], self.pk.0[1], self.pk.0[2], self.pk.0[3]
+            self.name, pk[0], pk[1], pk[2], pk[3]
         )
     }
 }
@@ -43,6 +44,6 @@ pub enum PlainTextMsg {
 
 #[derive(Serialize, Deserialize)]
 pub enum PeerMsg {
-    PubKey(box_::PublicKey),
+    PubKey(PublicEncryptKey),
     CipherText(Vec<u8>),
 }

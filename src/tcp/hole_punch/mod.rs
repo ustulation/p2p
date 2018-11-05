@@ -5,8 +5,8 @@ use mio::tcp::{TcpListener, TcpStream};
 use mio::Poll;
 use mio::Token;
 use rand::{self, Rng};
+use safe_crypto::PublicEncryptKey;
 use socket_collection::TcpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -272,7 +272,7 @@ impl TcpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         peer: SocketAddr,
-        peer_enc_pk: &box_::PublicKey,
+        peer_enc_pk: &PublicEncryptKey,
         f: HolePunchFinsih,
     ) -> ::Res<()> {
         let our_addr = match self.state {

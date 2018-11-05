@@ -1,14 +1,10 @@
 use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
-use maidsafe_utilities::serialisation::{deserialise, serialise};
 use mio::{Poll, PollOpt, Ready, Token};
 use mio_extras::timer::Timeout;
-use p2p::{
-    msg_to_read, msg_to_send, Handle, HolePunchInfo, HolePunchMediator, Interface, NatInfo,
-    RendezvousInfo, Res,
-};
+use p2p::{Handle, HolePunchInfo, HolePunchMediator, Interface, NatInfo, RendezvousInfo, Res};
+use safe_crypto::{PublicEncryptKey, SharedSecretKey};
 use socket_collection::TcpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -38,12 +34,12 @@ enum CurrentState {
     Init,
     AwaitingOverlayPk,
     AwaitingUpdateNameResp {
-        pk: box_::PublicKey,
-        key: box_::PrecomputedKey,
+        pk: PublicEncryptKey,
+        key: SharedSecretKey,
     },
     OverlayActivated {
-        _pk: box_::PublicKey,
-        key: box_::PrecomputedKey,
+        _pk: PublicEncryptKey,
+        key: SharedSecretKey,
     },
 }
 
@@ -181,7 +177,7 @@ impl OverlayConnect {
         }
     }
 
-    fn handle_overlay_pk(&mut self, core: &mut Core, poll: &Poll, pk: box_::PublicKey) -> bool {
+    fn handle_overlay_pk(&mut self, core: &mut Core, poll: &Poll, pk: PublicEncryptKey) -> bool {
         match self.state {
             CurrentState::AwaitingOverlayPk => (),
             ref x => {
@@ -190,12 +186,10 @@ impl OverlayConnect {
             }
         }
 
-        let key = box_::precompute(&pk, core.enc_sk());
+        let key = core.enc_sk().shared_secret(&pk);
 
-        let update_name = unwrap!(serialise(&PlainTextMsg::ReqUpdateName(
-            self.our_name.clone()
-        )));
-        let ciphertext = unwrap!(msg_to_send(&update_name, &key));
+        let update_name = &PlainTextMsg::ReqUpdateName(self.our_name.clone());
+        let ciphertext = unwrap!(key.encrypt(&update_name));
 
         self.state = CurrentState::AwaitingUpdateNameResp { pk, key };
 
@@ -205,27 +199,17 @@ impl OverlayConnect {
     }
 
     fn handle_ciphertext(&mut self, core: &mut Core, poll: &Poll, ciphertext: &[u8]) -> bool {
-        let plaintext_ser = match self.state {
+        let plaintext = match self.state {
             CurrentState::AwaitingUpdateNameResp { ref key, .. }
-            | CurrentState::OverlayActivated { ref key, .. } => {
-                match msg_to_read(ciphertext, key) {
-                    Ok(pt) => pt,
-                    Err(e) => {
-                        info!("Error decrypting: {:?}", e);
-                        return false;
-                    }
+            | CurrentState::OverlayActivated { ref key, .. } => match key.decrypt(ciphertext) {
+                Ok(pt) => pt,
+                Err(e) => {
+                    info!("Error decrypting: {:?}", e);
+                    return false;
                 }
-            }
+            },
             ref x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
-                return false;
-            }
-        };
-
-        let plaintext = match deserialise(&plaintext_ser) {
-            Ok(pt) => pt,
-            Err(e) => {
-                info!("Error deserialising: {:?}", e);
                 return false;
             }
         };
@@ -431,11 +415,11 @@ impl OverlayConnect {
 
         let ciphertext = match self.state {
             CurrentState::OverlayActivated { ref key, .. } => {
-                let plaintext_ser = unwrap!(serialise(&PlainTextMsg::ExchgRendezvousInfo {
+                let msg = PlainTextMsg::ExchgRendezvousInfo {
                     src_info: our_info,
-                    dst_peer: for_peer.clone()
-                }));
-                match msg_to_send(&plaintext_ser, key) {
+                    dst_peer: for_peer.clone(),
+                };
+                match key.encrypt(&msg) {
                     Ok(ct) => ct,
                     Err(e) => {
                         info!("Error encrypting: {:?}", e);
@@ -592,7 +576,7 @@ impl CoreState for OverlayConnect {
 
     fn write(&mut self, core: &mut Core, poll: &Poll, data: Vec<u8>) {
         let ciphertext = match self.state {
-            CurrentState::OverlayActivated { ref key, .. } => unwrap!(msg_to_send(&data, key)),
+            CurrentState::OverlayActivated { ref key, .. } => unwrap!(key.encrypt_bytes(&data)),
             ref x => {
                 info!("Message cannot be handled in the current state: {:?}", x);
                 return;

@@ -1,9 +1,8 @@
 use super::{UdpEchoReq, UdpEchoResp};
 use config::UDP_RENDEZVOUS_PORT;
 use mio::{Poll, PollOpt, Ready, Token};
+use safe_crypto::PublicEncryptKey;
 use socket_collection::UdpSock;
-use sodium::crypto::box_;
-use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -62,7 +61,9 @@ impl UdpRendezvousServer {
         let mut peers = Vec::new();
         loop {
             match self.sock.read_frm() {
-                Ok(Some((UdpEchoReq(pk), peer))) => peers.push((box_::PublicKey(pk), peer)),
+                Ok(Some((UdpEchoReq(pk), peer))) => {
+                    peers.push((PublicEncryptKey::from_bytes(pk), peer))
+                }
                 Ok(None) => if peers.is_empty() {
                     return;
                 } else {
@@ -76,7 +77,7 @@ impl UdpRendezvousServer {
         }
 
         for (pk, peer) in peers {
-            let resp = UdpEchoResp(sealedbox::seal(format!("{}", peer).as_bytes(), &pk));
+            let resp = UdpEchoResp(pk.anonymously_encrypt_bytes(format!("{}", peer).as_bytes()));
             self.write_to(ifc, poll, Some((resp, peer)));
             // Errored while writting
             if self.terminated {

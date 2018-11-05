@@ -1,4 +1,5 @@
 use bincode;
+use safe_crypto;
 use socket_collection;
 use std::io;
 
@@ -32,6 +33,11 @@ quick_error! {
         SocketError(e: socket_collection::SocketError) {
             description(e.description())
             display("{}", e)
+            from()
+        }
+        /// Crypto error
+        Crypto(e: safe_crypto::Error) {
+            display("Crypto error: {}", e)
             from()
         }
 

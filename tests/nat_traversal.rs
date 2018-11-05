@@ -2,10 +2,10 @@ extern crate maidsafe_utilities;
 extern crate mio;
 extern crate mio_extras;
 extern crate p2p;
-extern crate rust_sodium as sodium;
 extern crate serde_json;
 #[macro_use]
 extern crate unwrap;
+extern crate safe_crypto;
 
 use maidsafe_utilities::thread::{self, Joiner};
 use mio::{Events, Poll, PollOpt, Ready, Token};
@@ -15,7 +15,7 @@ use p2p::{
     Config, Handle, HolePunchMediator, Interface, NatInfo, NatMsg, NatState, NatTimer, NatType,
     RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
 };
-use sodium::crypto::box_;
+use safe_crypto::{gen_encrypt_keypair, PublicEncryptKey, SecretEncryptKey};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
@@ -31,8 +31,8 @@ pub struct StateMachine {
     timer: Timer<NatTimer>,
     token: usize,
     config: Config,
-    enc_pk: box_::PublicKey,
-    enc_sk: box_::SecretKey,
+    enc_pk: PublicEncryptKey,
+    enc_sk: SecretEncryptKey,
     tx: Sender<NatMsg>,
 }
 
@@ -93,11 +93,11 @@ impl Interface for StateMachine {
         &self.config
     }
 
-    fn enc_pk(&self) -> &box_::PublicKey {
+    fn enc_pk(&self) -> &PublicEncryptKey {
         &self.enc_pk
     }
 
-    fn enc_sk(&self) -> &box_::SecretKey {
+    fn enc_sk(&self) -> &SecretEncryptKey {
         &self.enc_sk
     }
 
@@ -153,7 +153,7 @@ pub fn spawn_event_loop(config_path: String) -> El {
         unwrap!(file.read_to_string(&mut content));
         let config = unwrap!(serde_json::from_str(&content));
 
-        let (enc_pk, enc_sk) = box_::gen_keypair();
+        let (enc_pk, enc_sk) = gen_encrypt_keypair();
         let timer = Timer::default();
 
         unwrap!(poll.register(

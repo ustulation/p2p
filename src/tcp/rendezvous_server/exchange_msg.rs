@@ -1,9 +1,8 @@
 use super::{TcpEchoReq, TcpEchoResp};
 use mio::{Poll, PollOpt, Ready, Token};
 use mio_extras::timer::Timeout;
+use safe_crypto::PublicEncryptKey;
 use socket_collection::{SocketError, TcpSock};
-use sodium::crypto::box_;
-use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -57,7 +56,7 @@ impl ExchangeMsg {
         let mut pk = None;
         loop {
             match self.sock.read() {
-                Ok(Some(TcpEchoReq(raw))) => pk = Some(box_::PublicKey(raw)),
+                Ok(Some(TcpEchoReq(raw))) => pk = Some(PublicEncryptKey::from_bytes(raw)),
                 Ok(None) => if pk.is_some() {
                     break;
                 } else {
@@ -74,7 +73,8 @@ impl ExchangeMsg {
         }
 
         if let Some(pk) = pk.take() {
-            let resp = TcpEchoResp(sealedbox::seal(format!("{}", self.peer).as_bytes(), &pk));
+            let resp =
+                TcpEchoResp(pk.anonymously_encrypt_bytes(format!("{}", self.peer).as_bytes()));
             self.write(ifc, poll, Some(resp))
         } else {
             warn!("Error: Logic error in Tcp Rendezvous Server - Please report.");

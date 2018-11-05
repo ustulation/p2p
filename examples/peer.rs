@@ -6,7 +6,7 @@ extern crate maidsafe_utilities;
 extern crate mio;
 extern crate mio_extras;
 extern crate p2p;
-extern crate rust_sodium as sodium;
+extern crate safe_crypto;
 extern crate serde;
 extern crate serde_json;
 #[macro_use]

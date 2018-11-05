@@ -2,8 +2,8 @@ use config::{HOLE_PUNCH_TIMEOUT_SEC, HOLE_PUNCH_WAIT_FOR_OTHER, RENDEZVOUS_TIMEO
 use mio::{Poll, Token};
 use mio_extras::channel::Sender;
 use mio_extras::timer::Timeout;
+use safe_crypto::{PublicEncryptKey, PUBLIC_ENCRYPT_KEY_BYTES};
 use socket_collection::{TcpSock, UdpSock};
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::{self, Debug, Formatter};
@@ -69,15 +69,15 @@ pub struct RendezvousInfo {
     /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
-    pub enc_pk: [u8; box_::PUBLICKEYBYTES],
+    pub enc_pk: [u8; PUBLIC_ENCRYPT_KEY_BYTES],
 }
 
 impl RendezvousInfo {
-    fn with_key(enc_pk: &box_::PublicKey) -> Self {
+    fn with_key(enc_pk: &PublicEncryptKey) -> Self {
         RendezvousInfo {
             udp: vec![],
             tcp: None,
-            enc_pk: enc_pk.0,
+            enc_pk: enc_pk.into_bytes(),
         }
     }
 }
@@ -87,7 +87,7 @@ impl Default for RendezvousInfo {
         RendezvousInfo {
             udp: vec![],
             tcp: None,
-            enc_pk: [0; box_::PUBLICKEYBYTES],
+            enc_pk: [0; PUBLIC_ENCRYPT_KEY_BYTES],
         }
     }
 }
@@ -159,11 +159,11 @@ pub struct HolePunchInfo {
     /// Encrypting Asymmetric PublicKey. Peer will use our public key to encrypt and their secret
     /// key to authenticate the message. We will use our secret key to decrypt and peer public key
     /// to validate authenticity of the message.
-    pub enc_pk: box_::PublicKey,
+    pub enc_pk: PublicEncryptKey,
 }
 
 impl HolePunchInfo {
-    fn with_key(enc_pk: box_::PublicKey) -> Self {
+    fn with_key(enc_pk: PublicEncryptKey) -> Self {
         HolePunchInfo {
             tcp: None,
             udp: None,
@@ -177,7 +177,7 @@ impl Default for HolePunchInfo {
         HolePunchInfo {
             tcp: None,
             udp: None,
-            enc_pk: box_::PublicKey([0; box_::PUBLICKEYBYTES]),
+            enc_pk: PublicEncryptKey::from_bytes([0; PUBLIC_ENCRYPT_KEY_BYTES]),
         }
     }
 }
@@ -434,7 +434,7 @@ impl HolePunchMediator {
             NatTimer::new(self.token, TIMER_ID),
         );
 
-        let peer_enc_pk = box_::PublicKey(peer.enc_pk);
+        let peer_enc_pk = PublicEncryptKey::from_bytes(peer.enc_pk);
 
         if let Some(udp_child) = self.udp_child.as_ref().cloned() {
             let weak = self.self_weak.clone();

@@ -1,7 +1,6 @@
 use mio::{Poll, PollOpt, Ready, Token};
 use rand::{self, Rng};
 use socket_collection::UdpSock;
-use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
 use std::mem;
@@ -90,7 +89,10 @@ impl UdpRendezvousClient {
             }
         }
 
-        if let Ok(our_ext_addr_bytes) = sealedbox::open(&cipher_text, ifc.enc_pk(), ifc.enc_sk()) {
+        if let Ok(our_ext_addr_bytes) = ifc
+            .enc_sk()
+            .anonymously_decrypt_bytes(&cipher_text, ifc.enc_pk())
+        {
             match str::from_utf8(&our_ext_addr_bytes) {
                 Ok(our_ext_addr_str) => match SocketAddr::from_str(our_ext_addr_str) {
                     Ok(addr) => self.our_ext_addrs.push(addr),
@@ -119,7 +121,7 @@ impl UdpRendezvousClient {
                 );
                 return self.handle_err(ifc, poll, None);
             }
-            let pk = ifc.enc_pk().0;
+            let pk = ifc.enc_pk().into_bytes();
             self.write(ifc, poll, Some(UdpEchoReq(pk)));
         } else {
             self.done(ifc, poll)
@@ -216,7 +218,7 @@ impl NatState for UdpRendezvousClient {
                     );
                     return self.handle_err(ifc, poll, None);
                 }
-                let pk = ifc.enc_pk().0;
+                let pk = ifc.enc_pk().into_bytes();
                 self.write(ifc, poll, Some(UdpEchoReq(pk)));
             } else {
                 self.write(ifc, poll, None);

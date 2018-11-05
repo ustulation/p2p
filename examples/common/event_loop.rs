@@ -2,9 +2,8 @@ use mio::{Events, Poll, PollOpt, Ready, Token};
 use mio_extras::channel::{self, Sender};
 use mio_extras::timer::{Timeout, Timer};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
+use safe_crypto::{gen_encrypt_keypair, PublicEncryptKey, SecretEncryptKey};
 use std::any::Any;
-// use socket_collection::{EpollLoop, Handle, Notifier};
-use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -19,8 +18,8 @@ pub struct Core {
     nat_timer: Timer<NatTimer>,
     token: usize,
     config: Config,
-    enc_pk: box_::PublicKey,
-    enc_sk: box_::SecretKey,
+    enc_pk: PublicEncryptKey,
+    enc_sk: SecretEncryptKey,
     tx: Sender<NatMsg>,
     // udt_epoll_handle: Handle,
 }
@@ -130,11 +129,11 @@ impl Interface for Core {
         &self.config
     }
 
-    fn enc_pk(&self) -> &box_::PublicKey {
+    fn enc_pk(&self) -> &PublicEncryptKey {
         &self.enc_pk
     }
 
-    fn enc_sk(&self) -> &box_::SecretKey {
+    fn enc_sk(&self) -> &SecretEncryptKey {
         &self.enc_sk
     }
 
@@ -218,7 +217,7 @@ pub fn spawn_event_loop(p2p_cfg: Config) -> El {
 
         let poll = unwrap!(Poll::new());
 
-        let (enc_pk, enc_sk) = box_::gen_keypair();
+        let (enc_pk, enc_sk) = gen_encrypt_keypair();
         let core_timer = Timer::default();
         let nat_timer = Timer::default();
 

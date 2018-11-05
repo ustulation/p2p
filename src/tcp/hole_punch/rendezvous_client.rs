@@ -1,6 +1,5 @@
 use mio::{Poll, PollOpt, Ready, Token};
 use socket_collection::{self, TcpSock};
-use sodium::crypto::sealedbox;
 use std::any::Any;
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -32,7 +31,7 @@ impl TcpRendezvousClient {
         let client = Rc::new(RefCell::new(TcpRendezvousClient {
             token,
             sock,
-            req: Some(TcpEchoReq(ifc.enc_pk().0)),
+            req: Some(TcpEchoReq(ifc.enc_pk().into_bytes())),
             f,
         }));
 
@@ -50,10 +49,13 @@ impl TcpRendezvousClient {
         loop {
             match self.sock.read() {
                 Ok(Some(TcpEchoResp(cipher_text))) => {
-                    match sealedbox::open(&cipher_text, ifc.enc_pk(), ifc.enc_sk()) {
+                    match ifc
+                        .enc_sk()
+                        .anonymously_decrypt_bytes(&cipher_text, ifc.enc_pk())
+                    {
                         Ok(plain_text) => utf8 = plain_text,
-                        Err(()) => {
-                            debug!("Error: Failed to decrypt TcpIpEchoResp");
+                        Err(e) => {
+                            debug!("Error: Failed to decrypt TcpIpEchoResp: {}", e);
                             return self.handle_err(ifc, poll);
                         }
                     };

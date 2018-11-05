@@ -255,7 +255,7 @@
     variant_size_differences
 )]
 #![cfg_attr(feature = "cargo-clippy", allow(too_many_arguments))]
-#![recursion_limit = "100"]
+#![recursion_limit = "120"]
 #![allow(deprecated)]
 
 // Coding guidelines:
@@ -279,14 +279,13 @@ extern crate mio;
 extern crate mio_extras;
 extern crate net2;
 extern crate rand;
-extern crate rust_sodium as sodium;
+extern crate safe_crypto;
 extern crate socket_collection;
 
-use bincode::{deserialize, serialize, Infinite};
 use mio::{Poll, Ready, Token};
 use mio_extras::channel::Sender;
 use mio_extras::timer::Timeout;
-use sodium::crypto::box_;
+use safe_crypto::{PublicEncryptKey, SecretEncryptKey};
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -416,39 +415,12 @@ pub trait Interface {
     /// Hand over a public encryption key. This must be ideally initialised once and must not
     /// change in subsequent calls as this is what will be shared with remote contacts for secure
     /// communication.
-    fn enc_pk(&self) -> &box_::PublicKey;
+    fn enc_pk(&self) -> &PublicEncryptKey;
     /// Hand over a reference to secret encryption key. This must be ideally initialised once and
     /// must not change in subsequent calls as this is what will be used for secure communication.
-    fn enc_sk(&self) -> &box_::SecretKey;
+    fn enc_sk(&self) -> &SecretEncryptKey;
     /// Obtain a sender for use to send messages into event loop.
     fn sender(&self) -> &Sender<NatMsg>;
     /// For downcasting to the concrete type when necessary
     fn as_any(&mut self) -> &mut Any;
-}
-
-/// General wire format for encrypted communication
-#[derive(Serialize, Deserialize)]
-pub struct CryptMsg {
-    /// Nonce used for this message
-    pub nonce: [u8; box_::NONCEBYTES],
-    /// Encrypted message
-    pub cipher_text: Vec<u8>,
-}
-
-/// Utility function to encrypt messages to peer
-pub fn msg_to_send(plain_text: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
-    let nonce = box_::gen_nonce();
-    let handshake = CryptMsg {
-        nonce: nonce.0,
-        cipher_text: box_::seal_precomputed(plain_text, &nonce, key),
-    };
-
-    Ok(serialize(&handshake, Infinite)?)
-}
-
-/// Utility function to decrypt messages from peer
-pub fn msg_to_read(raw: &[u8], key: &box_::PrecomputedKey) -> ::Res<Vec<u8>> {
-    let CryptMsg { nonce, cipher_text } = deserialize(raw)?;
-    box_::open_precomputed(&cipher_text, &box_::Nonce(nonce), key)
-        .map_err(|()| NatError::AsymmetricDecipherFailed)
 }

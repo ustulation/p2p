@@ -1,11 +1,10 @@
 use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
-use maidsafe_utilities::serialisation::deserialise;
 use mio::{Poll, Ready, Token};
 use mio_extras::timer::Timeout;
-use p2p::{msg_to_read, msg_to_send, Interface};
+use p2p::Interface;
+use safe_crypto::SharedSecretKey;
 use socket_collection::UdpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -25,7 +24,7 @@ pub struct ActivePeer {
     token: Token,
     sock: UdpSock,
     peer: PeerId,
-    key: box_::PrecomputedKey,
+    key: SharedSecretKey,
     peers: Arc<Mutex<BTreeMap<PeerId, PeerState>>>,
     should_buffer: bool,
     chat_buf: Vec<String>,
@@ -49,7 +48,7 @@ impl ActivePeer {
             token,
             sock,
             peer: peer.clone(),
-            key: box_::precompute(&peer.pk, core.enc_sk()),
+            key: core.enc_sk().shared_secret(&peer.pk),
             peers: peers.clone(),
             should_buffer: true,
             chat_buf: Default::default(),
@@ -127,7 +126,7 @@ impl ActivePeer {
     }
 
     fn handle_ciphertext(&mut self, core: &mut Core, _poll: &Poll, ciphertext: &[u8]) -> bool {
-        let plaintext_ser = match msg_to_read(ciphertext, &self.key) {
+        let plaintext = match self.key.decrypt(ciphertext) {
             Ok(pt) => pt,
             Err(e) => {
                 return if self.tolerate_read_errs {
@@ -135,19 +134,6 @@ impl ActivePeer {
                     true
                 } else {
                     debug!("Error decrypting: {:?}", e);
-                    false
-                };
-            }
-        };
-
-        let plaintext = match deserialise(&plaintext_ser) {
-            Ok(pt) => pt,
-            Err(e) => {
-                return if self.tolerate_read_errs {
-                    trace!("Tolerating error deserialising: {:?}", e);
-                    true
-                } else {
-                    info!("Error deserialising: {:?}", e);
                     false
                 };
             }
@@ -194,7 +180,7 @@ impl CoreState for ActivePeer {
     }
 
     fn write(&mut self, core: &mut Core, poll: &Poll, data: Vec<u8>) {
-        let ciphertext = unwrap!(msg_to_send(&data, &self.key));
+        let ciphertext = unwrap!(self.key.encrypt_bytes(&data));
         self.write(core, poll, Some(PeerMsg::CipherText(ciphertext)));
     }
 

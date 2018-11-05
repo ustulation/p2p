@@ -2,8 +2,8 @@ use mio::tcp::TcpStream;
 use mio::{Poll, PollOpt, Ready, Token};
 use mio_extras::timer::Timeout;
 use net2::TcpStreamExt;
+use safe_crypto::{PublicEncryptKey, SharedSecretKey};
 use socket_collection::TcpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::mem;
@@ -29,7 +29,7 @@ const CHOOSE_CONN: &[u8] = b"Choose this connection";
 
 enum ConnectionChooser {
     Choose(Option<Vec<u8>>),
-    Wait(box_::PrecomputedKey),
+    Wait(SharedSecretKey),
 }
 
 pub struct Puncher {
@@ -49,7 +49,7 @@ impl Puncher {
         ifc: &mut Interface,
         poll: &Poll,
         via: Via,
-        peer_enc_pk: &box_::PublicKey,
+        peer_enc_pk: &PublicEncryptKey,
         f: Finish,
     ) -> ::Res<Token> {
         let (sock, token, via_accept, our_addr, peer_addr, commenced_at) = match via {
@@ -83,9 +83,9 @@ impl Puncher {
             PollOpt::edge(),
         )?;
 
-        let key = box_::precompute(peer_enc_pk, ifc.enc_sk());
+        let key = ifc.enc_sk().shared_secret(peer_enc_pk);
         let chooser = if ifc.enc_pk() > peer_enc_pk {
-            ConnectionChooser::Choose(Some(::msg_to_send(CHOOSE_CONN, &key)?))
+            ConnectionChooser::Choose(Some(key.encrypt_bytes(&CHOOSE_CONN)?))
         } else {
             ConnectionChooser::Wait(key)
         };
@@ -117,7 +117,7 @@ impl Puncher {
             match self.sock.read::<Vec<u8>>() {
                 Ok(Some(cipher_text)) => {
                     if let ConnectionChooser::Wait(ref key) = self.connection_chooser {
-                        match ::msg_to_read(&cipher_text, key) {
+                        match key.decrypt_bytes(&cipher_text) {
                             Ok(ref plain_text) if plain_text == &CHOOSE_CONN => ok = true,
                             _ => {
                                 debug!("Error: Failed to decrypt a connection-choose order");

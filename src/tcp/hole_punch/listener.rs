@@ -1,8 +1,8 @@
 use super::puncher::{Finish, Puncher, Via};
 use mio::tcp::TcpListener;
 use mio::{Poll, PollOpt, Ready, Token};
+use safe_crypto::PublicEncryptKey;
 use socket_collection::TcpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,7 +12,7 @@ use {Interface, NatError, NatState};
 pub struct Listener {
     token: Token,
     listener: TcpListener,
-    peer_enc_key: box_::PublicKey,
+    peer_enc_key: PublicEncryptKey,
     commenced_at: Instant,
     f: Option<Finish>,
 }
@@ -22,7 +22,7 @@ impl Listener {
         ifc: &mut Interface,
         poll: &Poll,
         l: TcpListener,
-        peer_enc_key: &box_::PublicKey,
+        peer_enc_key: &PublicEncryptKey,
         f: Finish,
     ) -> ::Res<Token> {
         let token = ifc.new_token();
