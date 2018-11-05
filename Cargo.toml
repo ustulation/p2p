@@ -28,3 +28,7 @@ env_logger = "~0.5.13"
 maidsafe_utilities = "~0.15.0"
 serde_json = "~1.0.2"
 unwrap = "~1.1.0"
+
+[[example]]
+name = "peer"
+required-features = ["socket-collection/enable-udt"]
