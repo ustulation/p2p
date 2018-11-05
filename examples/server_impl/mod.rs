@@ -2,17 +2,30 @@ pub use self::overlay::Overlay;
 pub use self::peer::Peer;
 
 use common::event_loop::{spawn_event_loop, CoreMsg};
-use p2p::{NatMsg, TcpRendezvousServer, UdpRendezvousServer};
+use common::read_config;
+use p2p::{Config, NatMsg, TcpRendezvousServer, UdpRendezvousServer};
 use std::io;
 use std::sync::mpsc;
 
 mod overlay;
 mod peer;
 
-const OVERLAY_PORT: u16 = 31567;
+#[derive(Serialize, Deserialize)]
+pub struct FullConfig {
+    pub server_cfg: ServerConfig,
+    pub p2p_cfg: Config,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ServerConfig {
+    overlay_port: u16,
+}
 
 pub fn entry_point() {
-    let el = spawn_event_loop();
+    let cfg: FullConfig = read_config("./server-config");
+
+    let el = spawn_event_loop(cfg.p2p_cfg);
+    let server_cfg = cfg.server_cfg;
 
     {
         let (tx, rx) = mpsc::channel();
@@ -34,7 +47,7 @@ pub fn entry_point() {
     if answer == "y" || answer == "yes" {
         let (tx, rx) = mpsc::channel();
         unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
-            Overlay::start(core, poll, OVERLAY_PORT);
+            Overlay::start(core, poll, server_cfg.overlay_port);
             unwrap!(tx.send(()));
         })));
         unwrap!(rx.recv());

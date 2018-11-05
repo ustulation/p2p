@@ -92,6 +92,7 @@ impl Peer {
                 }
                 Ok(None) => return,
                 Err(e) => {
+                    // TODO Make this debug better as such:
                     // debug!("{:?} - Failed to read from sock: {:?}", self.our_id, e);
                     debug!("Failed to read from sock: {:?}", e);
                     return self.terminate(core, poll);
@@ -182,7 +183,10 @@ impl Peer {
 
         match mem::replace(&mut self.state, Default::default()) {
             CurrentState::AwaitingPeerName { pk, key } => {
-                let ciphertext = if name.is_empty() || peers.borrow().contains_key(&name) {
+                let ciphertext = if name.is_empty()
+                    || name.contains(" ")
+                    || peers.borrow().contains_key(&name)
+                {
                     trace!("Invalid name or name already taken - choose a different one");
                     let resp_ser = unwrap!(serialise(&PlainTextMsg::UpdateNameResp(false)));
                     unwrap!(msg_to_send(&resp_ser, &key))
@@ -309,7 +313,7 @@ impl CoreState for Peer {
         } else if kind.is_writable() {
             self.write(core, poll, None)
         } else {
-            warn!("Unknow kind: {:?}", kind);
+            warn!("Unknown kind: {:?}", kind);
         }
     }
 

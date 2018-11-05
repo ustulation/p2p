@@ -2,14 +2,11 @@ use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
 use mio::{Events, Poll, PollOpt, Ready, Token};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
-use serde_json;
 // use socket_collection::{EpollLoop, Handle, Notifier};
 use sodium::crypto::box_;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
 use std::rc::Rc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -174,7 +171,7 @@ impl Drop for El {
     }
 }
 
-pub fn spawn_event_loop() -> El {
+pub fn spawn_event_loop(p2p_cfg: Config) -> El {
     let (core_tx, core_rx) = channel::channel::<CoreMsg>();
     let (nat_tx, nat_rx) = channel::channel();
     let nat_tx_cloned = nat_tx.clone();
@@ -186,11 +183,6 @@ pub fn spawn_event_loop() -> El {
         const NAT_RX_TOKEN: usize = CORE_RX_TOKEN + 1;
 
         let poll = unwrap!(Poll::new());
-
-        let mut file = unwrap!(File::open("./sample-config"));
-        let mut content = String::new();
-        unwrap!(file.read_to_string(&mut content));
-        let config = unwrap!(serde_json::from_str(&content));
 
         let (enc_pk, enc_sk) = box_::gen_keypair();
         let timer = Timer::default();
@@ -223,7 +215,7 @@ pub fn spawn_event_loop() -> El {
             peer_states: HashMap::with_capacity(5),
             timer: timer,
             token: NAT_RX_TOKEN + 1,
-            config: config,
+            config: p2p_cfg,
             enc_pk: enc_pk,
             enc_sk: enc_sk,
             tx: nat_tx,

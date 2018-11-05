@@ -14,10 +14,10 @@ extern crate socket_collection;
 #[macro_use]
 extern crate unwrap;
 
-pub use server_impl::{entry_point, Overlay, Peer};
+pub use peer_impl::{entry_point, Event, OverlayConnect};
 
 mod common;
-mod server_impl;
+mod peer_impl;
 
 fn main() {
     unwrap!(maidsafe_utilities::log::init(true));
