@@ -1,5 +1,6 @@
 extern crate maidsafe_utilities;
 extern crate mio;
+extern crate mio_extras;
 extern crate p2p;
 extern crate rust_sodium as sodium;
 extern crate serde_json;
@@ -9,9 +10,10 @@ extern crate log;
 extern crate unwrap;
 
 use maidsafe_utilities::thread::{self, Joiner};
-use mio::channel::{self, Sender};
-use mio::timer::{Timeout, Timer, TimerError};
+use mio::unix::UnixReady;
 use mio::{Event, Events, Poll, PollOpt, Ready, Token};
+use mio_extras::channel::{self, Sender};
+use mio_extras::timer::{Timeout, Timer};
 use p2p::{
     Config, Handle, HolePunchMediator, Interface, NatInfo, NatMsg, NatState, NatTimer, NatType,
     RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
@@ -76,11 +78,7 @@ impl Interface for StateMachine {
         self.nat_states.get(&token).cloned()
     }
 
-    fn set_timeout(
-        &mut self,
-        duration: Duration,
-        timer_detail: NatTimer,
-    ) -> Result<Timeout, TimerError> {
+    fn set_timeout(&mut self, duration: Duration, timer_detail: NatTimer) -> Timeout {
         self.timer.set_timeout(duration, timer_detail)
     }
 
@@ -159,19 +157,19 @@ pub fn spawn_event_loop(config_path: String) -> El {
         unwrap!(poll.register(
             &timer,
             Token(TIMER_TOKEN),
-            Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::readable() | UnixReady::error() | UnixReady::hup(),
             PollOpt::edge(),
         ));
         unwrap!(poll.register(
             &core_rx,
             Token(CORE_RX_TOKEN),
-            Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::readable() | UnixReady::error() | UnixReady::hup(),
             PollOpt::edge(),
         ));
         unwrap!(poll.register(
             &nat_rx,
             Token(NAT_RX_TOKEN),
-            Ready::readable() | Ready::error() | Ready::hup(),
+            Ready::readable() | UnixReady::error() | UnixReady::hup(),
             PollOpt::edge(),
         ));
 
@@ -193,11 +191,11 @@ pub fn spawn_event_loop(config_path: String) -> El {
             for event in events.iter() {
                 match event.token() {
                     Token(TIMER_TOKEN) => {
-                        assert!(event.kind().is_readable());
+                        assert!(event.readiness().is_readable());
                         sm.handle_nat_timer(&poll);
                     }
                     Token(CORE_RX_TOKEN) => {
-                        assert!(event.kind().is_readable());
+                        assert!(event.readiness().is_readable());
                         while let Ok(f) = core_rx.try_recv() {
                             if let Some(mut f) = f.0 {
                                 f(&mut sm, &poll);
@@ -207,12 +205,12 @@ pub fn spawn_event_loop(config_path: String) -> El {
                         }
                     }
                     Token(NAT_RX_TOKEN) => {
-                        assert!(event.kind().is_readable());
+                        assert!(event.readiness().is_readable());
                         while let Ok(f) = nat_rx.try_recv() {
                             f.invoke(&mut sm, &poll);
                         }
                     }
-                    t => sm.handle_readiness(&poll, t, event.kind()),
+                    t => sm.handle_readiness(&poll, t, event.readiness()),
                 }
             }
         }

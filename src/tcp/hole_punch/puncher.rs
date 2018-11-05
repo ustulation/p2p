@@ -1,6 +1,6 @@
 use mio::tcp::TcpStream;
-use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
+use mio_extras::timer::Timeout;
 use net2::TcpStreamExt;
 use socket_collection::TcpSock;
 use sodium::crypto::box_;
@@ -194,17 +194,10 @@ impl Puncher {
             if let Some(t) = self.timeout.take() {
                 let _ = ifc.cancel_timeout(&t);
             }
-            match ifc.set_timeout(
+            self.timeout = Some(ifc.set_timeout(
                 Duration::from_millis(RE_CONNECT_MS),
                 NatTimer::new(self.token, TIMER_ID),
-            ) {
-                Ok(t) => self.timeout = Some(t),
-                Err(e) => {
-                    debug!("Error setting timeout: {:?}", e);
-                    self.terminate(ifc, poll);
-                    (*self.f)(ifc, poll, self.token, Err(NatError::TcpHolePunchFailed));
-                }
-            }
+            ));
         }
     }
 }
