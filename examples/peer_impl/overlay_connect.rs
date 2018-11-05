@@ -42,7 +42,7 @@ enum CurrentState {
         key: box_::PrecomputedKey,
     },
     OverlayActivated {
-        pk: box_::PublicKey,
+        _pk: box_::PublicKey,
         key: box_::PrecomputedKey,
     },
 }
@@ -256,7 +256,7 @@ impl OverlayConnect {
                         return false;
                     }
 
-                    self.state = CurrentState::OverlayActivated { pk, key };
+                    self.state = CurrentState::OverlayActivated { _pk: pk, key };
 
                     true
                 } else {
@@ -419,7 +419,7 @@ impl OverlayConnect {
     ) -> bool {
         let (p2p_handle, our_info) = match res {
             Ok(r) => r,
-            Err(e) => {
+            Err(_e) => {
                 debug!("Rendezvous failed for peer: {}", for_peer);
                 let mut peers_guard = unwrap!(self.peers.lock());
                 if let Some(stored_state) = peers_guard.get_mut(&for_peer) {
@@ -601,7 +601,7 @@ impl CoreState for OverlayConnect {
         self.write(core, poll, Some(PeerMsg::CipherText(ciphertext)));
     }
 
-    fn timeout(&mut self, core: &mut Core, poll: &Poll, timer_id: u8) {
+    fn timeout(&mut self, core: &mut Core, _poll: &Poll, timer_id: u8) {
         assert_eq!(timer_id, TIMER_ID);
 
         {

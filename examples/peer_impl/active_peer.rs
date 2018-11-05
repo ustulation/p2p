@@ -1,6 +1,6 @@
 use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
-use maidsafe_utilities::serialisation::{deserialise, serialise};
+use maidsafe_utilities::serialisation::deserialise;
 use mio::{Poll, Ready, Token};
 use mio_extras::timer::Timeout;
 use p2p::{msg_to_read, msg_to_send, Interface};
@@ -31,7 +31,7 @@ pub struct ActivePeer {
     chat_buf: Vec<String>,
     tolerate_read_errs: bool,
     timeout_inactivity: Timeout,
-    timeout_tolerate_read_errs: Timeout,
+    _timeout_tolerate_read_errs: Timeout,
     tx: Sender<Event>,
 }
 
@@ -58,7 +58,7 @@ impl ActivePeer {
                 Duration::from_secs(INACTIVITY_TIMEOUT_SECS),
                 CoreTimer::new(token, INACTIVITY_TIMEOUT_ID),
             ),
-            timeout_tolerate_read_errs: core.set_core_timeout(
+            _timeout_tolerate_read_errs: core.set_core_timeout(
                 Duration::from_secs(TOLERATE_READ_ERRS_SECS),
                 CoreTimer::new(token, TOLERATE_READ_ERRS_ID),
             ),
@@ -126,7 +126,7 @@ impl ActivePeer {
         }
     }
 
-    fn handle_ciphertext(&mut self, core: &mut Core, poll: &Poll, ciphertext: &[u8]) -> bool {
+    fn handle_ciphertext(&mut self, core: &mut Core, _poll: &Poll, ciphertext: &[u8]) -> bool {
         let plaintext_ser = match msg_to_read(ciphertext, &self.key) {
             Ok(pt) => pt,
             Err(e) => {
