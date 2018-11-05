@@ -8,7 +8,6 @@ extern crate serde_json;
 extern crate unwrap;
 
 use maidsafe_utilities::thread::{self, Joiner};
-use mio::unix::UnixReady;
 use mio::{Events, Poll, PollOpt, Ready, Token};
 use mio_extras::channel::{self, Sender};
 use mio_extras::timer::{Timeout, Timer};
@@ -155,19 +154,19 @@ pub fn spawn_event_loop(config_path: String) -> El {
         unwrap!(poll.register(
             &timer,
             Token(TIMER_TOKEN),
-            Ready::readable() | UnixReady::error() | UnixReady::hup(),
+            Ready::readable(),
             PollOpt::edge(),
         ));
         unwrap!(poll.register(
             &core_rx,
             Token(CORE_RX_TOKEN),
-            Ready::readable() | UnixReady::error() | UnixReady::hup(),
+            Ready::readable(),
             PollOpt::edge(),
         ));
         unwrap!(poll.register(
             &nat_rx,
             Token(NAT_RX_TOKEN),
-            Ready::readable() | UnixReady::error() | UnixReady::hup(),
+            Ready::readable(),
             PollOpt::edge(),
         ));
 
