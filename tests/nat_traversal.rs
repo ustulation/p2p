@@ -5,13 +5,11 @@ extern crate p2p;
 extern crate rust_sodium as sodium;
 extern crate serde_json;
 #[macro_use]
-extern crate log;
-#[macro_use]
 extern crate unwrap;
 
 use maidsafe_utilities::thread::{self, Joiner};
 use mio::unix::UnixReady;
-use mio::{Event, Events, Poll, PollOpt, Ready, Token};
+use mio::{Events, Poll, PollOpt, Ready, Token};
 use mio_extras::channel::{self, Sender};
 use mio_extras::timer::{Timeout, Timer};
 use p2p::{
@@ -25,7 +23,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc;
 use std::time::Duration;
 
 pub struct StateMachine {
