@@ -14,7 +14,7 @@ extern crate socket_collection;
 #[macro_use]
 extern crate unwrap;
 
-pub use peer_impl::{entry_point, Event, OverlayConnect};
+pub use peer_impl::{entry_point, Event, OverlayConnect, PeerState};
 
 mod common;
 mod peer_impl;

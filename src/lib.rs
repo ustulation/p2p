@@ -425,6 +425,8 @@ pub trait Interface {
     fn enc_sk(&self) -> &box_::SecretKey;
     /// Obtain a sender for use to send messages into event loop.
     fn sender(&self) -> &Sender<NatMsg>;
+    /// For downcasting to the concrete type when necessary
+    fn as_any(&mut self) -> &mut Any;
 }
 
 /// General wire format for encrypted communication

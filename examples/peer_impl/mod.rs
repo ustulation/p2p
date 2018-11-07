@@ -5,7 +5,8 @@ use common::event_loop::{spawn_event_loop, CoreMsg};
 use common::read_config;
 use common::types::PlainTextMsg;
 use maidsafe_utilities::serialisation::serialise;
-use p2p::Config;
+use mio::Token;
+use p2p::{Config, Handle, RendezvousInfo};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{mpsc, Arc, Mutex};
@@ -23,6 +24,26 @@ pub struct FullConfig {
 #[derive(Serialize, Deserialize)]
 pub struct PeerConfig {
     overlay_addr: SocketAddr,
+}
+
+#[derive(Debug)]
+pub enum PeerState {
+    Discovered,
+    CreatingRendezvousInfo {
+        mediator_token: Token,
+        peer_info: Option<RendezvousInfo>,
+    },
+    AwaitingRendezvousResp {
+        p2p_handle: Handle,
+    },
+    AwaitingHolePunchResult,
+    Connected(Token),
+}
+
+impl Default for PeerState {
+    fn default() -> Self {
+        PeerState::Discovered
+    }
 }
 
 const MENU: &str = "
@@ -85,11 +106,15 @@ pub fn entry_point() {
             let mut list = String::new();
             unwrap!(peers.lock())
                 .iter()
-                .for_each(|(ref id, ref token)| {
+                .for_each(|(ref id, ref peer_state)| {
                     list.push_str(&format!(
                         "{} {}\n",
                         id,
-                        if token.is_some() { "*" } else { "" }
+                        if let PeerState::Connected(_) = peer_state {
+                            "*"
+                        } else {
+                            ""
+                        }
                     ))
                 });
             if list.is_empty() {

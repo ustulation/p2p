@@ -2,6 +2,7 @@ use mio::channel::{self, Sender};
 use mio::timer::{Timeout, Timer, TimerError};
 use mio::{Events, Poll, PollOpt, Ready, Token};
 use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
+use std::any::Any;
 // use socket_collection::{EpollLoop, Handle, Notifier};
 use sodium::crypto::box_;
 use std::cell::RefCell;
@@ -125,6 +126,10 @@ impl Interface for Core {
 
     fn sender(&self) -> &Sender<NatMsg> {
         &self.tx
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }
 

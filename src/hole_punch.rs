@@ -17,8 +17,11 @@ use {Interface, NatError, NatMsg, NatState, NatTimer};
 
 /// Callback to receive the result of rendezvous
 pub type GetInfo = Box<FnMut(&mut Interface, &Poll, NatInfo, ::Res<(Handle, RendezvousInfo)>)>;
-/// Callback to receive the result of hole punching
-pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
+/// Callback to receive the result of hole punching in a different thread
+pub type HolePunchFinsihCrossThread =
+    Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>) + Send + 'static>;
+/// Callback to receive the result of hole punching in the same thread
+pub type HolePunchFinsih = Box<FnMut(&mut Interface, &Poll, ::Res<HolePunchInfo>)>;
 
 /// Detected NAT Type
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
@@ -225,7 +228,7 @@ impl HolePunchMediator {
     /// Start the mediator engine. This will prepare it for the rendezvous. Once rendezvous
     /// information is obtained via the given callback, the user is expected to exchange it out of
     /// band with the peer and begin hole punching by giving the peer's rendezvous information.
-    pub fn start(ifc: &mut Interface, poll: &Poll, f: GetInfo) -> ::Res<()> {
+    pub fn start(ifc: &mut Interface, poll: &Poll, f: GetInfo) -> ::Res<Token> {
         let token = ifc.new_token();
         let dur = ifc
             .config()
@@ -298,7 +301,7 @@ impl HolePunchMediator {
                 return Err(NatError::HolePunchMediatorFailedToStart);
             }
 
-            Ok(())
+            Ok(token)
         }
     }
 
@@ -703,7 +706,7 @@ pub struct Handle {
 
 impl Handle {
     /// Fire hole punch request from a non-event loop thread.
-    pub fn fire_hole_punch(self, peer: RendezvousInfo, f: HolePunchFinsih) {
+    pub fn fire_hole_punch(self, peer: RendezvousInfo, f: HolePunchFinsihCrossThread) {
         let token = self.token;
         if let Err(e) = self.tx.send(NatMsg::new(move |ifc, poll| {
             Handle::start_hole_punch(ifc, poll, token, peer, f)
@@ -751,5 +754,11 @@ impl Drop for Handle {
                 nat_state.borrow_mut().terminate(ifc, poll);
             }
         }));
+    }
+}
+
+impl Debug for Handle {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Handle {{ token: {:?} }}", self.token)
     }
 }

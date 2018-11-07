@@ -17,6 +17,7 @@ use p2p::{
     RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
 };
 use sodium::crypto::box_;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -107,6 +108,10 @@ impl Interface for StateMachine {
 
     fn sender(&self) -> &Sender<NatMsg> {
         &self.tx
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }
 
@@ -257,7 +262,7 @@ fn get_rendezvous_info(el: &El) -> mpsc::Receiver<(NatInfo, Res<(Handle, Rendezv
         let handler = move |_: &mut Interface, _: &Poll, nat_info, res| {
             unwrap!(tx.send((nat_info, res)));
         };
-        unwrap!(HolePunchMediator::start(ifc, poll, Box::new(handler)));
+        let _mediator_token = unwrap!(HolePunchMediator::start(ifc, poll, Box::new(handler)));
     })));
 
     rx

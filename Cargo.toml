@@ -2,7 +2,7 @@
 authors = ["ustulation <ustulation@gmail.com>"]
 description = "NAT Traversal for P2P communication"
 documentation = "https://docs.rs/p2p/"
-license = "GPL-3.0"
+license = "MIT OR BSD-3-Clause"
 name = "p2p"
 readme = "README.md"
 repository = "https://github.com/ustulation/p2p"
@@ -22,7 +22,7 @@ serde_derive = "~1.0.11"
 
 [dependencies.socket-collection]
 #version = "~0.2.0"
-git = "https://github.com/ustulation/socket-collection"
+git = "https://github.com/maidsafe/socket-collection"
 branch = "community-release-1"
 
 [dev-dependencies]
