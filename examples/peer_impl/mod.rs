@@ -1,3 +1,4 @@
+pub use self::active_peer::ActivePeer;
 pub use self::event::Event;
 pub use self::overlay_connect::OverlayConnect;
 
@@ -12,6 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
+mod active_peer;
 mod event;
 mod overlay_connect;
 

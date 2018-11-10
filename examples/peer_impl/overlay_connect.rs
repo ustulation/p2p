@@ -15,7 +15,7 @@ use std::rc::{Rc, Weak};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
-use {Event, PeerState};
+use {ActivePeer, Event, PeerState};
 
 pub struct OverlayConnect {
     token: Token,
@@ -166,7 +166,7 @@ impl OverlayConnect {
             }
         };
 
-        let plaintext = match deserialise::<PlainTextMsg>(&plaintext_ser) {
+        let plaintext = match deserialise(&plaintext_ser) {
             Ok(pt) => pt,
             Err(e) => {
                 info!("Error deserialising: {:?}", e);
@@ -461,8 +461,52 @@ impl OverlayConnect {
         poll: &Poll,
         for_peer: PeerId,
         res: Res<HolePunchInfo>,
-    ) -> bool {
-        unimplemented!()
+    ) {
+        let holepunch_info = match res {
+            Ok(info) => info,
+            Err(e) => {
+                debug!("Could not holepunch to {}: {:?}", for_peer, e);
+                return;
+            }
+        };
+
+        if for_peer.pk != holepunch_info.enc_pk {
+            info!("Keys mismatch. Unexpected behaviour.");
+            return;
+        }
+
+        if holepunch_info.tcp.is_some() {
+            trace!(
+                "Successfully Holepunched via TCP. This example however only continues if UDP \
+                 Holepunch is successful."
+            );
+        } else {
+            trace!("Could not HolePunch via TCP");
+        }
+
+        let udp = match holepunch_info.udp {
+            Some(udp) => {
+                trace!("Successfully Holepunched via UDP: {:?}", udp);
+                udp
+            }
+            None => {
+                debug!(
+                    "Could not HolePunch via UDP. This example however only continues if UDP \
+                     Holepunch is successful."
+                );
+                return;
+            }
+        };
+
+        ActivePeer::start(
+            core,
+            poll,
+            udp.token,
+            udp.sock,
+            for_peer,
+            self.peers.clone(),
+            self.tx.clone(),
+        );
     }
 }
 

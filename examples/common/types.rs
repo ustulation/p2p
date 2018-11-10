@@ -46,6 +46,7 @@ pub enum PlainTextMsg {
         src_info: RendezvousInfo,
         src_peer: PeerId,
     },
+    Chat(String),
 }
 
 #[derive(Serialize, Deserialize)]
