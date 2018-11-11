@@ -30,19 +30,11 @@ pub enum PlainTextMsg {
     UpdateNameResp(bool),
     ReqOnlinePeers,
     OnlinePeersResp(Vec<PeerId>),
-    ReqRendezvousInfo {
+    ExchgRendezvousInfo {
         src_info: RendezvousInfo,
         dst_peer: PeerId,
     },
-    ForwardedRendezvousReq {
-        src_info: RendezvousInfo,
-        src_peer: PeerId,
-    },
-    RendezvousInfoResp {
-        src_info: RendezvousInfo,
-        dst_peer: PeerId,
-    },
-    ForwardedRendezvousResp {
+    FwdRendezvousInfo {
         src_info: RendezvousInfo,
         src_peer: PeerId,
     },

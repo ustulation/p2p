@@ -1,6 +1,7 @@
-use common::event_loop::{Core, CoreState};
+use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
+use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::{
     msg_to_read, msg_to_send, Handle, HolePunchInfo, HolePunchMediator, Interface, NatInfo,
@@ -8,14 +9,19 @@ use p2p::{
 };
 use socket_collection::TcpSock;
 use sodium::crypto::box_;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use std::{fmt, mem};
 use {ActivePeer, Event, PeerState};
+
+const PURGE_EXPIRED_AWAITS_SECS: u64 = 60;
+const TIMER_ID: u8 = 0;
 
 pub struct OverlayConnect {
     token: Token,
@@ -24,6 +30,7 @@ pub struct OverlayConnect {
     state: CurrentState,
     peers: Arc<Mutex<BTreeMap<PeerId, PeerState>>>,
     tx: Sender<Event>,
+    timeout: Timeout,
     self_weak: Weak<RefCell<OverlayConnect>>,
 }
 
@@ -85,12 +92,61 @@ impl OverlayConnect {
             state: Default::default(),
             peers: peers,
             tx,
+            timeout: unwrap!(core.set_core_timeout(
+                Duration::from_secs(PURGE_EXPIRED_AWAITS_SECS),
+                CoreTimer::new(token, TIMER_ID)
+            )),
             self_weak: Default::default(),
         }));
         state.borrow_mut().self_weak = Rc::downgrade(&state);
 
         if core.insert_peer_state(token, state).is_err() {
             panic!("Could not start Overlay !");
+        }
+    }
+
+    pub fn start_connect_with_peer(&mut self, core: &mut Core, poll: &Poll, peer: PeerId) {
+        let mut peers_guard = unwrap!(self.peers.lock());
+        let stored_state = match peers_guard.get_mut(&peer) {
+            Some(peer_state) => peer_state,
+            None => {
+                info!("Peer no longer online for connection.");
+                return;
+            }
+        };
+
+        if let PeerState::Discovered = *stored_state {
+            let weak = self.self_weak.clone();
+            let handler = move |ifc: &mut Interface, poll: &Poll, nat_info, res| {
+                if let Some(overlay_connect) = weak.upgrade() {
+                    if let Some(core) = ifc.as_any().downcast_mut::<Core>() {
+                        overlay_connect.borrow_mut().handle_rendezvous_res(
+                            core,
+                            poll,
+                            peer.clone(),
+                            nat_info,
+                            res,
+                        );
+                    } else {
+                        warn!("Failed to conver Interface to Core");
+                    }
+                }
+            };
+
+            let next_state = match HolePunchMediator::start(core, poll, Box::new(handler)) {
+                Ok(mediator_token) => PeerState::CreatingRendezvousInfo {
+                    mediator_token,
+                    peer_info: None,
+                },
+                Err(e) => {
+                    info!("Could not initialise p2p mediator: {:?}", e);
+                    return;
+                }
+            };
+
+            *stored_state = next_state;
+        } else {
+            info!("Peer already in the process of being connected to.");
         }
     }
 
@@ -181,11 +237,8 @@ impl OverlayConnect {
             PlainTextMsg::OnlinePeersResp(online_peers) => {
                 self.handle_online_peers_resp(core, poll, online_peers)
             }
-            PlainTextMsg::ForwardedRendezvousReq { src_info, src_peer } => {
-                self.handle_exchg_rendezvous(core, poll, src_info, src_peer)
-            }
-            PlainTextMsg::ForwardedRendezvousResp { src_info, src_peer } => {
-                self.handle_exchg_rendezvous(core, poll, src_info, src_peer)
+            PlainTextMsg::FwdRendezvousInfo { src_info, src_peer } => {
+                self.handle_peer_rendezvous(core, poll, src_info, src_peer)
             }
             x => {
                 info!("Invalid PlainTextMsg: {:?}", x);
@@ -260,7 +313,7 @@ impl OverlayConnect {
         }
     }
 
-    fn handle_exchg_rendezvous(
+    fn handle_peer_rendezvous(
         &mut self,
         core: &mut Core,
         poll: &Poll,
@@ -276,7 +329,7 @@ impl OverlayConnect {
         let prev_peer_state = mem::replace(stored_state, Default::default());
 
         let next_state = match prev_peer_state {
-            PeerState::Connected(_) | PeerState::AwaitingHolePunchResult => {
+            PeerState::AwaitingHolePunchResult | PeerState::Connected(_) => {
                 info!(
                     "Got connection request from a connected (or being holepunched to) peer: \
                      {}",
@@ -301,7 +354,7 @@ impl OverlayConnect {
                     peer_info,
                 }
             }
-            PeerState::AwaitingRendezvousResp { p2p_handle } => {
+            PeerState::AwaitingPeerRendezvous { p2p_handle, .. } => {
                 let mediator_token = p2p_handle.mediator_token();
                 let weak = self.self_weak.clone();
                 let handler = move |ifc: &mut Interface, poll: &Poll, res| {
@@ -318,7 +371,7 @@ impl OverlayConnect {
                         }
                     }
                 };
-                Handle::start_hole_punch(core, poll, mediator_token, src_info, Box::new(handler));
+                Handle::start_hole_punch(core, mediator_token, src_info, Box::new(handler));
                 PeerState::AwaitingHolePunchResult
             }
             PeerState::Discovered => {
@@ -368,13 +421,17 @@ impl OverlayConnect {
             Ok(r) => r,
             Err(e) => {
                 debug!("Rendezvous failed for peer: {}", for_peer);
+                let mut peers_guard = unwrap!(self.peers.lock());
+                if let Some(stored_state) = peers_guard.get_mut(&for_peer) {
+                    *stored_state = Default::default();
+                }
                 return true;
             }
         };
 
         let ciphertext = match self.state {
             CurrentState::OverlayActivated { ref key, .. } => {
-                let plaintext_ser = unwrap!(serialise(&PlainTextMsg::ReqRendezvousInfo {
+                let plaintext_ser = unwrap!(serialise(&PlainTextMsg::ExchgRendezvousInfo {
                     src_info: our_info,
                     dst_peer: for_peer.clone()
                 }));
@@ -427,14 +484,16 @@ impl OverlayConnect {
                         };
                         Handle::start_hole_punch(
                             core,
-                            poll,
                             mediator_token,
                             peer_info,
                             Box::new(handler),
                         );
                         PeerState::AwaitingHolePunchResult
                     } else {
-                        PeerState::AwaitingRendezvousResp { p2p_handle }
+                        PeerState::AwaitingPeerRendezvous {
+                            since: Instant::now(),
+                            p2p_handle,
+                        }
                     }
                 }
                 x => {
@@ -466,6 +525,10 @@ impl OverlayConnect {
             Ok(info) => info,
             Err(e) => {
                 debug!("Could not holepunch to {}: {:?}", for_peer, e);
+                let mut peers_guard = unwrap!(self.peers.lock());
+                if let Some(stored_state) = peers_guard.get_mut(&for_peer) {
+                    *stored_state = Default::default();
+                }
                 return;
             }
         };
@@ -538,13 +601,36 @@ impl CoreState for OverlayConnect {
         self.write(core, poll, Some(PeerMsg::CipherText(ciphertext)));
     }
 
+    fn timeout(&mut self, core: &mut Core, poll: &Poll, timer_id: u8) {
+        assert_eq!(timer_id, TIMER_ID);
+
+        {
+            let mut peers_guard = unwrap!(self.peers.lock());
+            peers_guard.values_mut().for_each(|peer_state| {
+                let mut purge = false;
+                if let PeerState::AwaitingPeerRendezvous { ref since, .. } = peer_state {
+                    purge = since.elapsed() >= Duration::from_secs(PURGE_EXPIRED_AWAITS_SECS);
+                }
+
+                if purge {
+                    *peer_state = Default::default();
+                }
+            });
+        }
+
+        self.timeout = unwrap!(core.set_core_timeout(
+            Duration::from_secs(PURGE_EXPIRED_AWAITS_SECS),
+            CoreTimer::new(self.token, TIMER_ID)
+        ));
+    }
+
     fn terminate(&mut self, core: &mut Core, poll: &Poll) {
-        // if let Some(peers) = self.peers.upgrade() {
-        //     if let CurrentState::OverlayActivated { ref name, .. } = self.state {
-        //         let _ = peers.borrow_mut().remove(name);
-        //     }
-        // }
         let _ = poll.deregister(&self.sock);
+        let _ = core.cancel_core_timeout(&self.timeout);
         let _ = core.remove_peer_state(self.token);
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }

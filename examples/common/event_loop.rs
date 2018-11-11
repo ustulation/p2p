@@ -15,7 +15,8 @@ use std::time::Duration;
 pub struct Core {
     nat_states: HashMap<Token, Rc<RefCell<NatState>>>,
     peer_states: HashMap<Token, Rc<RefCell<CoreState>>>,
-    timer: Timer<NatTimer>,
+    core_timer: Timer<CoreTimer>,
+    nat_timer: Timer<NatTimer>,
     token: usize,
     config: Config,
     enc_pk: box_::PublicKey,
@@ -48,13 +49,34 @@ impl Core {
     //     //self.udt_epoll_handle.clone()
     // }
 
-    #[allow(unused)]
     pub fn peer_state(&mut self, token: Token) -> Option<Rc<RefCell<CoreState>>> {
         self.peer_states.get(&token).cloned()
     }
 
+    pub fn set_core_timeout(
+        &mut self,
+        duration: Duration,
+        timer_detail: CoreTimer,
+    ) -> Result<Timeout, TimerError> {
+        self.core_timer.set_timeout(duration, timer_detail)
+    }
+
+    pub fn cancel_core_timeout(&mut self, timeout: &Timeout) -> Option<CoreTimer> {
+        self.core_timer.cancel_timeout(timeout)
+    }
+
+    fn handle_core_timer(&mut self, poll: &Poll) {
+        while let Some(core_timer) = self.core_timer.poll() {
+            if let Some(peer_state) = self.peer_state(core_timer.associated_peer_state) {
+                peer_state
+                    .borrow_mut()
+                    .timeout(self, poll, core_timer.timer_id);
+            }
+        }
+    }
+
     fn handle_nat_timer(&mut self, poll: &Poll) {
-        while let Some(nat_timer) = self.timer.poll() {
+        while let Some(nat_timer) = self.nat_timer.poll() {
             if let Some(nat_state) = self.state(nat_timer.associated_nat_state) {
                 nat_state
                     .borrow_mut()
@@ -100,11 +122,11 @@ impl Interface for Core {
         duration: Duration,
         timer_detail: NatTimer,
     ) -> Result<Timeout, TimerError> {
-        self.timer.set_timeout(duration, timer_detail)
+        self.nat_timer.set_timeout(duration, timer_detail)
     }
 
     fn cancel_timeout(&mut self, timeout: &Timeout) -> Option<NatTimer> {
-        self.timer.cancel_timeout(timeout)
+        self.nat_timer.cancel_timeout(timeout)
     }
 
     fn new_token(&mut self) -> Token {
@@ -135,13 +157,27 @@ impl Interface for Core {
 
 pub trait CoreState {
     fn ready(&mut self, &mut Core, &Poll, Ready);
-    fn terminate(&mut self, &mut Core, &Poll);
     fn write(&mut self, &mut Core, &Poll, Vec<u8>) {}
+    fn timeout(&mut self, &mut Core, &Poll, u8) {}
+    fn terminate(&mut self, &mut Core, &Poll);
+    fn as_any(&mut self) -> &mut Any;
 }
 
+pub struct CoreTimer {
+    pub associated_peer_state: Token,
+    pub timer_id: u8,
+}
+
+impl CoreTimer {
+    pub fn new(associated_peer_state: Token, timer_id: u8) -> Self {
+        CoreTimer {
+            associated_peer_state,
+            timer_id,
+        }
+    }
+}
 pub struct CoreMsg(Option<Box<FnMut(&mut Core, &Poll) + Send + 'static>>);
 impl CoreMsg {
-    #[allow(unused)]
     pub fn new<F: FnOnce(&mut Core, &Poll) + Send + 'static>(f: F) -> Self {
         let mut f = Some(f);
         CoreMsg(Some(Box::new(move |core: &mut Core, poll: &Poll| {
@@ -183,18 +219,26 @@ pub fn spawn_event_loop(p2p_cfg: Config) -> El {
     let core_tx_cloned = core_tx.clone();
 
     let joiner = thread::spawn(move || {
-        const TIMER_TOKEN: usize = 0;
-        const CORE_RX_TOKEN: usize = TIMER_TOKEN + 1;
+        const CORE_TIMER_TOKEN: usize = 0;
+        const NAT_TIMER_TOKEN: usize = CORE_TIMER_TOKEN + 1;
+        const CORE_RX_TOKEN: usize = NAT_TIMER_TOKEN + 1;
         const NAT_RX_TOKEN: usize = CORE_RX_TOKEN + 1;
 
         let poll = unwrap!(Poll::new());
 
         let (enc_pk, enc_sk) = box_::gen_keypair();
-        let timer = Timer::default();
+        let core_timer = Timer::default();
+        let nat_timer = Timer::default();
 
         unwrap!(poll.register(
-            &timer,
-            Token(TIMER_TOKEN),
+            &core_timer,
+            Token(CORE_TIMER_TOKEN),
+            Ready::readable() | Ready::error() | Ready::hup(),
+            PollOpt::edge(),
+        ));
+        unwrap!(poll.register(
+            &nat_timer,
+            Token(NAT_TIMER_TOKEN),
             Ready::readable() | Ready::error() | Ready::hup(),
             PollOpt::edge(),
         ));
@@ -218,7 +262,8 @@ pub fn spawn_event_loop(p2p_cfg: Config) -> El {
         let mut core = Core {
             nat_states: HashMap::with_capacity(10),
             peer_states: HashMap::with_capacity(5),
-            timer: timer,
+            core_timer,
+            nat_timer,
             token: NAT_RX_TOKEN + 1,
             config: p2p_cfg,
             enc_pk: enc_pk,
@@ -234,7 +279,11 @@ pub fn spawn_event_loop(p2p_cfg: Config) -> El {
 
             for event in events.iter() {
                 match event.token() {
-                    Token(t) if t == TIMER_TOKEN => {
+                    Token(t) if t == CORE_TIMER_TOKEN => {
+                        assert!(event.kind().is_readable());
+                        core.handle_core_timer(&poll);
+                    }
+                    Token(t) if t == NAT_TIMER_TOKEN => {
                         assert!(event.kind().is_readable());
                         core.handle_nat_timer(&poll);
                     }

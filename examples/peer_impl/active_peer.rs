@@ -1,16 +1,25 @@
-use common::event_loop::{Core, CoreState};
+use common::event_loop::{Core, CoreState, CoreTimer};
 use common::types::{PeerId, PeerMsg, PlainTextMsg};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
+use mio::timer::Timeout;
 use mio::{Poll, Ready, Token};
 use p2p::{msg_to_read, msg_to_send, Interface};
 use socket_collection::UdpSock;
 use sodium::crypto::box_;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use {Event, PeerState};
+
+const INACTIVITY_TIMEOUT_ID: u8 = 0;
+const TOLERATE_READ_ERRS_ID: u8 = 1;
+
+const INACTIVITY_TIMEOUT_SECS: u64 = 180;
+const TOLERATE_READ_ERRS_SECS: u64 = 60;
 
 pub struct ActivePeer {
     token: Token,
@@ -20,6 +29,9 @@ pub struct ActivePeer {
     peers: Arc<Mutex<BTreeMap<PeerId, PeerState>>>,
     should_buffer: bool,
     chat_buf: Vec<String>,
+    tolerate_read_errs: bool,
+    timeout_inactivity: Timeout,
+    timeout_tolerate_read_errs: Timeout,
     tx: Sender<Event>,
 }
 
@@ -41,22 +53,32 @@ impl ActivePeer {
             peers: peers.clone(),
             should_buffer: true,
             chat_buf: Default::default(),
+            tolerate_read_errs: true,
+            timeout_inactivity: unwrap!(core.set_core_timeout(
+                Duration::from_secs(INACTIVITY_TIMEOUT_SECS),
+                CoreTimer::new(token, INACTIVITY_TIMEOUT_ID)
+            )),
+            timeout_tolerate_read_errs: unwrap!(core.set_core_timeout(
+                Duration::from_secs(TOLERATE_READ_ERRS_SECS),
+                CoreTimer::new(token, TOLERATE_READ_ERRS_ID)
+            )),
             tx: tx.clone(),
         }));
 
-        if let Err(e) = core.insert_peer_state(token, state) {
-            info!("Could not insert peer-state: {:?}", e.1);
-            unwrap!(tx.send(Event::PeerConnectFailed(peer.name)));
+        if let Err((state, e)) = core.insert_peer_state(token, state) {
+            info!("Could not insert peer-state: {:?}", e);
+            state.borrow_mut().terminate(core, poll);
+            unwrap!(tx.send(Event::PeerConnectFailed(peer)));
             return;
         }
 
-        let peer_name = peer.name.clone();
-
         let mut peers_guard = unwrap!(peers.lock());
-        let stored_state = peers_guard.entry(peer).or_insert(Default::default());
+        let stored_state = peers_guard
+            .entry(peer.clone())
+            .or_insert(Default::default());
         *stored_state = PeerState::Connected(token);
 
-        unwrap!(tx.send(Event::PeerConnected(peer_name, token)));
+        unwrap!(tx.send(Event::PeerConnected(peer, token)));
     }
 
     pub fn start_buffering(&mut self) {
@@ -66,7 +88,7 @@ impl ActivePeer {
     pub fn flush_and_stop_buffering(&mut self) {
         self.should_buffer = false;
         for m in self.chat_buf.drain(..) {
-            println!("{}: {}", self.peer, m);
+            println!("{} --> {}", self.peer, m);
         }
     }
 
@@ -86,8 +108,12 @@ impl ActivePeer {
                 Err(e) => {
                     // TODO Make this debug better as such:
                     // debug!("{:?} - Failed to read from sock: {:?}", self.our_id, e);
-                    debug!("Failed to read from sock: {:?}", e);
-                    return self.terminate(core, poll);
+                    if self.tolerate_read_errs {
+                        trace!("Tolerating read error: {:?}", e);
+                    } else {
+                        debug!("Failed to read from sock: {:?}", e);
+                        return self.terminate(core, poll);
+                    }
                 }
             }
         }
@@ -104,32 +130,53 @@ impl ActivePeer {
         let plaintext_ser = match msg_to_read(ciphertext, &self.key) {
             Ok(pt) => pt,
             Err(e) => {
-                debug!("Error decrypting: {:?}", e);
-                return true;
+                return if self.tolerate_read_errs {
+                    trace!("Tolerating error decrypting: {:?}", e);
+                    true
+                } else {
+                    debug!("Error decrypting: {:?}", e);
+                    false
+                };
             }
         };
 
         let plaintext = match deserialise(&plaintext_ser) {
             Ok(pt) => pt,
             Err(e) => {
-                info!("Error deserialising: {:?}", e);
-                return false;
+                return if self.tolerate_read_errs {
+                    trace!("Tolerating error deserialising: {:?}", e);
+                    true
+                } else {
+                    info!("Error deserialising: {:?}", e);
+                    false
+                };
             }
         };
 
         let chat = match plaintext {
             PlainTextMsg::Chat(m) => m,
             x => {
-                info!("Invalid PlainTextMsg: {:?}", x);
-                return false;
+                return if self.tolerate_read_errs {
+                    trace!("Tolerating invalid PlainTextMsg: {:?}", x);
+                    true
+                } else {
+                    info!("Invalid PlainTextMsg: {:?}", x);
+                    false
+                };
             }
         };
 
         if self.should_buffer {
             self.chat_buf.push(chat);
         } else {
-            println!("{}: {}", self.peer, chat);
+            println!("{} --> {}", self.peer, chat);
         }
+
+        let _ = core.cancel_core_timeout(&self.timeout_inactivity);
+        self.timeout_inactivity = unwrap!(core.set_core_timeout(
+            Duration::from_secs(INACTIVITY_TIMEOUT_SECS),
+            CoreTimer::new(self.token, INACTIVITY_TIMEOUT_ID)
+        ));
 
         true
     }
@@ -151,6 +198,19 @@ impl CoreState for ActivePeer {
         self.write(core, poll, Some(PeerMsg::CipherText(ciphertext)));
     }
 
+    fn timeout(&mut self, core: &mut Core, poll: &Poll, timer_id: u8) {
+        if timer_id == INACTIVITY_TIMEOUT_ID {
+            trace!(
+                "Peer inactive for {} secs. Terminating..",
+                INACTIVITY_TIMEOUT_SECS
+            );
+            return self.terminate(core, poll);
+        }
+
+        assert_eq!(timer_id, TOLERATE_READ_ERRS_ID);
+        self.tolerate_read_errs = false;
+    }
+
     fn terminate(&mut self, core: &mut Core, poll: &Poll) {
         let mut peers_guard = unwrap!(self.peers.lock());
         if let Some(stored_state) = peers_guard.get_mut(&self.peer) {
@@ -159,5 +219,11 @@ impl CoreState for ActivePeer {
 
         let _ = core.remove_peer_state(self.token);
         let _ = poll.deregister(&self.sock);
+
+        let _ = self.tx.send(Event::PeerDisconnected(self.peer.clone()));
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }

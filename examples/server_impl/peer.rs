@@ -5,6 +5,7 @@ use mio::{Poll, PollOpt, Ready, Token};
 use p2p::{msg_to_read, msg_to_send, Interface, RendezvousInfo};
 use socket_collection::TcpSock;
 use sodium::crypto::box_;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
@@ -154,11 +155,8 @@ impl Peer {
         match plaintext {
             PlainTextMsg::ReqUpdateName(name) => self.handle_update_name(core, poll, name),
             PlainTextMsg::ReqOnlinePeers => self.handle_req_online_peers(core, poll),
-            PlainTextMsg::ReqRendezvousInfo { src_info, dst_peer } => {
-                self.forward_rendezvous_impl(core, poll, src_info, dst_peer, true)
-            }
-            PlainTextMsg::RendezvousInfoResp { src_info, dst_peer } => {
-                self.forward_rendezvous_impl(core, poll, src_info, dst_peer, false)
+            PlainTextMsg::ExchgRendezvousInfo { src_info, dst_peer } => {
+                self.forward_rendezvous_impl(core, poll, src_info, dst_peer)
             }
             x => {
                 info!("Invalid PlainTextMsg: {:?}", x);
@@ -248,7 +246,6 @@ impl Peer {
         poll: &Poll,
         src_info: RendezvousInfo,
         dst_peer: PeerId,
-        is_request: bool,
     ) -> bool {
         let src_peer = match self.state {
             CurrentState::PeerActivated { ref id, .. } => id.clone(),
@@ -282,11 +279,7 @@ impl Peer {
             }
         };
 
-        let fwd_info = if is_request {
-            PlainTextMsg::ForwardedRendezvousReq { src_info, src_peer }
-        } else {
-            PlainTextMsg::ForwardedRendezvousResp { src_info, src_peer }
-        };
+        let fwd_info = PlainTextMsg::FwdRendezvousInfo { src_info, src_peer };
 
         let fwd_info_ser = unwrap!(serialise(&fwd_info));
         dst_peer_state.borrow_mut().write(core, poll, fwd_info_ser);
@@ -325,5 +318,9 @@ impl CoreState for Peer {
         }
         let _ = poll.deregister(&self.sock);
         let _ = core.remove_peer_state(self.token);
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }

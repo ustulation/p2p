@@ -5,6 +5,7 @@ use mio::{Poll, PollOpt, Ready, Token};
 use p2p::Interface;
 use socket_collection::TcpSock;
 use sodium::crypto::box_;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
@@ -79,5 +80,9 @@ impl CoreState for Overlay {
     fn terminate(&mut self, core: &mut Core, poll: &Poll) {
         let _ = poll.deregister(&self.l);
         let _ = core.remove_peer_state(self.token);
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }

@@ -708,8 +708,8 @@ impl Handle {
     /// Fire hole punch request from a non-event loop thread.
     pub fn fire_hole_punch(self, peer: RendezvousInfo, f: HolePunchFinsihCrossThread) {
         let token = self.token;
-        if let Err(e) = self.tx.send(NatMsg::new(move |ifc, poll| {
-            Handle::start_hole_punch(ifc, poll, token, peer, f)
+        if let Err(e) = self.tx.send(NatMsg::new(move |ifc, _| {
+            Handle::start_hole_punch(ifc, token, peer, f)
         })) {
             debug!("Could not fire hole punch request: {:?}", e);
         } else {
@@ -720,22 +720,11 @@ impl Handle {
     /// Request hole punch from within the event loop thread.
     pub fn start_hole_punch(
         ifc: &mut Interface,
-        poll: &Poll,
         hole_punch_mediator: Token,
         peer: RendezvousInfo,
-        mut f: HolePunchFinsih,
+        f: HolePunchFinsih,
     ) {
-        if let Some(nat_state) = ifc.state(hole_punch_mediator) {
-            let mut state = nat_state.borrow_mut();
-            let mediator = match state.as_any().downcast_mut::<HolePunchMediator>() {
-                Some(m) => m,
-                None => {
-                    debug!("Token has some other state mapped, not HolePunchMediator");
-                    return f(ifc, poll, Err(NatError::InvalidState));
-                }
-            };
-            mediator.punch_hole(ifc, poll, peer, f);
-        }
+        QueueReq::start(ifc, hole_punch_mediator, peer, f);
     }
 
     /// Obtain the token associated with the HolePunchMediator to which this is a handle.
@@ -760,5 +749,86 @@ impl Drop for Handle {
 impl Debug for Handle {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Handle {{ token: {:?} }}", self.token)
+    }
+}
+
+struct QueueReq {
+    token: Token,
+    inner: Option<QueueReqInner>,
+}
+
+struct QueueReqInner {
+    hole_punch_mediator: Token,
+    peer: RendezvousInfo,
+    f: HolePunchFinsih,
+}
+
+impl QueueReq {
+    fn start(
+        ifc: &mut Interface,
+        hole_punch_mediator: Token,
+        peer: RendezvousInfo,
+        f: HolePunchFinsih,
+    ) {
+        let token = ifc.new_token();
+        let state = Rc::new(RefCell::new(Self {
+            token,
+            inner: Some(QueueReqInner {
+                hole_punch_mediator,
+                peer,
+                f,
+            }),
+        }));
+
+        if let Err((_, e)) = ifc.insert_state(token, state) {
+            // Cannot terminate mediator as it could be already borrowed - must be queued but the
+            // queuing has failed.
+            warn!("Could not insert state: {:?}. This will leak mediator.", e);
+        }
+
+        let _ = ifc.sender().send(NatMsg::new(move |ifc, poll| {
+            if let Some(state) = ifc.state(token) {
+                state.borrow_mut().terminate(ifc, poll);
+            } else {
+                warn!("No QueueReq state found. This will leak mediator.");
+            }
+        }));
+    }
+}
+
+impl NatState for QueueReq {
+    fn terminate(&mut self, ifc: &mut Interface, poll: &Poll) {
+        let _ = ifc.remove_state(self.token);
+
+        let QueueReqInner {
+            hole_punch_mediator,
+            peer,
+            mut f,
+        } = if let Some(i) = self.inner.take() {
+            i
+        } else {
+            info!("Logic Error! Callback must be stored.");
+            if let Some(nat_state) = ifc.state(self.token) {
+                nat_state.borrow_mut().terminate(ifc, poll);
+            }
+
+            return;
+        };
+
+        if let Some(nat_state) = ifc.state(hole_punch_mediator) {
+            let mut state = nat_state.borrow_mut();
+            let mediator = match state.as_any().downcast_mut::<HolePunchMediator>() {
+                Some(m) => m,
+                None => {
+                    debug!("Token has some other state mapped, not HolePunchMediator");
+                    return f(ifc, poll, Err(NatError::InvalidState));
+                }
+            };
+            mediator.punch_hole(ifc, poll, peer, f);
+        }
+    }
+
+    fn as_any(&mut self) -> &mut Any {
+        self
     }
 }
