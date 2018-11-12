@@ -6,7 +6,7 @@ license = "MIT OR BSD-3-Clause"
 name = "p2p"
 readme = "README.md"
 repository = "https://github.com/ustulation/p2p"
-version = "0.4.6"
+version = "0.6.0"
 
 [dependencies]
 bincode = "~0.8.0"
@@ -21,9 +21,9 @@ serde = "~1.0.11"
 serde_derive = "~1.0.11"
 
 [dependencies.socket-collection]
-#version = "~0.2.0"
-git = "https://github.com/maidsafe/socket-collection"
-branch = "community-release-1"
+version = "~0.3.0"
+#git = "https://github.com/maidsafe/socket-collection"
+#branch = "community-release-1"
 
 [dev-dependencies]
 env_logger = "~0.5.13"
@@ -31,5 +31,5 @@ maidsafe_utilities = "~0.15.0"
 serde_json = "~1.0.2"
 unwrap = "~1.1.0"
 
-[features]
-enable-udt = ["socket-collection/enable-udt"]
+#[features]
+#enable-udt = ["socket-collection/enable-udt"]
