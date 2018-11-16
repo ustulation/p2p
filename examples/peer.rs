@@ -4,6 +4,7 @@
 extern crate log;
 extern crate maidsafe_utilities;
 extern crate mio;
+extern crate mio_extras;
 extern crate p2p;
 extern crate rust_sodium as sodium;
 extern crate serde;

@@ -280,10 +280,7 @@ impl UdpHolePunchMediator {
             return Err(NatError::UdpHolePunchFailed);
         }
 
-        self.state = State::HolePunching {
-            children: children,
-            f,
-        };
+        self.state = State::HolePunching { children, f };
 
         Ok(())
     }

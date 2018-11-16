@@ -1,5 +1,5 @@
-use mio::timer::Timeout;
 use mio::{Poll, PollOpt, Ready, Token};
+use mio_extras::timer::Timeout;
 use socket_collection::UdpSock;
 use sodium::crypto::box_;
 use std::any::Any;
@@ -61,24 +61,17 @@ impl Puncher {
         f: Finish,
     ) -> ::Res<()> {
         let os_ttl = sock.ttl()?;
-        let starting_ttl = starting_ttl as u32;
+        let starting_ttl = u32::from(starting_ttl);
         sock.set_ttl(starting_ttl)?;
         sock.connect(&peer).map_err(|e| {
             debug!("Error: Failed to connect UDP Puncher: {:?}", e);
             e
         })?;
 
-        let timeout = match ifc.set_timeout(
+        let timeout = ifc.set_timeout(
             Duration::from_millis(ttl_inc_interval_ms),
             NatTimer::new(token, TIMER_ID),
-        ) {
-            Ok(timeout) => timeout,
-            Err(e) => {
-                debug!("Error: UdpPuncher errored in setting timeout: {:?}", e);
-                let _ = poll.deregister(&sock);
-                return Err(From::from(e));
-            }
-        };
+        );
 
         if let Err(e) = poll.reregister(
             &sock,
@@ -92,7 +85,7 @@ impl Puncher {
         }
 
         let puncher = Rc::new(RefCell::new(Puncher {
-            token: token,
+            token,
             sock,
             peer,
             peer_enc_pk: *peer_enc_pk,
@@ -299,16 +292,10 @@ impl NatState for Puncher {
             warn!("{} Invalid Timer ID: {}", self, timer_id);
         }
 
-        self.timeout = match ifc.set_timeout(
+        self.timeout = ifc.set_timeout(
             Duration::from_millis(self.ttl_inc_interval_ms),
             NatTimer::new(self.token, TIMER_ID),
-        ) {
-            Ok(t) => t,
-            Err(e) => {
-                debug!("{} Error in setting timeout: {:?}", self, e);
-                return self.handle_err(ifc, poll);
-            }
-        };
+        );
 
         // If we have got an incoming message we would have had set current to the os value so
         // keep it at that, else do the usual incrementing.

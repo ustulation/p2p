@@ -35,7 +35,7 @@ impl Listener {
         )?;
 
         let listener = Rc::new(RefCell::new(Listener {
-            token: token,
+            token,
             listener: l,
             peer_enc_key: *peer_enc_key,
             commenced_at: Instant::now(),

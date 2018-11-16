@@ -1,5 +1,4 @@
 use bincode;
-use mio::timer::TimerError;
 use socket_collection;
 use std::io;
 
@@ -9,13 +8,6 @@ quick_error! {
     pub enum NatError {
         /// Io Error
         Io(e: io::Error) {
-            description(e.description())
-            display("{}", e)
-            cause(e)
-            from()
-        }
-        /// Timer error
-        Timer(e: TimerError) {
             description(e.description())
             display("{}", e)
             cause(e)

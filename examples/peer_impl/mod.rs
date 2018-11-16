@@ -10,7 +10,7 @@ use maidsafe_utilities::thread::{self, Joiner};
 use mio::Token;
 use p2p::{Config, Handle, RendezvousInfo};
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
@@ -224,7 +224,7 @@ pub fn entry_point() {
             if let Some(token) = found_peer {
                 let (tx, rx) = mpsc::channel();
                 let tx_clone = tx.clone();
-                unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
+                unwrap!(el.core_tx.send(CoreMsg::new(move |core, _poll| {
                     let peer = unwrap!(core.peer_state(token));
                     let mut peer = peer.borrow_mut();
                     let active_peer = unwrap!(peer.as_any().downcast_mut::<ActivePeer>());
@@ -237,7 +237,7 @@ pub fn entry_point() {
                 let disconnected = start_chat(&el, token);
 
                 if !disconnected {
-                    unwrap!(el.core_tx.send(CoreMsg::new(move |core, poll| {
+                    unwrap!(el.core_tx.send(CoreMsg::new(move |core, _poll| {
                         let peer = unwrap!(core.peer_state(token));
                         let mut peer = peer.borrow_mut();
                         let active_peer = unwrap!(peer.as_any().downcast_mut::<ActivePeer>());

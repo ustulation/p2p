@@ -4,7 +4,6 @@ use mio::net::TcpListener;
 use mio::{Poll, PollOpt, Ready, Token};
 use p2p::Interface;
 use socket_collection::TcpSock;
-use sodium::crypto::box_;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;

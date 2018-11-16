@@ -101,7 +101,7 @@ impl TcpHolePunchMediator {
                 if let Some(mediator) = weak_cloned.upgrade() {
                     mediator
                         .borrow_mut()
-                        .handle_rendezvous(ifc, poll, child, res);
+                        .handle_rendezvous(ifc, poll, child, &res);
                 }
             };
 
@@ -117,7 +117,7 @@ impl TcpHolePunchMediator {
             mediator.borrow_mut().state = State::Rendezvous {
                 children: rendezvous_children,
                 info: (addr, Vec::with_capacity(n)),
-                f: f,
+                f,
             };
 
             Ok(mediator)
@@ -129,7 +129,7 @@ impl TcpHolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         child: Token,
-        res: ::Res<SocketAddr>,
+        res: &::Res<SocketAddr>,
     ) {
         let r = match self.state {
             State::Rendezvous {
@@ -139,7 +139,7 @@ impl TcpHolePunchMediator {
             } => {
                 let _ = children.remove(&child);
                 if let Ok(ext_addr) = res {
-                    info.1.push(ext_addr);
+                    info.1.push(*ext_addr);
                 }
                 if children.is_empty() {
                     let ext_addrs = mem::replace(&mut info.1, vec![]);
@@ -217,8 +217,9 @@ impl TcpHolePunchMediator {
                 is_err = true;
                 break;
             } else if port_prediction_offset == 0 {
-                port_prediction_offset = addr.port() as i32 - ext_addr.port() as i32;
-            } else if port_prediction_offset != addr.port() as i32 - ext_addr.port() as i32 {
+                port_prediction_offset = i32::from(addr.port()) - i32::from(ext_addr.port());
+            } else if port_prediction_offset != i32::from(addr.port()) - i32::from(ext_addr.port())
+            {
                 info!(
                     "Symmetric NAT with non-uniformly changing port mapping detected. No logic \
                      for Tcp external address prediction for these circumstances!"
@@ -236,7 +237,7 @@ impl TcpHolePunchMediator {
         }
 
         let port = ext_addr.port();
-        ext_addr.set_port((port as i32 + port_prediction_offset) as u16);
+        ext_addr.set_port((i32::from(port) + port_prediction_offset) as u16);
         trace!("Our ext addr by Tcp Rendezvous Client: {}", ext_addr);
 
         *nat_type = if port_prediction_offset == 0 {
@@ -296,7 +297,7 @@ impl TcpHolePunchMediator {
             }
         };
         let via = Via::Connect {
-            our_addr: our_addr,
+            our_addr,
             peer_addr: peer,
         };
         if let Ok(child) = Puncher::start(ifc, poll, via, peer_enc_pk, Box::new(handler)) {
@@ -321,10 +322,7 @@ impl TcpHolePunchMediator {
             return Err(NatError::TcpHolePunchFailed);
         }
 
-        self.state = State::HolePunching {
-            children: children,
-            f: f,
-        };
+        self.state = State::HolePunching { children, f };
 
         Ok(())
     }

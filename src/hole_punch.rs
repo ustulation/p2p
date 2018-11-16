@@ -1,7 +1,7 @@
 use config::{HOLE_PUNCH_TIMEOUT_SEC, HOLE_PUNCH_WAIT_FOR_OTHER, RENDEZVOUS_TIMEOUT_SEC};
-use mio::channel::Sender;
-use mio::timer::Timeout;
 use mio::{Poll, Token};
+use mio_extras::channel::Sender;
+use mio_extras::timer::Timeout;
 use socket_collection::{TcpSock, UdpSock};
 use sodium::crypto::box_;
 use std::any::Any;
@@ -184,6 +184,7 @@ impl Default for HolePunchInfo {
 
 const TIMER_ID: u8 = 0;
 
+#[cfg_attr(feature = "cargo-clippy", allow(large_enum_variant))]
 enum State {
     None,
     Rendezvous {
@@ -234,7 +235,7 @@ impl HolePunchMediator {
             .config()
             .rendezvous_timeout_sec
             .unwrap_or(RENDEZVOUS_TIMEOUT_SEC);
-        let timeout = ifc.set_timeout(Duration::from_secs(dur), NatTimer::new(token, TIMER_ID))?;
+        let timeout = ifc.set_timeout(Duration::from_secs(dur), NatTimer::new(token, TIMER_ID));
 
         let mediator = Rc::new(RefCell::new(HolePunchMediator {
             token,
@@ -267,7 +268,7 @@ impl HolePunchMediator {
             if let Some(mediator) = weak_cloned.upgrade() {
                 mediator
                     .borrow_mut()
-                    .handle_tcp_rendezvous(ifc, poll, nat_type, res);
+                    .handle_tcp_rendezvous(ifc, poll, nat_type, &res);
             }
         };
 
@@ -287,8 +288,8 @@ impl HolePunchMediator {
                 m.state = State::Rendezvous {
                     info: RendezvousInfo::with_key(ifc.enc_pk()),
                     nat_info: Default::default(),
-                    timeout: timeout,
-                    f: f,
+                    timeout,
+                    f,
                 };
                 m.udp_child = udp_child;
                 m.tcp_child = tcp_child;
@@ -336,7 +337,7 @@ impl HolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         nat_type: NatType,
-        res: ::Res<SocketAddr>,
+        res: &::Res<SocketAddr>,
     ) {
         if let State::Rendezvous {
             ref mut info,
@@ -345,7 +346,7 @@ impl HolePunchMediator {
         } = self.state
         {
             if let Ok(ext_addr) = res {
-                info.tcp = Some(ext_addr);
+                info.tcp = Some(*ext_addr);
             } else {
                 self.tcp_child = None;
             }
@@ -428,16 +429,10 @@ impl HolePunchMediator {
             .config()
             .hole_punch_timeout_sec
             .unwrap_or(HOLE_PUNCH_TIMEOUT_SEC);
-        let timeout = match ifc.set_timeout(
+        let timeout = ifc.set_timeout(
             Duration::from_secs(dur),
             NatTimer::new(self.token, TIMER_ID),
-        ) {
-            Ok(t) => t,
-            Err(e) => {
-                debug!("Terminating punch hole due to error in timer: {:?}", e);
-                return self.terminate(ifc, poll);
-            }
-        };
+        );
 
         let peer_enc_pk = box_::PublicKey(peer.enc_pk);
 
@@ -492,8 +487,8 @@ impl HolePunchMediator {
 
         self.state = State::HolePunching {
             info: HolePunchInfo::with_key(peer_enc_pk),
-            timeout: timeout,
-            f: f,
+            timeout,
+            f,
         };
     }
 
@@ -618,7 +613,7 @@ impl NatState for HolePunchMediator {
                     match tcp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
                         // It has already gone to the next state, ignore it
                         NatError::InvalidState => (),
-                        e => self.handle_tcp_rendezvous(ifc, poll, Default::default(), Err(e)),
+                        e => self.handle_tcp_rendezvous(ifc, poll, Default::default(), &Err(e)),
                     }
                 }
 
