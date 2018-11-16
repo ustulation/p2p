@@ -53,9 +53,9 @@ impl UdpRendezvousClient {
         )?;
 
         let client = Rc::new(RefCell::new(UdpRendezvousClient {
-            sock: sock,
-            token: token,
-            servers: servers,
+            sock,
+            token,
+            servers,
             on_first_write_triggered: Some(server),
             our_ext_addrs: Vec::with_capacity(num_servers),
             f,
@@ -158,8 +158,9 @@ impl UdpRendezvousClient {
                 is_err = true;
                 break;
             } else if addrs.len() == 2 {
-                port_prediction_offset = addr.port() as i32 - ext_addr.port() as i32;
-            } else if port_prediction_offset != addr.port() as i32 - ext_addr.port() as i32 {
+                port_prediction_offset = i32::from(addr.port()) - i32::from(ext_addr.port());
+            } else if port_prediction_offset != i32::from(addr.port()) - i32::from(ext_addr.port())
+            {
                 warn!(
                     "Symmetric NAT with non-uniformly changing port mapping detected. No logic \
                      for Udp external address prediction for these circumstances!"
@@ -177,7 +178,7 @@ impl UdpRendezvousClient {
         }
 
         let port = ext_addr.port();
-        ext_addr.set_port((port as i32 + port_prediction_offset) as u16);
+        ext_addr.set_port((i32::from(port) + port_prediction_offset) as u16);
         trace!("Our ext addr by Udp Rendezvous Client: {}", ext_addr);
 
         nat_type = if port_prediction_offset == 0 {
@@ -196,7 +197,7 @@ impl UdpRendezvousClient {
             ifc,
             poll,
             self.token,
-            nat_type.unwrap_or(Default::default()),
+            nat_type.unwrap_or_default(),
             Err(NatError::UdpRendezvousFailed),
         );
     }

@@ -184,6 +184,7 @@ impl Default for HolePunchInfo {
 
 const TIMER_ID: u8 = 0;
 
+#[cfg_attr(feature = "cargo-clippy", allow(large_enum_variant))]
 enum State {
     None,
     Rendezvous {
@@ -267,7 +268,7 @@ impl HolePunchMediator {
             if let Some(mediator) = weak_cloned.upgrade() {
                 mediator
                     .borrow_mut()
-                    .handle_tcp_rendezvous(ifc, poll, nat_type, res);
+                    .handle_tcp_rendezvous(ifc, poll, nat_type, &res);
             }
         };
 
@@ -287,8 +288,8 @@ impl HolePunchMediator {
                 m.state = State::Rendezvous {
                     info: RendezvousInfo::with_key(ifc.enc_pk()),
                     nat_info: Default::default(),
-                    timeout: timeout,
-                    f: f,
+                    timeout,
+                    f,
                 };
                 m.udp_child = udp_child;
                 m.tcp_child = tcp_child;
@@ -336,7 +337,7 @@ impl HolePunchMediator {
         ifc: &mut Interface,
         poll: &Poll,
         nat_type: NatType,
-        res: ::Res<SocketAddr>,
+        res: &::Res<SocketAddr>,
     ) {
         if let State::Rendezvous {
             ref mut info,
@@ -345,7 +346,7 @@ impl HolePunchMediator {
         } = self.state
         {
             if let Ok(ext_addr) = res {
-                info.tcp = Some(ext_addr);
+                info.tcp = Some(*ext_addr);
             } else {
                 self.tcp_child = None;
             }
@@ -486,8 +487,8 @@ impl HolePunchMediator {
 
         self.state = State::HolePunching {
             info: HolePunchInfo::with_key(peer_enc_pk),
-            timeout: timeout,
-            f: f,
+            timeout,
+            f,
         };
     }
 
@@ -612,7 +613,7 @@ impl NatState for HolePunchMediator {
                     match tcp_child.borrow_mut().rendezvous_timeout(ifc, poll) {
                         // It has already gone to the next state, ignore it
                         NatError::InvalidState => (),
-                        e => self.handle_tcp_rendezvous(ifc, poll, Default::default(), Err(e)),
+                        e => self.handle_tcp_rendezvous(ifc, poll, Default::default(), &Err(e)),
                     }
                 }
 

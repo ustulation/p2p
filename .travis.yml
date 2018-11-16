@@ -29,7 +29,8 @@ script:
   - if [ "${TRAVIS_OS_NAME}" = linux ]; then
         (
             set -x;
-            printf "Clippy disabled for now -> cargo clippy --profile=test\n";
+            cargo clippy --verbose --release &&
+            cargo clippy --verbose --release --profile=test ;
         )
     fi
 before_cache:

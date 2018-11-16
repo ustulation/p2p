@@ -334,7 +334,7 @@ impl NatTimer {
     pub fn new(state: Token, timer_id: u8) -> Self {
         NatTimer {
             associated_nat_state: state,
-            timer_id: timer_id,
+            timer_id,
         }
     }
 }

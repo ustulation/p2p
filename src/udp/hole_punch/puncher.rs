@@ -61,7 +61,7 @@ impl Puncher {
         f: Finish,
     ) -> ::Res<()> {
         let os_ttl = sock.ttl()?;
-        let starting_ttl = starting_ttl as u32;
+        let starting_ttl = u32::from(starting_ttl);
         sock.set_ttl(starting_ttl)?;
         sock.connect(&peer).map_err(|e| {
             debug!("Error: Failed to connect UDP Puncher: {:?}", e);
@@ -85,7 +85,7 @@ impl Puncher {
         }
 
         let puncher = Rc::new(RefCell::new(Puncher {
-            token: token,
+            token,
             sock,
             peer,
             peer_enc_pk: *peer_enc_pk,
