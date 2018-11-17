@@ -106,6 +106,10 @@ quick_error! {
             description("Invalid state - the state may already be active or is an operation is not \
                         supposed to be permitted for this state")
         }
+        /// Notifier has expired (possibly already used for notification)
+        NotifierExpired {
+            description("Notifier has expired (possibly already used for notification)")
+        }
         /// Socket is not available
         UnregisteredSocket {
             description("Socket is not available")

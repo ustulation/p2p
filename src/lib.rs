@@ -273,6 +273,8 @@ extern crate log;
 extern crate quick_error;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate unwrap;
 
 extern crate bincode;
 extern crate mio;
@@ -296,6 +298,7 @@ pub mod config;
 
 mod error;
 mod hole_punch;
+mod queued_notifier;
 mod tcp;
 mod udp;
 
@@ -305,6 +308,7 @@ pub use hole_punch::{
     GetInfo, Handle, HolePunchFinsih, HolePunchInfo, HolePunchMediator, NatInfo, NatType,
     RendezvousInfo, TcpHolePunchInfo, UdpHolePunchInfo,
 };
+pub use queued_notifier::QueuedNotifier;
 pub use tcp::TcpRendezvousServer;
 pub use udp::UdpRendezvousServer;
 

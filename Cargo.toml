@@ -20,6 +20,7 @@ rand = "~0.3.16"
 rust_sodium = "~0.5.0"
 serde = "~1.0.11"
 serde_derive = "~1.0.11"
+unwrap = "~1.1.0"
 
 [dependencies.socket-collection]
 version = "~0.3.0"
@@ -30,7 +31,6 @@ version = "~0.3.0"
 env_logger = "~0.5.13"
 maidsafe_utilities = "~0.15.0"
 serde_json = "~1.0.2"
-unwrap = "~1.1.0"
 
 #[features]
 #enable-udt = ["socket-collection/enable-udt"]

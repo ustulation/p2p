@@ -13,7 +13,7 @@ use mio_extras::channel::{self, Sender};
 use mio_extras::timer::{Timeout, Timer};
 use p2p::{
     Config, Handle, HolePunchMediator, Interface, NatInfo, NatMsg, NatState, NatTimer, NatType,
-    RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
+    QueuedNotifier, RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
 };
 use sodium::crypto::box_;
 use std::any::Any;
@@ -254,10 +254,14 @@ fn start_rendezvous_servers() -> Vec<El> {
 fn get_rendezvous_info(el: &El) -> mpsc::Receiver<(NatInfo, Res<(Handle, RendezvousInfo)>)> {
     let (tx, rx) = mpsc::channel();
     unwrap!(el.nat_tx.send(NatMsg::new(move |ifc, poll| {
-        let handler = move |_: &mut Interface, _: &Poll, nat_info, res| {
+        let handler = move |_: &mut Interface, _: &Poll, (nat_info, res)| {
             unwrap!(tx.send((nat_info, res)));
         };
-        let _mediator_token = unwrap!(HolePunchMediator::start(ifc, poll, Box::new(handler)));
+        let _mediator_token = unwrap!(HolePunchMediator::start(
+            ifc,
+            poll,
+            QueuedNotifier::new(handler)
+        ));
     })));
 
     rx
@@ -327,47 +331,29 @@ fn nat_traverse_among_3_peers() {
 
     // NAT Traverse in parallel
     let (hole_punch_tx01, hole_punch_rx01) = mpsc::channel();
-    handle01.fire_hole_punch(
-        rendezvous_info10,
-        Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx01.send(res));
-        }),
-    );
+    handle01.fire_hole_punch(rendezvous_info10, move |_, _, res| {
+        unwrap!(hole_punch_tx01.send(res));
+    });
     let (hole_punch_tx02, hole_punch_rx02) = mpsc::channel();
-    handle02.fire_hole_punch(
-        rendezvous_info20,
-        Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx02.send(res));
-        }),
-    );
+    handle02.fire_hole_punch(rendezvous_info20, move |_, _, res| {
+        unwrap!(hole_punch_tx02.send(res));
+    });
     let (hole_punch_tx10, hole_punch_rx10) = mpsc::channel();
-    handle10.fire_hole_punch(
-        rendezvous_info01,
-        Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx10.send(res));
-        }),
-    );
+    handle10.fire_hole_punch(rendezvous_info01, move |_, _, res| {
+        unwrap!(hole_punch_tx10.send(res));
+    });
     let (hole_punch_tx12, hole_punch_rx12) = mpsc::channel();
-    handle12.fire_hole_punch(
-        rendezvous_info21,
-        Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx12.send(res));
-        }),
-    );
+    handle12.fire_hole_punch(rendezvous_info21, move |_, _, res| {
+        unwrap!(hole_punch_tx12.send(res));
+    });
     let (hole_punch_tx20, hole_punch_rx20) = mpsc::channel();
-    handle20.fire_hole_punch(
-        rendezvous_info02,
-        Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx20.send(res));
-        }),
-    );
+    handle20.fire_hole_punch(rendezvous_info02, move |_, _, res| {
+        unwrap!(hole_punch_tx20.send(res));
+    });
     let (hole_punch_tx21, hole_punch_rx21) = mpsc::channel();
-    handle21.fire_hole_punch(
-        rendezvous_info12,
-        Box::new(move |_, _, res| {
-            unwrap!(hole_punch_tx21.send(res));
-        }),
-    );
+    handle21.fire_hole_punch(rendezvous_info12, move |_, _, res| {
+        unwrap!(hole_punch_tx21.send(res));
+    });
 
     let hole_punch_info01 = unwrap!(unwrap!(hole_punch_rx01.recv()));
     let hole_punch_info02 = unwrap!(unwrap!(hole_punch_rx02.recv()));

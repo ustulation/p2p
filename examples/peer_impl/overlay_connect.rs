@@ -5,7 +5,7 @@ use mio::{Poll, PollOpt, Ready, Token};
 use mio_extras::timer::Timeout;
 use p2p::{
     msg_to_read, msg_to_send, Handle, HolePunchInfo, HolePunchMediator, Interface, NatInfo,
-    RendezvousInfo, Res,
+    QueuedNotifier, RendezvousInfo, Res,
 };
 use socket_collection::TcpSock;
 use sodium::crypto::box_;
@@ -117,32 +117,29 @@ impl OverlayConnect {
 
         if let PeerState::Discovered = *stored_state {
             let weak = self.self_weak.clone();
-            let handler = move |ifc: &mut Interface, poll: &Poll, nat_info, res| {
+            let handler = move |ifc: &mut Interface, poll: &Poll, (nat_info, res)| {
                 if let Some(overlay_connect) = weak.upgrade() {
                     if let Some(core) = ifc.as_any().downcast_mut::<Core>() {
-                        overlay_connect.borrow_mut().handle_rendezvous_res(
-                            core,
-                            poll,
-                            peer.clone(),
-                            nat_info,
-                            res,
-                        );
+                        overlay_connect
+                            .borrow_mut()
+                            .handle_rendezvous_res(core, poll, peer, nat_info, res);
                     } else {
                         warn!("Failed to conver Interface to Core");
                     }
                 }
             };
 
-            let next_state = match HolePunchMediator::start(core, poll, Box::new(handler)) {
-                Ok(mediator_token) => PeerState::CreatingRendezvousInfo {
-                    mediator_token,
-                    peer_info: None,
-                },
-                Err(e) => {
-                    info!("Could not initialise p2p mediator: {:?}", e);
-                    return;
-                }
-            };
+            let next_state =
+                match HolePunchMediator::start(core, poll, QueuedNotifier::new(handler)) {
+                    Ok(mediator_token) => PeerState::CreatingRendezvousInfo {
+                        mediator_token,
+                        peer_info: None,
+                    },
+                    Err(e) => {
+                        info!("Could not initialise p2p mediator: {:?}", e);
+                        return;
+                    }
+                };
 
             *stored_state = next_state;
         } else {
@@ -360,38 +357,37 @@ impl OverlayConnect {
                 let handler = move |ifc: &mut Interface, poll: &Poll, res| {
                     if let Some(overlay_connect) = weak.upgrade() {
                         if let Some(core) = ifc.as_any().downcast_mut::<Core>() {
-                            overlay_connect.borrow_mut().handle_holepunch_res(
-                                core,
-                                poll,
-                                src_peer.clone(),
-                                res,
-                            );
+                            overlay_connect
+                                .borrow_mut()
+                                .handle_holepunch_res(core, poll, src_peer, res);
                         } else {
                             warn!("Failed to conver Interface to Core");
                         }
                     }
                 };
-                Handle::start_hole_punch(core, mediator_token, src_info, Box::new(handler));
+                Handle::start_hole_punch(
+                    core,
+                    poll,
+                    mediator_token,
+                    src_info,
+                    QueuedNotifier::new(handler),
+                );
                 PeerState::AwaitingHolePunchResult
             }
             PeerState::Discovered => {
                 let weak = self.self_weak.clone();
-                let handler = move |ifc: &mut Interface, poll: &Poll, nat_info, res| {
+                let handler = move |ifc: &mut Interface, poll: &Poll, (nat_info, res)| {
                     if let Some(overlay_connect) = weak.upgrade() {
                         if let Some(core) = ifc.as_any().downcast_mut::<Core>() {
-                            overlay_connect.borrow_mut().handle_rendezvous_res(
-                                core,
-                                poll,
-                                src_peer.clone(),
-                                nat_info,
-                                res,
-                            );
+                            overlay_connect
+                                .borrow_mut()
+                                .handle_rendezvous_res(core, poll, src_peer, nat_info, res);
                         } else {
                             warn!("Failed to conver Interface to Core");
                         }
                     }
                 };
-                match HolePunchMediator::start(core, poll, Box::new(handler)) {
+                match HolePunchMediator::start(core, poll, QueuedNotifier::new(handler)) {
                     Ok(mediator_token) => PeerState::CreatingRendezvousInfo {
                         mediator_token,
                         peer_info: Some(src_info),
@@ -471,12 +467,9 @@ impl OverlayConnect {
                         let handler = move |ifc: &mut Interface, poll: &Poll, res| {
                             if let Some(overlay_connect) = weak.upgrade() {
                                 if let Some(core) = ifc.as_any().downcast_mut::<Core>() {
-                                    overlay_connect.borrow_mut().handle_holepunch_res(
-                                        core,
-                                        poll,
-                                        for_peer.clone(),
-                                        res,
-                                    );
+                                    overlay_connect
+                                        .borrow_mut()
+                                        .handle_holepunch_res(core, poll, for_peer, res);
                                 } else {
                                     warn!("Failed to conver Interface to Core");
                                 }
@@ -484,9 +477,10 @@ impl OverlayConnect {
                         };
                         Handle::start_hole_punch(
                             core,
+                            poll,
                             mediator_token,
                             peer_info,
-                            Box::new(handler),
+                            QueuedNotifier::new(handler),
                         );
                         PeerState::AwaitingHolePunchResult
                     } else {
