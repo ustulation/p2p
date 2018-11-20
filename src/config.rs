@@ -17,7 +17,7 @@ pub const HOLE_PUNCH_WAIT_FOR_OTHER: bool = true;
 ///
 /// User can opt to provide this in a file, read from it and pass it when required. For optional
 /// fields that are `None`, reasonable defaults will be used.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     /// Rendezvous timeout in seconds
     pub rendezvous_timeout_sec: Option<u64>,

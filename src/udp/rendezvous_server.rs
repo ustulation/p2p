@@ -33,7 +33,12 @@ impl UdpRendezvousServer {
             .unwrap_or(UDP_RENDEZVOUS_PORT);
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port));
         let sock = UdpSock::bind(&addr)?;
+        Self::start_with_sock(sock, ifc, poll)
+    }
 
+    /// Boot the UDP rendezvous server and use the given UDP socket to listen for incoming
+    /// requests.
+    pub fn start_with_sock(sock: UdpSock, ifc: &mut Interface, poll: &Poll) -> ::Res<Token> {
         let token = ifc.new_token();
 
         poll.register(

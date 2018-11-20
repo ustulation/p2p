@@ -310,7 +310,7 @@ pub use hole_punch::{
 };
 pub use queued_notifier::QueuedNotifier;
 pub use tcp::TcpRendezvousServer;
-pub use udp::UdpRendezvousServer;
+pub use udp::{UdpRendezvousClient, UdpRendezvousServer};
 
 /// Result type used by this crate.
 pub type Res<T> = Result<T, NatError>;
