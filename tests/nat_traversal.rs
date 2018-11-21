@@ -7,15 +7,16 @@ extern crate serde_json;
 #[macro_use]
 extern crate unwrap;
 
-mod utils;
-
 use mio::Poll;
 use p2p::{
-    Handle, HolePunchMediator, Interface, NatInfo, NatMsg, NatType, QueuedNotifier, RendezvousInfo,
-    Res, TcpRendezvousServer, UdpRendezvousServer,
+    Config, Handle, HolePunchMediator, Interface, NatInfo, NatMsg, NatState, NatTimer, NatType,
+    QueuedNotifier, RendezvousInfo, Res, TcpRendezvousServer, UdpRendezvousServer,
 };
 use std::sync::mpsc;
 use utils::{read_config, spawn_event_loop, EventLoop};
+
+#[path = "../src/test_utils.rs"]
+mod utils;
 
 fn start_rendezvous_servers() -> Vec<EventLoop> {
     const NUM_RENDEZVOUS_SERVERS: usize = 3;

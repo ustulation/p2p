@@ -1,4 +1,4 @@
-pub use self::hole_punch::{UdpHolePunchMediator, UdpRendezvousClient};
+pub use self::hole_punch::UdpHolePunchMediator;
 pub use self::rendezvous_server::UdpRendezvousServer;
 
 use sodium::crypto::box_::PUBLICKEYBYTES;

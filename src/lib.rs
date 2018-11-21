@@ -277,11 +277,15 @@ extern crate serde_derive;
 extern crate unwrap;
 
 extern crate bincode;
+#[cfg(test)]
+extern crate maidsafe_utilities;
 extern crate mio;
 extern crate mio_extras;
 extern crate net2;
 extern crate rand;
 extern crate rust_sodium as sodium;
+#[cfg(test)]
+extern crate serde_json;
 extern crate socket_collection;
 
 use bincode::{deserialize, serialize, Infinite};
@@ -300,6 +304,8 @@ mod error;
 mod hole_punch;
 mod queued_notifier;
 mod tcp;
+#[cfg(test)]
+mod test_utils;
 mod udp;
 
 pub use config::Config;
@@ -310,7 +316,7 @@ pub use hole_punch::{
 };
 pub use queued_notifier::QueuedNotifier;
 pub use tcp::TcpRendezvousServer;
-pub use udp::{UdpRendezvousClient, UdpRendezvousServer};
+pub use udp::UdpRendezvousServer;
 
 /// Result type used by this crate.
 pub type Res<T> = Result<T, NatError>;

@@ -1,9 +1,9 @@
+use super::{Config, Interface, NatMsg, NatState, NatTimer};
 use maidsafe_utilities::thread::{self, Joiner};
 use mio::{Events, Poll, PollOpt, Ready, Token};
 use mio_extras::channel;
 use mio_extras::channel::Sender;
 use mio_extras::timer::{Timeout, Timer};
-use p2p::{Config, Interface, NatMsg, NatState, NatTimer};
 use serde_json;
 use sodium::crypto::box_;
 use std::any::Any;
@@ -51,7 +51,7 @@ impl Interface for StateMachine {
         state: Rc<RefCell<NatState>>,
     ) -> Result<(), (Rc<RefCell<NatState>>, String)> {
         if let Entry::Vacant(ve) = self.nat_states.entry(token) {
-            ve.insert(state);
+            let _ = ve.insert(state);
             Ok(())
         } else {
             Err((state, "Token is already mapped".to_string()))
@@ -137,11 +137,11 @@ pub fn spawn_event_loop(config: Config) -> EventLoop {
 
         let mut sm = StateMachine {
             nat_states: HashMap::with_capacity(10),
-            timer: timer,
+            timer,
             token: NAT_RX_TOKEN + 1,
-            config: config,
-            enc_pk: enc_pk,
-            enc_sk: enc_sk,
+            config,
+            enc_pk,
+            enc_sk,
             tx: nat_tx,
         };
 
@@ -195,7 +195,7 @@ impl Drop for EventLoop {
 
 /// Read p2p config from json file.
 #[allow(unused)]
-pub fn read_config(path: &String) -> Config {
+pub fn read_config(path: &str) -> Config {
     let mut file = unwrap!(File::open(path));
     let mut content = String::new();
     unwrap!(file.read_to_string(&mut content));
