@@ -277,11 +277,15 @@ extern crate serde_derive;
 extern crate unwrap;
 
 extern crate bincode;
+#[cfg(test)]
+extern crate maidsafe_utilities;
 extern crate mio;
 extern crate mio_extras;
 extern crate net2;
 extern crate rand;
 extern crate rust_sodium as sodium;
+#[cfg(test)]
+extern crate serde_json;
 extern crate socket_collection;
 
 use bincode::{deserialize, serialize, Infinite};
@@ -300,6 +304,8 @@ mod error;
 mod hole_punch;
 mod queued_notifier;
 mod tcp;
+#[cfg(test)]
+mod test_utils;
 mod udp;
 
 pub use config::Config;
@@ -346,7 +352,7 @@ impl NatTimer {
 /// A message that can be sent to the event loop to perform an action.
 ///
 /// This can be used to send actions from a thread outside the event loop too if sent via
-/// [`mio::channel::Sender`][0].
+/// [`mio_extras::channel::Sender`][0].
 ///
 /// [0]: http://rust-doc.s3-website-us-east-1.amazonaws.com/mio/master/mio/channel
 pub struct NatMsg(Box<FnMut(&mut Interface, &Poll) + Send + 'static>);
@@ -408,8 +414,8 @@ pub trait Interface {
     fn remove_state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
     /// Return the state (without removing - just a query) associated with the `token`
     fn state(&mut self, token: Token) -> Option<Rc<RefCell<NatState>>>;
-    /// Set timeout. User code is expected to have a `mio::timer::Timer<NatTimer>` on which the
-    /// timeout can be set.
+    /// Set timeout. User code is expected to have a `mio_extras::timer::Timer<NatTimer>` on which
+    /// the timeout can be set.
     fn set_timeout(&mut self, duration: Duration, timer_detail: NatTimer) -> Timeout;
     /// Cancel the timout
     fn cancel_timeout(&mut self, timeout: &Timeout) -> Option<NatTimer>;

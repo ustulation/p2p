@@ -13,6 +13,7 @@ use {Interface, NatError, NatState, NatType};
 
 pub type Finish = Box<FnMut(&mut Interface, &Poll, Token, NatType, ::Res<(UdpSock, SocketAddr)>)>;
 
+/// UDP rendezvous client that queries the server for it's public endpoint - IP:port.
 pub struct UdpRendezvousClient {
     sock: UdpSock,
     token: Token,
@@ -25,6 +26,7 @@ pub struct UdpRendezvousClient {
 }
 
 impl UdpRendezvousClient {
+    /// Starts sending queries to multiple servers. Servers are retrieved from `ifc.config()`.
     pub fn start(ifc: &mut Interface, poll: &Poll, sock: UdpSock, f: Finish) -> ::Res<Token> {
         let token = ifc.new_token();
         let mut servers = ifc.config().remote_udp_rendezvous_servers.clone();

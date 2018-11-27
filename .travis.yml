@@ -32,11 +32,11 @@ before_script:
     fi
 script:
   - set -x;
-    cargo fmt -- --check &&
     cargo test --verbose --release
   - if [ "${TRAVIS_OS_NAME}" = linux ]; then
         (
             set -x;
+            cargo fmt -- --check &&
             cargo clippy --verbose --release &&
             cargo clippy --verbose --release --profile=test ;
         )

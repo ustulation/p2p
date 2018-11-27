@@ -1,5 +1,5 @@
 use self::puncher::Puncher;
-use self::rendezvous_client::UdpRendezvousClient;
+pub use self::rendezvous_client::UdpRendezvousClient;
 use mio::Poll;
 use mio::Token;
 use socket_collection::UdpSock;
